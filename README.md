@@ -1,6 +1,9 @@
 # source-mesh
 
-[![CI — Linux, macOS, and Windows](https://github.com/GeneralGDA/rust-arch/actions/workflows/ci.yml/badge.svg?label=CI%20%28Linux%2C%20macOS%2C%20Windows%29)](https://github.com/GeneralGDA/rust-arch/actions/workflows/ci.yml)
+![CI status](https://img.shields.io/github/actions/workflow/status/GeneralGDA/rust-arch/ci.yml?label=CI&logo=githubactions&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-ubuntu--latest-FCC624?logo=linux&logoColor=black)
+![macOS](https://img.shields.io/badge/macOS-macos--latest-000000?logo=apple)
+![Windows](https://img.shields.io/badge/Windows-windows--latest-0078D4?logo=windows&logoColor=white)
 
 Draw dependencies between physical folders in a Rust project. Export **GraphML for yEd**, **Mermaid**, or **DOT**, highlight cycles, and report cycles between folders or files.
 
