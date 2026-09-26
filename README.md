@@ -1,6 +1,6 @@
 # source-mesh
 
-[![CI](https://github.com/GeneralGDA/rust-arch/actions/workflows/ci.yml/badge.svg)](https://github.com/GeneralGDA/rust-arch/actions/workflows/ci.yml)
+[![CI — Linux, macOS, and Windows](https://github.com/GeneralGDA/rust-arch/actions/workflows/ci.yml/badge.svg?label=CI%20%28Linux%2C%20macOS%2C%20Windows%29)](https://github.com/GeneralGDA/rust-arch/actions/workflows/ci.yml)
 
 Draw dependencies between physical folders in a Rust project. Export **GraphML for yEd**, **Mermaid**, or **DOT**, highlight cycles, and report cycles between folders or files.
 
@@ -101,7 +101,7 @@ The script installs missing `rg`, `fd`, `jaq`, and `ast-grep` through Cargo with
 
 Unit and component tests live under `src`; normal runs use synthetic data and a bundled SCIP fixture. [Live component tests](src/fixtures/README.md) require rust-analyzer. Integration tests under `tests` run the compiled application on this repository and check [expected exports and dependency cycles](tests/expected/README.md).
 
-[CI](.github/workflows/ci.yml) checks release builds, Clippy, unit and component tests, documentation tests, and repository integration tests on Linux, macOS, and Windows for every push and pull request.
+CI checks release builds, Clippy, unit and component tests, documentation tests, and repository integration tests on Linux, macOS, and Windows for every push and pull request.
 
 ## License
 
