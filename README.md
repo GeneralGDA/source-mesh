@@ -1,9 +1,9 @@
 # source-mesh
 
-![CI status](https://img.shields.io/github/actions/workflow/status/GeneralGDA/source-mesh/ci.yml.png?branch=main&event=push&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)
-![Linux CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.png?nameFilter=ubuntu-latest&style=for-the-badge&label=Linux&logo=linux&logoColor=white)
-![macOS CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.png?nameFilter=macos-latest&style=for-the-badge&label=macOS&logo=apple&logoColor=white)
-![Windows CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.png?nameFilter=windows-latest&style=for-the-badge&label=Windows)
+![CI status](https://img.shields.io/github/actions/workflow/status/GeneralGDA/source-mesh/ci.yml.svg?branch=main&event=push&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)
+![Linux CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.svg?nameFilter=ubuntu-latest&style=for-the-badge&label=Linux&logo=linux&logoColor=white)
+![macOS CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.svg?nameFilter=macos-latest&style=for-the-badge&label=macOS&logo=apple&logoColor=white)
+![Windows CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.svg?nameFilter=windows-latest&style=for-the-badge&label=Windows)
 
 Draw dependencies between physical folders in a Rust project. Export **GraphML for yEd**, **Mermaid**, or **DOT**, highlight cycles, and report cycles between folders or files.
 
