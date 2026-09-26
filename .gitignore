@@ -1,0 +1,11 @@
+# Rust build artifacts
+**/target/
+
+# Local build copies and experiment output
+/bin/
+/work/
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

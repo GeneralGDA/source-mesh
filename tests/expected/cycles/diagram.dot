@@ -1,0 +1,20 @@
+digraph folders {
+  rankdir=LR
+  n0[label="src" shape=box]
+  n1[label="src/export" shape=box]
+  n2[label="src/graph" shape=box]
+  n3[label="tests" shape=box]
+  n4[label="tools" shape=box]
+  n0 -> n0 [label="19" color="#E41A1C" penwidth=3.0 cycle_group=1]
+  n0 -> n0 [label="test: 6" color="#E41A1C" style=dashed penwidth=3.0 cycle_group=1]
+  n0 -> n1 [label="2"]
+  n0 -> n2 [label="8"]
+  n0 -> n2 [label="test: 4" color="#D97706" style=dashed]
+  n1 -> n1 [label="18" color="#377EB8" penwidth=3.0 cycle_group=2]
+  n1 -> n1 [label="test: 12" color="#377EB8" style=dashed penwidth=3.0 cycle_group=2]
+  n1 -> n2 [label="13"]
+  n1 -> n2 [label="test: 7" color="#D97706" style=dashed]
+  n2 -> n2 [label="5" color="#4DAF4A" penwidth=3.0 cycle_group=3]
+  n2 -> n2 [label="test: 6" color="#4DAF4A" style=dashed penwidth=3.0 cycle_group=3]
+  n4 -> n0 [label="3"]
+}

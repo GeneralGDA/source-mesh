@@ -1,0 +1,2 @@
+*.scip binary
+tests/expected/** text eol=lf

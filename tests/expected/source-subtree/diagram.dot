@@ -1,0 +1,9 @@
+strict digraph folders {
+  rankdir=LR
+  n0[label="." shape=box]
+  n1[label="export" shape=box]
+  n2[label="graph" shape=box]
+  n0 -> n1 [label="2"]
+  n0 -> n2 [label="8"]
+  n1 -> n2 [label="13"]
+}

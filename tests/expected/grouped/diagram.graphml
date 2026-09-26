@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns:y="http://www.yworks.com/xml/graphml"
+         xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://www.yworks.com/xml/schema/graphml/1.1/ygraphml.xsd">
+  <key id="label" for="node" attr.name="label" attr.type="string"/>
+  <key id="weight" for="edge" attr.name="dependencies" attr.type="long"/>
+  <key id="kind" for="edge" attr.name="dependency_kind" attr.type="string"/>
+  <key id="ng" for="node" yfiles.type="nodegraphics"/>
+  <key id="eg" for="edge" yfiles.type="edgegraphics"/>
+  <graph id="folders" edgedefault="directed">
+    <node id="n0" yfiles.foldertype="group">
+      <data key="label">src</data>
+      <data key="ng">
+        <y:ProxyAutoBoundsNode>
+          <y:Realizers active="0">
+            <y:GroupNode>
+              <y:Geometry x="0" y="0" width="160" height="160"/>
+              <y:Fill color="#F5F7FB" transparent="false"/>
+              <y:BorderStyle color="#47699B" type="line" width="1.0"/>
+              <y:NodeLabel modelName="internal" modelPosition="t" fontStyle="bold" backgroundColor="#DCE6F5" autoSizePolicy="node_width" xml:space="preserve">src</y:NodeLabel>
+              <y:Shape type="roundrectangle"/>
+              <y:State closed="false" innerGraphDisplayEnabled="false"/>
+              <y:Insets top="20" bottom="20" left="20" right="20"/>
+              <y:BorderInsets top="0" bottom="0" left="0" right="0"/>
+            </y:GroupNode>
+            <y:GroupNode>
+              <y:Geometry x="0" y="0" width="160" height="50"/>
+              <y:Fill color="#F5F7FB" transparent="false"/>
+              <y:BorderStyle color="#47699B" type="line" width="1.0"/>
+              <y:NodeLabel modelName="internal" modelPosition="t" fontStyle="bold" backgroundColor="#DCE6F5" autoSizePolicy="node_width" xml:space="preserve">src</y:NodeLabel>
+              <y:Shape type="roundrectangle"/>
+              <y:State closed="true" innerGraphDisplayEnabled="false"/>
+              <y:Insets top="20" bottom="20" left="20" right="20"/>
+              <y:BorderInsets top="0" bottom="0" left="0" right="0"/>
+            </y:GroupNode>
+          </y:Realizers>
+        </y:ProxyAutoBoundsNode>
+      </data>
+      <graph id="n0:" edgedefault="directed">
+    <node id="n1">
+      <data key="label">src/export</data>
+      <data key="ng">
+        <y:ShapeNode>
+          <y:Geometry x="20" y="40" width="120" height="40"/>
+          <y:Fill color="#E8F0FE" transparent="false"/>
+          <y:BorderStyle color="#47699B" type="line" width="1.0"/>
+          <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">src/export</y:NodeLabel>
+          <y:Shape type="roundrectangle"/>
+        </y:ShapeNode>
+      </data>
+    </node>
+    <node id="n2">
+      <data key="label">src/graph</data>
+      <data key="ng">
+        <y:ShapeNode>
+          <y:Geometry x="20" y="100" width="112" height="40"/>
+          <y:Fill color="#E8F0FE" transparent="false"/>
+          <y:BorderStyle color="#47699B" type="line" width="1.0"/>
+          <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">src/graph</y:NodeLabel>
+          <y:Shape type="roundrectangle"/>
+        </y:ShapeNode>
+      </data>
+    </node>
+      </graph>
+    </node>
+    <node id="n3">
+      <data key="label">tests</data>
+      <data key="ng">
+        <y:ShapeNode>
+          <y:Geometry x="0" y="200" width="80" height="40"/>
+          <y:Fill color="#E8F0FE" transparent="false"/>
+          <y:BorderStyle color="#47699B" type="line" width="1.0"/>
+          <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">tests</y:NodeLabel>
+          <y:Shape type="roundrectangle"/>
+        </y:ShapeNode>
+      </data>
+    </node>
+    <node id="n4">
+      <data key="label">tools</data>
+      <data key="ng">
+        <y:ShapeNode>
+          <y:Geometry x="0" y="280" width="80" height="40"/>
+          <y:Fill color="#E8F0FE" transparent="false"/>
+          <y:BorderStyle color="#47699B" type="line" width="1.0"/>
+          <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">tools</y:NodeLabel>
+          <y:Shape type="roundrectangle"/>
+        </y:ShapeNode>
+      </data>
+    </node>
+    <edge id="e0" source="n0" target="n1">
+      <data key="weight">2</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>2</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e1" source="n0" target="n2">
+      <data key="weight">8</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>8</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e2" source="n0" target="n2">
+      <data key="weight">4</data>
+      <data key="kind">test</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#D97706" type="dashed" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>test: 4</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e3" source="n1" target="n2">
+      <data key="weight">13</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>13</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e4" source="n1" target="n2">
+      <data key="weight">7</data>
+      <data key="kind">test</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#D97706" type="dashed" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>test: 7</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e5" source="n4" target="n0">
+      <data key="weight">3</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>3</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+  </graph>
+</graphml>

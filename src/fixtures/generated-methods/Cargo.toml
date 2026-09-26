@@ -1,0 +1,11 @@
+[package]
+name = "generated-methods-fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+derive-new = "0.7"
+getset = "0.1.7"
+
+[workspace]

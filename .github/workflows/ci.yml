@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Ensure analysis components are available
+        run: rustup component add rust-analyzer rust-src
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2.9.2
+
+      - name: Build release targets
+        run: cargo build --release --locked --all-targets
+
+      - name: Run unit and component tests
+        run: cargo test --release --locked --lib --bins
+
+      - name: Run documentation tests
+        run: cargo test --release --locked --doc
+
+      - name: Run live rust-analyzer component tests
+        run: 'cargo test --release --locked --lib backend::tests:: -- --ignored --test-threads=1'
+
+      - name: Run Clippy
+        run: cargo clippy --release --locked --all-targets -- -D warnings
+
+      - name: Check dependency cycles
+        id: dependency_cycles
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p target/source-mesh
+          cargo run --release --locked -- . --root src --format graphml --exclude-tests --highlight-cycles --fail-on-cycles --cycles-output target/source-mesh/folder-cycles.md --file-cycles-output target/source-mesh/file-cycles.md --output target/source-mesh/folder-dependencies.graphml
+
+      - name: Upload dependency cycle diagnostics
+        if: ${{ always() && matrix.os == 'ubuntu-latest' && steps.dependency_cycles.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: source-mesh-cycle-diagnostics
+          path: target/source-mesh
+          if-no-files-found: warn
+
+      - name: Run repository integration tests
+        run: cargo test --release --locked --test repository -- --ignored
+
+  package:
+    name: Publishable package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2.9.2
+
+      - name: Verify publishable package
+        run: cargo package --locked

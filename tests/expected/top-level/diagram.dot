@@ -1,0 +1,7 @@
+strict digraph folders {
+  rankdir=LR
+  n0[label="src" shape=box]
+  n1[label="tests" shape=box]
+  n2[label="tools" shape=box]
+  n2 -> n0 [label="3"]
+}
