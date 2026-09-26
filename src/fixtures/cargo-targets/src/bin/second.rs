@@ -1,4 +1,5 @@
-fn run() -> usize { 2 }
+#[must_use]
+const fn run() -> usize { 2 }
 
 fn main() {
     let _local = run();

@@ -6,6 +6,7 @@ use anyhow::bail;
 use anyhow::ensure;
 use derive_new::new;
 use protobuf::Message as _;
+use scip::symbol::is_local_symbol;
 use scip::types::Document;
 use scip::types::Index;
 use scip::types::SymbolRole;
@@ -57,7 +58,7 @@ fn missing_definition_scopes(
     for occurrence in &document.occurrences {
         if occurrence.symbol_roles & SymbolRole::Definition as i32 == 0
             || occurrence.symbol.is_empty()
-            || occurrence.symbol.starts_with("local ")
+            || is_local_symbol(&occurrence.symbol)
             || occurrence.enclosing_range.is_empty()
         {
             continue;
@@ -98,7 +99,7 @@ pub(crate) fn mark_test_references(index_bytes: &[u8], production_bytes: &[u8]) 
                 production_references.insert(identity);
                 continue;
             }
-            if !identity.symbol.is_empty() && !identity.symbol.starts_with("local ") {
+            if !identity.symbol.is_empty() && !is_local_symbol(&identity.symbol) {
                 production_definitions.insert(identity);
             }
         }
@@ -162,6 +163,9 @@ mod tests {
     use super::mark_test_references;
     use super::ScipRange;
 
+    const MISSING_REFERENCE: &str = "Reference missing";
+    const MISSING_SOURCE_DOCUMENT: &str = "Source document missing";
+
     #[must_use]
     fn reference(symbol: &str, range: [i32; 3]) -> Occurrence {
         Occurrence { symbol: symbol.into(), range: range.into(), ..Occurrence::default() }
@@ -179,14 +183,14 @@ mod tests {
     #[test]
     fn test_reference_identity_and_definition_roles() -> Result<()> {
         let shared_reference = reference("service/run().", [0, 0, 3]);
-        let another_range = reference("service/run().", [1, 0, 3]);
-        let another_symbol = reference("mock/run().", [0, 0, 3]);
+        let different_range_reference = reference("service/run().", [1, 0, 3]);
+        let different_symbol_reference = reference("mock/run().", [0, 0, 3]);
         let mut definition = reference("service/definition().", [2, 0, 3]);
         definition.symbol_roles = SymbolRole::Definition as i32 | SymbolRole::ReadAccess as i32;
         let mut already_classified = reference("service/retained().", [3, 0, 3]);
         already_classified.symbol_roles = SymbolRole::Test as i32 | SymbolRole::ReadAccess as i32;
         let full_index = index_bytes("src/caller.rs", vec![
-            shared_reference.clone(), another_range, another_symbol,
+            shared_reference.clone(), different_range_reference, different_symbol_reference,
             definition.clone(), already_classified.clone(),
         ])?;
         let production_index = index_bytes("src/caller.rs", vec![
@@ -196,7 +200,7 @@ mod tests {
         let classified_bytes = mark_test_references(&full_index, &production_index)?;
         let system_under_test = Index::parse_from_bytes(&classified_bytes)?;
 
-        let occurrences = &system_under_test.documents.first().context("Source document missing")?.occurrences;
+        let occurrences = &system_under_test.documents.first().context(MISSING_SOURCE_DOCUMENT)?.occurrences;
         let roles: Vec<_> = occurrences.iter().map(|occurrence| occurrence.symbol_roles).collect();
         assert_eq!(roles, vec![
             0,
@@ -225,14 +229,14 @@ mod tests {
         let system_under_test = Index::parse_from_bytes(&classified_bytes)?;
 
         let classified_occurrence = system_under_test.documents.first()
-            .and_then(|document| document.occurrences.first()).context("Reference missing")?;
+            .and_then(|document| document.occurrences.first()).context(MISSING_REFERENCE)?;
         assert_eq!(classified_occurrence.symbol_roles & SymbolRole::Test as i32 != 0, expected_test_reference,
             "Document paths were matched incorrectly");
         Ok(())
     }
 
     #[test]
-    fn test_production_definitions_do_not_match_references() -> Result<()> {
+    fn test_production_definition_reference_identity() -> Result<()> {
         let occurrence = reference("service/run().", [0, 0, 3]);
         let full_index = index_bytes("caller.rs", vec![occurrence.clone()])?;
         let mut definition = occurrence;
@@ -243,7 +247,7 @@ mod tests {
         let system_under_test = Index::parse_from_bytes(&classified_bytes)?;
 
         let classified_occurrence = system_under_test.documents.first()
-            .and_then(|document| document.occurrences.first()).context("Reference missing")?;
+            .and_then(|document| document.occurrences.first()).context(MISSING_REFERENCE)?;
         assert!(classified_occurrence.symbol_roles & SymbolRole::Test as i32 != 0,
             "Production definition was treated as a matching reference");
         Ok(())
@@ -260,7 +264,7 @@ mod tests {
         let system_under_test = Index::parse_from_bytes(&classified_bytes)?;
 
         let occurrence = system_under_test.documents.first()
-            .and_then(|document| document.occurrences.first()).context("Reference missing")?;
+            .and_then(|document| document.occurrences.first()).context(MISSING_REFERENCE)?;
         assert!(occurrence.symbol_roles & SymbolRole::Test as i32 != 0,
             "Reference absent from an empty production index was not classified");
         Ok(())
@@ -279,15 +283,14 @@ mod tests {
             ..Index::default()
         };
         let index = original.write_to_bytes()?;
+        let original_metadata = original.metadata.as_ref().context("Fixture metadata missing")?;
 
         let classified_bytes = mark_test_references(&index, &index)?;
         let system_under_test = Index::parse_from_bytes(&classified_bytes)?;
 
         let metadata = system_under_test.metadata.as_ref().context("Metadata missing")?;
-        let original_metadata = original.metadata.as_ref().context("Fixture metadata missing")?;
-        assert!(metadata.project_root == original_metadata.project_root
-            && metadata.text_document_encoding == original_metadata.text_document_encoding,
-            "Source root or encoding was changed");
+        assert_eq!(metadata.project_root, original_metadata.project_root, "Source root was changed");
+        assert_eq!(metadata.text_document_encoding, original_metadata.text_document_encoding, "Source encoding was changed");
         assert!(has_test_classification(&system_under_test), "Empty classification provenance missing");
         assert!(!has_test_classification(&original), "Raw index was mistaken for a classified index");
         Ok(())
@@ -323,7 +326,7 @@ mod tests {
         let classified_bytes = mark_test_references(&full_index, &production_index)?;
         let system_under_test = Index::parse_from_bytes(&classified_bytes)?;
 
-        let roles: Vec<_> = system_under_test.documents.first().context("Source document missing")?
+        let roles: Vec<_> = system_under_test.documents.first().context(MISSING_SOURCE_DOCUMENT)?
             .occurrences.iter().map(|occurrence| occurrence.symbol_roles).collect();
         assert_eq!(roles, vec![SymbolRole::Definition as i32, 0, SymbolRole::Test as i32, 0],
             "Inactive scope references or adjacent production references were classified incorrectly");
@@ -333,7 +336,7 @@ mod tests {
     #[rstest]
     #[case("local 0")]
     #[case("")]
-    fn test_unnamed_definitions_do_not_create_scopes(#[case] symbol: &str) -> Result<()> {
+    fn test_unnamed_definition_scopes(#[case] symbol: &str) -> Result<()> {
         let shared_reference = reference("shared/run().", [7, 0, 3]);
         let mut definition = reference(symbol, [4, 4, 9]);
         definition.symbol_roles = SymbolRole::Definition as i32;
@@ -345,14 +348,14 @@ mod tests {
         let system_under_test = Index::parse_from_bytes(&classified_bytes)?;
 
         let classified_reference = system_under_test.documents.first()
-            .and_then(|document| document.occurrences.last()).context("Reference missing")?;
+            .and_then(|document| document.occurrences.last()).context(MISSING_REFERENCE)?;
         assert_eq!(classified_reference.symbol_roles, 0,
             "An unnamed definition created a test scope");
         Ok(())
     }
 
     #[test]
-    fn test_retained_definitions_do_not_create_scopes() -> Result<()> {
+    fn test_retained_definition_scopes() -> Result<()> {
         let shared_reference = reference("shared/run().", [7, 0, 3]);
         let mut definition = reference("client/production/", [4, 4, 9]);
         definition.symbol_roles = SymbolRole::Definition as i32;
@@ -363,14 +366,14 @@ mod tests {
         let system_under_test = Index::parse_from_bytes(&classified_bytes)?;
 
         let classified_reference = system_under_test.documents.first()
-            .and_then(|document| document.occurrences.last()).context("Reference missing")?;
+            .and_then(|document| document.occurrences.last()).context(MISSING_REFERENCE)?;
         assert_eq!(classified_reference.symbol_roles, 0,
             "A retained definition created a test scope");
         Ok(())
     }
 
     #[test]
-    fn test_file_module_definitions_do_not_create_scopes() -> Result<()> {
+    fn test_file_module_definition_scopes() -> Result<()> {
         let shared_reference = reference("shared/run().", [7, 0, 3]);
         let module = Occurrence {
             symbol: "client/".into(), range: vec![0, 0, 13, 0],
@@ -384,14 +387,14 @@ mod tests {
         let system_under_test = Index::parse_from_bytes(&classified_bytes)?;
 
         let classified_reference = system_under_test.documents.first()
-            .and_then(|document| document.occurrences.last()).context("Reference missing")?;
+            .and_then(|document| document.occurrences.last()).context(MISSING_REFERENCE)?;
         assert_eq!(classified_reference.symbol_roles, 0,
             "A file-module definition incorrectly classified the entire source file");
         Ok(())
     }
 
     #[test]
-    fn test_reference_target_ranges_do_not_create_scopes() -> Result<()> {
+    fn test_reference_target_scopes() -> Result<()> {
         let mut shared_reference = reference("shared/run().", [7, 0, 3]);
         shared_reference.enclosing_range = vec![3, 0, 12, 1];
         let index = index_bytes("caller.rs", vec![shared_reference])?;
@@ -400,7 +403,7 @@ mod tests {
         let system_under_test = Index::parse_from_bytes(&classified_bytes)?;
 
         let classified_reference = system_under_test.documents.first()
-            .and_then(|document| document.occurrences.first()).context("Reference missing")?;
+            .and_then(|document| document.occurrences.first()).context(MISSING_REFERENCE)?;
         assert_eq!(classified_reference.symbol_roles, 0,
             "A reference target's definition range was used as the reference's own scope");
         Ok(())
@@ -418,7 +421,7 @@ mod tests {
         let system_under_test = Index::parse_from_bytes(&classified_bytes)?;
 
         let classified_reference = system_under_test.documents.first()
-            .and_then(|document| document.occurrences.first()).context("Reference missing")?;
+            .and_then(|document| document.occurrences.first()).context(MISSING_REFERENCE)?;
         assert_eq!(classified_reference.symbol_roles, 0,
             "Equivalent SCIP range encodings did not match");
         Ok(())
@@ -436,10 +439,11 @@ mod tests {
     #[case(&[7, 0, 0], false)]
     fn test_scope_range_containment(#[case] coordinates: &[i32], #[case] expected: bool) -> Result<()> {
         let reference_range = ScipRange::parse(coordinates)?;
-
         let system_under_test = ScipRange::parse(&[3, 0, 12, 1])?;
 
-        assert_eq!(system_under_test.contains(&reference_range), expected,
+        let contains_reference = system_under_test.contains(&reference_range);
+
+        assert_eq!(contains_reference, expected,
             "Scope containment was incorrect for {coordinates:?}");
         Ok(())
     }

@@ -11,7 +11,6 @@ use anyhow::ensure;
 use derive_new::new;
 use protobuf::Message as _;
 use scip::symbol::format_symbol;
-use scip::symbol::parse_symbol;
 use scip::types::Descriptor;
 use scip::types::Index;
 use scip::types::SymbolInformation;
@@ -21,15 +20,16 @@ use scip::types::descriptor::Suffix;
 use crate::analyzer_definitions::DefinitionResolver;
 use crate::analyzer_options::Options;
 use crate::model::FileNode;
+use crate::scip_definitions::decode_symbol;
 use crate::scip_definitions::definitions;
 use crate::scip_definitions::unresolved_symbols;
 use crate::scip_path::source_path;
 
 #[derive(new)]
 pub(crate) struct IndexRepair<'a> {
-    project: &'a Path,
-    configured: Option<&'a Path>,
-    production: &'a Path,
+    project_directory: &'a Path,
+    configured_configuration_path: Option<&'a Path>,
+    production_configuration_path: &'a Path,
     options: &'a Options,
 }
 
@@ -43,28 +43,30 @@ impl IndexRepair<'_> {
         if repair_symbols.is_empty() {
             return Ok((configured_bytes, production_bytes));
         }
-        let repair_pass = |index, config| -> Result<Vec<u8>> {
+        let repair_pass = |index, configuration_path| -> Result<Vec<u8>> {
             let mut resolver = None;
             let repaired = repair_occurrences(index, &repair_symbols, |reference| {
-                if resolver.is_none() {
+                let resolver = if let Some(ref mut resolver) = resolver {
+                    resolver
+                } else {
                     if self.options.verbose() {
                         eprintln!("Resolving missing or ambiguous definitions with rust-analyzer...");
                     }
-                    resolver = Some(DefinitionResolver::start(self.project, config, self.options.verbose())?);
-                }
-                let locations = resolver.as_mut().context("Definition resolver is missing")?
-                    .definitions(&self.project.join(reference.source.path()), reference.line, reference.column)?;
+                    resolver.insert(DefinitionResolver::start(self.project_directory, configuration_path, self.options.verbose())?)
+                };
+                let locations = resolver
+                    .definitions(&self.project_directory.join(reference.source.path()), reference.line, reference.column)?;
                 let files = locations.iter().map(|location| {
                     dunce::canonicalize(location.file())
-                        .with_context(|| format!("Cannot resolve definition at {}:{}:{}", location.file().display(), location.line() + 1, location.column() + 1))
+                        .with_context(|| format!("Cannot resolve definition at {}:{}:{}", location.file().display(), u64::from(*location.line()) + 1, u64::from(*location.column()) + 1))
                 }).collect::<Result<BTreeSet<_>>>()?;
-                definition_target(self.project, &files, reference.candidates)
+                definition_target(self.project_directory, &files, reference.candidates)
             })?;
             repaired.write_to_bytes().context("Cannot serialize repaired dependency index")
         };
         thread::scope(|scope| {
-            let configured = scope.spawn(|| repair_pass(configured, self.configured));
-            let production = scope.spawn(|| repair_pass(production, Some(self.production)));
+            let configured = scope.spawn(|| repair_pass(configured, self.configured_configuration_path));
+            let production = scope.spawn(|| repair_pass(production, Some(self.production_configuration_path)));
             let configured = configured.join().map_err(|_| anyhow!("Configured symbol resolution panicked"))?;
             let production = production.join().map_err(|_| anyhow!("Non-test symbol resolution panicked"))?;
             Ok((configured?, production?))
@@ -74,13 +76,13 @@ impl IndexRepair<'_> {
 
 fn definition_target(project: &Path, files: &BTreeSet<PathBuf>, candidates: &BTreeSet<FileNode>) -> Result<Option<FileNode>> {
     ensure!(!files.is_empty(), "The analyzer could not locate the referenced definition");
-    let mut local = files.iter().filter_map(|file| file.strip_prefix(project).ok())
+    let mut project_files = files.iter().filter_map(|file| file.strip_prefix(project).ok())
         .map(|file| FileNode::new(file.to_owned())).collect::<Result<BTreeSet<_>>>()?;
-    ensure!(local.len() <= 1,
+    ensure!(project_files.len() <= 1,
         "The analyzer returned multiple project definition files: {}",
-        local.iter().map(|file| file.path().display().to_string()).collect::<Vec<_>>().join(", "));
-    ensure!(!local.is_empty() || candidates.is_empty(), "A known project definition resolved outside the analyzed project");
-    Ok(local.pop_first())
+        project_files.iter().map(|file| file.path().display().to_string()).collect::<Vec<_>>().join(", "));
+    ensure!(!project_files.is_empty() || candidates.is_empty(), "A known project definition resolved outside the analyzed project");
+    Ok(project_files.pop_first())
 }
 fn colliding_symbols(configured: &Index, production: &Index) -> Result<BTreeSet<String>> {
     let mut combined = definitions(configured)?;
@@ -156,7 +158,7 @@ fn repair_occurrences(
 }
 
 fn qualified_symbol(symbol: &str, file: &FileNode) -> Result<String> {
-    let mut parsed = parse_symbol(symbol).map_err(|error| anyhow!("Cannot decode symbol {symbol:?}: {error:?}"))?;
+    let mut parsed = decode_symbol(symbol)?;
     let path = file.path().components().map(|part| part.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
     parsed.descriptors.insert(0, Descriptor {
         name: format!("source-mesh:{path}"),
@@ -183,12 +185,14 @@ mod tests {
     use super::colliding_symbols;
     use super::definition_target;
     use super::repair_occurrences;
+    use super::UnresolvedReference;
     use crate::model::DependencyKind;
     use crate::model::FileEdge;
     use crate::model::FileNode;
     use crate::scip_backend::parse_scip;
     use crate::test_dependencies::mark_test_references;
 
+    #[must_use]
     fn index(symbol: &str, files: &[(&str, &[i32])]) -> Index {
         Index { documents: files.iter().map(|&(path, roles)| Document {
             relative_path: path.into(),
@@ -199,6 +203,10 @@ mod tests {
         }).collect(), ..Index::default() }
     }
 
+    fn unexpected_definition_resolution(_: &UnresolvedReference<'_>) -> Result<Option<FileNode>> {
+        unreachable!("Unexpected definition resolver call")
+    }
+
     #[rstest]
     #[case::same_file("binary.rs", "binary.rs")]
     #[case::library_call("binary.rs", "library.rs")]
@@ -207,14 +215,14 @@ mod tests {
         let fixture = index(symbol, &[("library.rs", &[1]), (caller, &[1, 0])]);
         let target = FileNode::new(PathBuf::from(target))?;
         let collisions = colliding_symbols(&fixture, &fixture)?;
+        let source = FileNode::new(PathBuf::from(caller))?;
+        let expected = if source == target { BTreeSet::new() } else {
+            BTreeSet::from([FileEdge::new(source, target.clone(), DependencyKind::Production)])
+        };
 
         let system_under_test = repair_occurrences(fixture, &collisions, |_| Ok(Some(target.clone())))?;
         let graph = parse_scip(&system_under_test.write_to_bytes()?)?;
 
-        let source = FileNode::new(PathBuf::from(caller))?;
-        let expected = if source == target { BTreeSet::new() } else {
-            BTreeSet::from([FileEdge::new(source, target, DependencyKind::Production)])
-        };
         assert_eq!(graph.edges(), &expected);
         Ok(())
     }
@@ -225,7 +233,7 @@ mod tests {
         let fixture = index(symbol, &[("first.rs", &[1]), ("second.rs", &[1])]);
         let collisions = colliding_symbols(&fixture, &fixture)?;
 
-        let system_under_test = repair_occurrences(fixture, &collisions, |_| unreachable!("Unreferenced definitions must not query LSP"))?;
+        let system_under_test = repair_occurrences(fixture, &collisions, unexpected_definition_resolution)?;
         let graph = parse_scip(&system_under_test.write_to_bytes()?)?;
 
         assert!(graph.edges().is_empty());
@@ -234,33 +242,34 @@ mod tests {
     }
 
     #[test]
-    fn test_shared_qualification_preserves_test_classification() -> Result<()> {
+    fn test_shared_qualification_test_classification() -> Result<()> {
         let symbol = "rust-analyzer cargo fixture 0.0.0 run().";
         let configured = index(symbol, &[("first.rs", &[1]), ("second.rs", &[1]), ("caller.rs", &[0])]);
         let production = index(symbol, &[("first.rs", &[1]), ("caller.rs", &[0])]);
         let collisions = colliding_symbols(&configured, &production)?;
         let target = FileNode::new(PathBuf::from("first.rs"))?;
+        let expected_dependencies = BTreeSet::from([FileEdge::new(
+            FileNode::new(PathBuf::from("caller.rs"))?, target.clone(), DependencyKind::Production,
+        )]);
 
         let configured = repair_occurrences(configured, &collisions, |_| Ok(Some(target.clone())))?;
-        let production = repair_occurrences(production, &collisions, |_| unreachable!("Unique production definition needs no LSP"))?;
+        let production = repair_occurrences(production, &collisions, unexpected_definition_resolution)?;
         let classified = mark_test_references(&configured.write_to_bytes()?, &production.write_to_bytes()?)?;
         let system_under_test = parse_scip(&classified)?;
 
-        assert_eq!(system_under_test.edges(), &BTreeSet::from([FileEdge::new(
-            FileNode::new(PathBuf::from("caller.rs"))?, target, DependencyKind::Production,
-        )]));
+        assert_eq!(system_under_test.edges(), &expected_dependencies);
         Ok(())
     }
 
     #[test]
-    fn test_cfg_specific_target_identity() -> Result<()> {
+    fn test_configuration_specific_target_identity() -> Result<()> {
         let symbol = "rust-analyzer cargo fixture 0.0.0 run().";
         let configured = index(symbol, &[("test.rs", &[1]), ("caller.rs", &[0])]);
         let production = index(symbol, &[("production.rs", &[1]), ("caller.rs", &[0])]);
         let collisions = colliding_symbols(&configured, &production)?;
 
-        let configured = repair_occurrences(configured, &collisions, |_| unreachable!("Unique definition needs no LSP"))?;
-        let production = repair_occurrences(production, &collisions, |_| unreachable!("Unique definition needs no LSP"))?;
+        let configured = repair_occurrences(configured, &collisions, unexpected_definition_resolution)?;
+        let production = repair_occurrences(production, &collisions, unexpected_definition_resolution)?;
         let classified = mark_test_references(&configured.write_to_bytes()?, &production.write_to_bytes()?)?;
         let system_under_test = Index::parse_from_bytes(&classified)?;
 
@@ -288,13 +297,14 @@ mod tests {
         let fixture = index(symbol, &[("model.rs", &[]), ("client.rs", &[0])]);
         let repair_symbols = BTreeSet::from([symbol.to_owned()]);
         let target = FileNode::new(PathBuf::from("model.rs"))?;
+        let expected_dependencies = BTreeSet::from([FileEdge::new(
+            FileNode::new(PathBuf::from("client.rs"))?, target.clone(), DependencyKind::Production,
+        )]);
 
         let repaired = repair_occurrences(fixture, &repair_symbols, |_| Ok(Some(target.clone())))?;
         let system_under_test = parse_scip(&repaired.write_to_bytes()?)?;
 
-        assert_eq!(system_under_test.edges(), &BTreeSet::from([FileEdge::new(
-            FileNode::new(PathBuf::from("client.rs"))?, target, DependencyKind::Production,
-        )]));
+        assert_eq!(system_under_test.edges(), &expected_dependencies);
         assert!(repaired.documents.iter().flat_map(|document| &document.occurrences)
             .all(|occurrence| occurrence.symbol_roles & SymbolRole::Definition as i32 == 0),
             "Recovering ownership must not invent declaration occurrences");
@@ -308,21 +318,22 @@ mod tests {
         let production = index(symbol, &[("model.rs", &[]), ("client.rs", &[0])]);
         let repair_symbols = BTreeSet::from([symbol.to_owned()]);
         let target = FileNode::new(PathBuf::from("model.rs"))?;
+        let expected_dependencies = BTreeSet::from([
+            FileEdge::new(FileNode::new(PathBuf::from("client.rs"))?, target.clone(), DependencyKind::Production),
+            FileEdge::new(FileNode::new(PathBuf::from("validation.rs"))?, target.clone(), DependencyKind::Test),
+        ]);
 
-        let configured = repair_occurrences(configured, &repair_symbols, |_| unreachable!("Existing ownership needs no lookup"))?;
+        let configured = repair_occurrences(configured, &repair_symbols, unexpected_definition_resolution)?;
         let production = repair_occurrences(production, &repair_symbols, |_| Ok(Some(target.clone())))?;
         let classified = mark_test_references(&configured.write_to_bytes()?, &production.write_to_bytes()?)?;
         let system_under_test = parse_scip(&classified)?;
 
-        assert_eq!(system_under_test.edges(), &BTreeSet::from([
-            FileEdge::new(FileNode::new(PathBuf::from("client.rs"))?, target.clone(), DependencyKind::Production),
-            FileEdge::new(FileNode::new(PathBuf::from("validation.rs"))?, target, DependencyKind::Test),
-        ]));
+        assert_eq!(system_under_test.edges(), &expected_dependencies);
         Ok(())
     }
 
     #[test]
-    fn test_missing_definition_resolves_outside_project() -> Result<()> {
+    fn test_external_definition_resolution() -> Result<()> {
         let symbol = "rust-analyzer cargo fixture 0.0.0 external().";
         let fixture = index(symbol, &[("client.rs", &[0])]);
         let repair_symbols = BTreeSet::from([symbol.to_owned()]);
@@ -335,7 +346,7 @@ mod tests {
     }
 
     #[test]
-    fn test_missing_definition_document_is_rejected() -> Result<()> {
+    fn test_missing_definition_document() -> Result<()> {
         let symbol = "rust-analyzer cargo fixture 0.0.0 get().";
         let fixture = index(symbol, &[("client.rs", &[0])]);
         let repair_symbols = BTreeSet::from([symbol.to_owned()]);

@@ -22,25 +22,25 @@
       </data>
     </node>
     <edge id="e0" source="n0" target="n0">
-      <data key="weight">68</data>
+      <data key="weight">69</data>
       <data key="kind">production</data>
       <data key="eg">
         <y:PolyLineEdge>
           <y:LineStyle color="#47699B" type="line" width="1.0"/>
           <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>68</y:EdgeLabel>
+          <y:EdgeLabel>69</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>
     </edge>
     <edge id="e1" source="n0" target="n0">
-      <data key="weight">35</data>
+      <data key="weight">38</data>
       <data key="kind">test</data>
       <data key="eg">
         <y:PolyLineEdge>
           <y:LineStyle color="#D97706" type="dashed" width="1.0"/>
           <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>test: 35</y:EdgeLabel>
+          <y:EdgeLabel>test: 38</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>

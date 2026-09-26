@@ -64,7 +64,6 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
-    use anyhow::Context as _;
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use protobuf::Enum as _;
@@ -258,8 +257,10 @@ mod tests {
 
         let system_under_test = parse_scip(&index);
 
-        let error = system_under_test.err().context("Ambiguous definitions were accepted")?;
-        assert!(error.to_string().contains("multiple files"), "Unexpected diagnostic for ambiguous symbol definitions: {error}");
+        assert!(system_under_test.is_err(), "Ambiguous definitions were accepted");
+        if let Err(error) = system_under_test {
+            assert!(error.to_string().contains("multiple files"), "Unexpected diagnostic for ambiguous symbol definitions: {error}");
+        }
         Ok(())
     }
 

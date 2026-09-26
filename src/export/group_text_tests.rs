@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::Context as _;
+use anyhow::Error;
 use anyhow::Result;
 use anyhow::bail;
 use graphviz_rust::dot_structures::Graph;
@@ -38,7 +39,7 @@ fn render_grouped(exporter: &dyn Exporter, graph: &FolderGraph) -> Result<String
 
 fn dot_statements(output: &str) -> Result<Vec<Statement>> {
     let Graph::DiGraph { stmts: statements, .. } =
-        graphviz_rust::parse(output).map_err(anyhow::Error::msg)? else {
+        graphviz_rust::parse(output).map_err(Error::msg)? else {
         bail!("expected a directed DOT graph");
     };
     Ok(statements)
@@ -133,7 +134,7 @@ fn test_mermaid_nested_subgraphs_and_original_dependency_endpoints() -> Result<(
 #[rstest]
 #[case(Format::Dot)]
 #[case(Format::Mermaid)]
-fn test_missing_ancestors_are_containers_without_dependency_nodes(#[case] format: Format) -> Result<()> {
+fn test_missing_ancestor_containers(#[case] format: Format) -> Result<()> {
     let fixture = FolderGraph::new(
         ["src/deep/leaf", "tests"].map(String::from).map(FolderNode::new).into(),
         BTreeMap::from([(
@@ -183,11 +184,11 @@ fn test_group_label_escaping(#[case] format: Format, #[case] escaped: &str) -> R
     let system_under_test = format.exporter();
 
     let output = render_grouped(system_under_test.as_ref(), &fixture)?;
-
-    assert_eq!(output.matches(escaped).count(), 2, "container and dependency label escaping differ: {output}");
     if matches!(format, Format::Dot) {
         dot_statements(&output)?;
     }
+
+    assert_eq!(output.matches(escaped).count(), 2, "container and dependency label escaping differ: {output}");
     Ok(())
 }
 
@@ -250,7 +251,7 @@ fn test_common_path_labels_and_standalone_original_ancestors(#[case] format: For
 #[rstest]
 #[case(Format::Dot)]
 #[case(Format::Mermaid)]
-fn test_grouping_empty_graph_preserves_empty_output(#[case] format: Format) -> Result<()> {
+fn test_empty_graph_grouping(#[case] format: Format) -> Result<()> {
     let fixture = FolderGraph::default();
     let system_under_test = format.exporter();
     let mut flat_output = Vec::new();

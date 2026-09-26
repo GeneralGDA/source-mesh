@@ -59,9 +59,11 @@ impl<'graph> IndexedGraph<'graph> {
     }
 
     pub(super) fn with_cycles(graph: &'graph FolderGraph, cycles: Option<&CycleAnalysis<FolderNode>>) -> Result<Self> {
-        let mut indexed_graph = Self::new(graph)?;
         if let Some(cycles) = cycles {
             validate_folder_analysis(cycles, graph)?;
+        }
+        let mut indexed_graph = Self::new(graph)?;
+        if let Some(cycles) = cycles {
             indexed_graph.cycle_group_count = cycles.group_count();
             for (edge, indexed_edge) in graph.edges().keys().zip(&mut indexed_graph.edges) {
                 indexed_edge.cycle_group = cycles.edge_group(edge);
@@ -196,25 +198,25 @@ mod tests {
         let indexed_graph = IndexedGraph::new(&fixture)?;
 
         let system_under_test = Folder::hierarchy(&indexed_graph)?;
+        let api = system_under_test.first().context("api is missing")?;
+        let version = api.children.first().context("v1 is missing")?;
+        let storage = system_under_test.last().context("store is missing")?;
+        let edge = indexed_graph.edges.first().context("Dependency is missing")?;
 
         assert_eq!(system_under_test.len(), 2, "Common root containers must be omitted");
-        let api = system_under_test.first().context("api is missing")?;
-        assert!(api.label == "src/api" && api.display_label == "api" && !api.dependency,
+        assert_eq!((api.label, api.display_label, api.dependency), ("src/api", "api", false),
             "An ancestor below the common root must remain a relative container");
-        let version = api.children.first().context("v1 is missing")?;
-        assert!(version.label == "src/api/v1" && version.display_label == "api/v1"
-            && version.index == 0 && version.dependency, "Original v1 endpoint changed");
-        let storage = system_under_test.last().context("store is missing")?;
-        assert!(storage.label == "src/store" && storage.display_label == "store"
-            && storage.index == 1 && storage.dependency, "Original storage endpoint changed");
+        assert_eq!((version.label, version.display_label, version.index, version.dependency),
+            ("src/api/v1", "api/v1", 0, true), "Original v1 endpoint changed");
+        assert_eq!((storage.label, storage.display_label, storage.index, storage.dependency),
+            ("src/store", "store", 1, true), "Original storage endpoint changed");
         assert_eq!(indexed_graph.edges.len(), 1, "Hierarchy changed the edge count");
-        let edge = indexed_graph.edges.first().context("Dependency is missing")?;
-        assert!(edge.source == 0 && edge.target == 1 && edge.weight == DependencyCount::new(7), "Hierarchy changed the dependency");
+        assert_eq!((edge.source, edge.target, edge.weight), (0, 1, DependencyCount::new(7)), "Hierarchy changed the dependency");
         Ok(())
     }
 
     #[test]
-    fn test_hierarchy_common_ancestors_keep_their_own_files() -> Result<()> {
+    fn test_hierarchy_common_ancestor_dependencies() -> Result<()> {
         let fixture = FolderGraph::new(
             [".", "src", "src/api", "src/api/v1", "src/api/v2"].map(String::from).map(FolderNode::new).into(),
             BTreeMap::from([
@@ -261,14 +263,14 @@ mod tests {
         let indexed_graph = IndexedGraph::new(&fixture)?;
 
         let system_under_test = Folder::hierarchy(&indexed_graph)?;
+        let folder = system_under_test.first().context("Only folder is missing")?;
+        let edge = indexed_graph.edges.first().context("Self-dependency is missing")?;
 
         assert_eq!(system_under_test.len(), 1, "The only source folder must remain visible");
-        let folder = system_under_test.first().context("Only folder is missing")?;
-        assert!(folder.label == label && folder.display_label == display_label
-            && folder.index == 0 && folder.dependency && folder.children.is_empty(),
-            "The only source folder changed or retained redundant containers");
-        let edge = indexed_graph.edges.first().context("Self-dependency is missing")?;
-        assert!(edge.source == 0 && edge.target == 0 && edge.weight == DependencyCount::new(4), "Self-dependency changed");
+        assert_eq!((folder.label, folder.display_label, folder.index, folder.dependency),
+            (label, display_label, 0, true), "The only source folder changed");
+        assert!(folder.children.is_empty(), "The only source folder retained redundant containers");
+        assert_eq!((edge.source, edge.target, edge.weight), (0, 0, DependencyCount::new(4)), "Self-dependency changed");
         Ok(())
     }
 
@@ -293,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn test_hierarchy_common_prefix_respects_path_components() -> Result<()> {
+    fn test_hierarchy_common_prefix_components() -> Result<()> {
         let fixture = FolderGraph::new(
             BTreeSet::from([FolderNode::new("src/api".into()), FolderNode::new("src/api_extra".into())]), BTreeMap::new(),
         )?;

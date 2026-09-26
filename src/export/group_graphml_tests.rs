@@ -11,6 +11,8 @@ use roxmltree::Node;
 use rstest::rstest;
 
 use pretty_assertions::assert_eq;
+use super::edge_style::kind_name;
+use super::tests::parallel_dependency_fixture;
 use crate::export::Exporter as _;
 use crate::export::GraphMl;
 use crate::model::DependencyCount;
@@ -59,8 +61,8 @@ fn dependencies(document: &Document<'_>) -> Result<BTreeMap<FolderEdge, Dependen
                 .parse()?;
             let kind = match edge.children().find(|child| child.attribute("key") == Some("kind"))
                 .and_then(|child| child.text()).context("GraphML edge has no dependency kind")? {
-                "production" => DependencyKind::Production,
-                "test" => DependencyKind::Test,
+                kind if kind == kind_name(DependencyKind::Production) => DependencyKind::Production,
+                kind if kind == kind_name(DependencyKind::Test) => DependencyKind::Test,
                 kind => bail!("Unknown GraphML dependency kind: {kind}"),
             };
             Ok((FolderEdge::new(
@@ -107,7 +109,6 @@ fn test_nested_folder_groups_and_missing_ancestors() -> Result<()> {
     for node in document.descendants().filter(|node| node.has_tag_name("node")) {
         let nested_graph = node.children().find(|child| child.has_tag_name("graph"));
         if let Some(nested_graph) = nested_graph {
-            assert_eq!(node.attribute("yfiles.foldertype"), Some("group"), "Parent folder is not a yEd group");
             let realizers = node.children().find(|child| child.attribute("key") == Some("ng"))
                 .and_then(|graphics| graphics.descendants().find(|child| child.has_tag_name("Realizers")))
                 .context("Group has no yEd realizers")?;
@@ -115,10 +116,11 @@ fn test_nested_folder_groups_and_missing_ancestors() -> Result<()> {
                 .filter(|child| child.has_tag_name("State"))
                 .filter_map(|state| state.attribute("closed"))
                 .collect();
+            let [parent_left, parent_top, parent_width, parent_height] = geometry(node)?;
 
+            assert_eq!(node.attribute("yfiles.foldertype"), Some("group"), "Parent folder is not a yEd group");
             assert_eq!(realizers.attribute("active"), Some("0"), "Group must initially be expanded");
             assert_eq!(states, ["false", "true"], "Group must support expanded and collapsed views");
-            let [parent_left, parent_top, parent_width, parent_height] = geometry(node)?;
             for child in nested_graph.children().filter(|child| child.has_tag_name("node")) {
                 let [child_left, child_top, child_width, child_height] = geometry(child)?;
 
@@ -169,15 +171,7 @@ fn test_group_endpoint_cross_group_self_dependencies_and_weights() -> Result<()>
 #[case(false)]
 #[case(true)]
 fn test_parallel_dependency_kinds_and_weights(#[case] grouped: bool) -> Result<()> {
-    let source = FolderNode::new("src/api/http".into());
-    let target = FolderNode::new("src/storage".into());
-    let fixture = FolderGraph::new(
-        [source.clone(), target.clone()].into(),
-        BTreeMap::from([
-            (FolderEdge::new(source.clone(), target.clone(), DependencyKind::Production), DependencyCount::new(2)),
-            (FolderEdge::new(source, target, DependencyKind::Test), DependencyCount::new(3)),
-        ]),
-    )?;
+    let fixture = parallel_dependency_fixture()?;
     let system_under_test = GraphMl;
     let mut output = Vec::new();
 

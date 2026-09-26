@@ -1,1 +1,2 @@
-pub fn run() -> usize { 7 }
+#[must_use]
+pub const fn run() -> usize { 7 }

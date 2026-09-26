@@ -94,10 +94,10 @@ cargo test --release --locked
 cargo clippy --release --all-targets --locked -- -D warnings
 ```
 
-On Windows, install the optional agent tools with:
+With PowerShell (`pwsh`) and Cargo on `PATH`, install the optional agent tools on Linux, macOS, or Windows:
 
-```powershell
-.\Install-AgentTools.ps1
+```console
+pwsh -File ./Install-AgentTools.ps1
 ```
 
 The script installs missing `rg`, `fd`, `jaq`, and `ast-grep` through Cargo without replacing commands already on `PATH`.

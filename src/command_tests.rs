@@ -2,7 +2,6 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 
-use anyhow::Context as _;
 use anyhow::Result;
 use clap::Parser as _;
 use pretty_assertions::assert_eq;
@@ -21,7 +20,7 @@ use crate::run;
 #[rstest]
 #[case::malformed_index(b"this is not protobuf", Path::new("."))]
 #[case::outside_root(include_bytes!("fixtures/dependency-graph.scip"), Path::new(".."))]
-fn test_invalid_input_preserves_output(#[case] index: &[u8], #[case] root: &Path) -> Result<()> {
+fn test_invalid_input_output_preservation(#[case] index: &[u8], #[case] root: &Path) -> Result<()> {
     const EXISTING_OUTPUT: &str = "previous diagram";
     let fixture = tempdir()?;
     let index_path = fixture.path().join("input.scip");
@@ -39,8 +38,10 @@ fn test_invalid_input_preserves_output(#[case] index: &[u8], #[case] root: &Path
     let result = run(system_under_test, &mut output);
     let preserved = fs::read_to_string(&diagram_path)?;
 
-    let error = result.err().context("Command accepted an invalid index or subtree")?;
-    assert!(!error.to_string().is_empty(), "Command omitted invalid-input diagnostics");
+    assert!(result.is_err(), "Command accepted an invalid index or subtree");
+    if let Err(error) = result {
+        assert!(!error.to_string().is_empty(), "Command omitted invalid-input diagnostics");
+    }
     assert!(output.is_empty(), "Command wrote to stdout for invalid input");
     assert_eq!(preserved, EXISTING_OUTPUT, "Command overwrote the existing diagram");
     Ok(())
@@ -69,7 +70,7 @@ fn cyclic_index_fixture() -> Result<Vec<u8>> {
 #[rstest]
 #[case::folder_report(None)]
 #[case::file_report(Some(0))]
-fn test_cycle_limit_preserves_outputs(
+fn test_cycle_limit_output_preservation(
     #[case] depth: Option<usize>,
     #[values(false, true)] diagram_to_file: bool,
 ) -> Result<()> {
@@ -96,8 +97,10 @@ fn test_cycle_limit_preserves_outputs(
 
     let result = run(system_under_test, &mut output);
 
-    let error = result.err().context("Command accepted more cycles than the limit")?;
-    assert!(error.to_string().contains("Cycle count exceeds"), "Command failed before checking the cycle limit: {error:#}");
+    assert!(result.is_err(), "Command accepted more cycles than the limit");
+    if let Err(error) = result {
+        assert!(error.to_string().contains("Cycle count exceeds"), "Command failed before checking the cycle limit: {error:#}");
+    }
     assert!(output.is_empty(), "Command wrote to stdout before checking the cycle limit");
     for path in [&diagram_path, &folder_report_path, &file_report_path] {
         let preserved = fs::read_to_string(path)?;
@@ -107,7 +110,7 @@ fn test_cycle_limit_preserves_outputs(
 }
 
 #[test]
-fn test_fail_on_cycles_writes_diagnostics_before_failing() -> Result<()> {
+fn test_cycle_gate_diagnostics() -> Result<()> {
     let fixture = tempdir()?;
     let index_path = fixture.path().join("input.scip");
     let diagram_path = fixture.path().join("diagram.graphml");
@@ -144,7 +147,7 @@ fn test_fail_on_cycles_writes_diagnostics_before_failing() -> Result<()> {
 }
 
 #[test]
-fn test_fail_on_cycles_accepts_acyclic_graph() -> Result<()> {
+fn test_acyclic_graph_cycle_gate() -> Result<()> {
     let fixture = tempdir()?;
     let index_path = fixture.path().join("input.scip");
     fs::write(&index_path, include_bytes!("fixtures/dependency-graph.scip"))?;

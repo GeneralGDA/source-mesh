@@ -31,7 +31,7 @@ pub fn contains_project_file(directory: &Path) -> bool {
 #[derive(new)]
 pub struct RustAnalyzer<'a> {
     project: &'a Path,
-    config: Option<&'a Path>,
+    configuration_path: Option<&'a Path>,
     options: &'a AnalyzerOptions,
 }
 
@@ -63,23 +63,23 @@ impl IndexSource for RustAnalyzer<'_> {
         let index_file = index_directory.path().join("index.scip");
         let production_index_file = index_directory.path().join("production.scip");
         let configuration_path = self
-            .config
+            .configuration_path
             .map(dunce::canonicalize)
             .transpose()
             .context("Cannot resolve rust-analyzer config")?;
         let configuration = configuration_path.as_ref().map_or_else(
             || Ok(Value::Object(Map::default())),
             |path| -> Result<Value> {
-                Ok(serde_json::from_slice(
+                serde_json::from_slice(
                     &fs::read(path).context("Cannot read rust-analyzer config")?,
-                )?)
+                ).context("Cannot parse rust-analyzer config")
             },
         )?;
         let production_configuration_path = index_directory.path().join("production.json");
         fs::write(
             &production_configuration_path,
             serde_json::to_vec(&without_test_cfg(configuration)?)?,
-        )?;
+        ).context("Cannot write non-test analysis configuration")?;
         let configured_analyzer =
             ScipProcess::new(&project, configuration_path.as_deref(), self.options);
         let production_analyzer =
@@ -152,16 +152,20 @@ mod tests {
     use crate::scip_backend::parse_scip;
 
     #[must_use]
-    fn fixture_directory() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("src")
-            .join("fixtures")
+    fn analyzer_fixture() -> (PathBuf, Options) {
+        (
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("src")
+                .join("fixtures"),
+            Options::new(false),
+        )
     }
 
     #[test]
     #[ignore = "requires rust-analyzer and the Rust toolchain components"]
     fn test_live_generated_method_dependencies() -> Result<()> {
-        let project = fixture_directory().join("generated-methods");
+        let (fixture, options) = analyzer_fixture();
+        let project = fixture.join("generated-methods");
         let source_directory = Path::new("src");
         let client = FileNode::new(source_directory.join("client.rs"))?;
         let factory = FileNode::new(source_directory.join("factory.rs"))?;
@@ -174,7 +178,6 @@ mod tests {
             FileEdge::new(validation.clone(), factory, DependencyKind::Test),
             FileEdge::new(validation, model, DependencyKind::Test),
         ]);
-        let options = Options::new(false);
         let system_under_test = RustAnalyzer::new(&project, None, &options);
 
         let index = system_under_test.index()?;
@@ -187,27 +190,26 @@ mod tests {
     #[test]
     #[ignore = "requires rust-analyzer and the Rust toolchain components"]
     fn test_live_cargo_target_collisions() -> Result<()> {
-        let project = fixture_directory().join("cargo-targets");
-        let options = Options::new(false);
-        let system_under_test = RustAnalyzer::new(&project, None, &options);
-
-        let index = system_under_test.index()?;
-        let graph = parse_scip(&index)?;
-
+        let (fixture, options) = analyzer_fixture();
+        let project = fixture.join("cargo-targets");
         let library = FileNode::new(Path::new("src").join("library.rs"))?;
         let expected = BTreeSet::from([
             FileEdge::new(FileNode::new(Path::new("src").join("bin").join("first.rs"))?, library.clone(), DependencyKind::Production),
             FileEdge::new(FileNode::new(Path::new("src").join("bin").join("second.rs"))?, library, DependencyKind::Production),
         ]);
+        let system_under_test = RustAnalyzer::new(&project, None, &options);
+
+        let index = system_under_test.index()?;
+        let graph = parse_scip(&index)?;
+
         assert_eq!(graph.edges(), &expected, "Cargo target collisions must not create links between binaries or hide library calls");
         Ok(())
     }
     #[test]
     #[ignore = "requires rust-analyzer and the Rust toolchain components"]
     fn test_live_manifest_file_graph() -> Result<()> {
-        let fixture = fixture_directory();
+        let (fixture, options) = analyzer_fixture();
         let manifest = fixture.join("dependency-graph").join("Cargo.toml");
-        let options = Options::new(false);
         let expected = parse_scip(&ScipFile::new(fixture.join("dependency-graph.scip")).index()?)?;
         let system_under_test = RustAnalyzer::new(&manifest, None, &options);
 
@@ -230,9 +232,8 @@ mod tests {
     #[test]
     #[ignore = "requires rust-analyzer and the Rust toolchain components"]
     fn test_live_test_configuration_classification() -> Result<()> {
-        let fixture = fixture_directory()
-            .join("test-dependencies")
-            .join("Cargo.toml");
+        let (fixture, options) = analyzer_fixture();
+        let manifest = fixture.join("test-dependencies").join("Cargo.toml");
         let source_directory = Path::new("src");
         let module_file = "mod.rs";
         let client = FileNode::new(source_directory.join("client").join("calls.rs"))?;
@@ -257,8 +258,7 @@ mod tests {
                 FileEdge::new(validation, test_only, DependencyKind::Test),
             ]),
         )?;
-        let options = Options::new(false);
-        let system_under_test = RustAnalyzer::new(&fixture, None, &options);
+        let system_under_test = RustAnalyzer::new(&manifest, None, &options);
 
         let index = system_under_test.index()?;
         let graph = parse_scip(&index)?;

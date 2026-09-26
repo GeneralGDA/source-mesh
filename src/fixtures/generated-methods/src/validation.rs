@@ -1,8 +1,8 @@
 #[test]
 fn test_generated_setter() {
-    let mut measurement = crate::factory::make();
+    let mut system_under_test = crate::factory::make();
 
-    measurement.set_value(11);
+    system_under_test.set_value(11);
 
-    assert_eq!(*measurement.value(), 11);
+    assert_eq!(*system_under_test.value(), 11);
 }

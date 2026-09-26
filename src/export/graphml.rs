@@ -16,6 +16,9 @@ use crate::cycle_presentation::group_color;
 use crate::model::DependencyKind;
 use crate::model::FolderGraph;
 
+pub(super) const GRAPHML_NAMESPACE: &str = "http://graphml.graphdrawing.org/xmlns";
+pub(super) const YWORKS_NAMESPACE: &str = "http://www.yworks.com/xml/graphml";
+
 pub struct GraphMl;
 
 struct Position {
@@ -173,10 +176,10 @@ fn write_header(output: &mut dyn Write, has_cycle_groups: bool) -> Result<()> {
     writeln!(
         output,
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<graphml xmlns="http://graphml.graphdrawing.org/xmlns"
+<graphml xmlns="{GRAPHML_NAMESPACE}"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xmlns:y="http://www.yworks.com/xml/graphml"
-         xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://www.yworks.com/xml/schema/graphml/1.1/ygraphml.xsd">
+         xmlns:y="{YWORKS_NAMESPACE}"
+         xsi:schemaLocation="{GRAPHML_NAMESPACE} http://www.yworks.com/xml/schema/graphml/1.1/ygraphml.xsd">
   <key id="label" for="node" attr.name="label" attr.type="string"/>
   <key id="weight" for="edge" attr.name="dependencies" attr.type="long"/>
   <key id="kind" for="edge" attr.name="dependency_kind" attr.type="string"/>"#

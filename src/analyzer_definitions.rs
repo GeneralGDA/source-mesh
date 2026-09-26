@@ -33,6 +33,8 @@ use serde_json::json;
 use tempfile::NamedTempFile;
 use url::Url;
 
+use crate::analyzer_process::VERBOSE_HINT;
+
 const INITIALIZATION_TIMEOUT: Duration = Duration::from_mins(10);
 const DEFINITION_TIMEOUT: Duration = Duration::from_mins(5);
 const SERVER_STATUS: &str = "experimental/serverStatus";
@@ -60,10 +62,10 @@ struct AnalyzerProcess {
 }
 
 impl DefinitionResolver {
-    pub(crate) fn start(project: &Path, config: Option<&Path>, verbose: bool) -> Result<Self> {
+    pub(crate) fn start(project: &Path, configuration_path: Option<&Path>, verbose: bool) -> Result<Self> {
         ensure!(project.is_dir(), "Definition lookup needs a project directory: {}", project.display());
         let project = dunce::canonicalize(project).context("Cannot resolve definition lookup project")?;
-        let configuration = definition_configuration(config)?;
+        let configuration = definition_configuration(configuration_path)?;
         let diagnostics = NamedTempFile::new().context("Cannot capture rust-analyzer definition diagnostics")?;
         let child = Command::new("rust-analyzer")
             .current_dir(&project)
@@ -111,7 +113,7 @@ impl DefinitionResolver {
         let url = Url::from_file_path(file).map_err(|()| anyhow!("Cannot encode source path {} as a file URI", file.display()))?;
         let started = Instant::now();
         if self.process.verbose {
-            eprintln!("Looking up definition at {}:{}:{}...", file.display(), line + 1, column + 1);
+            eprintln!("Looking up definition at {}:{}:{}...", file.display(), u64::from(line) + 1, u64::from(column) + 1);
         }
         let result = self.request(
             "textDocument/definition",
@@ -121,7 +123,7 @@ impl DefinitionResolver {
         if self.process.verbose {
             eprintln!("Definition lookup completed in {:.2}s.", started.elapsed().as_secs_f64());
         }
-        definition_locations(&result)
+        definition_locations(&result).with_context(|| self.process.failure_context())
     }
 
     fn initialize(&mut self, project: &Path) -> Result<()> {
@@ -201,21 +203,29 @@ impl DefinitionResolver {
 }
 
 impl AnalyzerProcess {
+    #[must_use]
     fn failure_context(&self) -> String {
+        const MAXIMUM_DIAGNOSTIC_BYTES: u64 = 8_192;
+        const FAILURE_MESSAGE: &str = "Semantic definition lookup failed";
+
         if !self.verbose {
-            return "Dependency resolution failed. Use --verbose for diagnostic details.".into();
+            return format!("Dependency resolution failed. {VERBOSE_HINT}");
         }
         let details = (|| -> Result<String> {
             let mut file = self.diagnostics.reopen()?;
             let length = file.metadata()?.len();
-            file.seek(SeekFrom::Start(length.saturating_sub(8_192)))?;
+            file.seek(SeekFrom::Start(length.saturating_sub(MAXIMUM_DIAGNOSTIC_BYTES)))?;
             let mut output = Vec::new();
-            file.take(8_192).read_to_end(&mut output)?;
+            file.take(MAXIMUM_DIAGNOSTIC_BYTES).read_to_end(&mut output)?;
             Ok(String::from_utf8_lossy(&output).trim().to_owned())
         })();
         match details {
-            Ok(details) if !details.is_empty() => format!("Semantic definition lookup failed. rust-analyzer diagnostics:\n{details}"),
-            Ok(_) | Err(_) => "Semantic definition lookup failed".into(),
+            Ok(details) if !details.is_empty() => format!("{FAILURE_MESSAGE}. rust-analyzer diagnostics:\n{details}"),
+            Ok(_) => FAILURE_MESSAGE.into(),
+            Err(error) => {
+                eprintln!("warning: Cannot read rust-analyzer definition diagnostics: {error}");
+                FAILURE_MESSAGE.into()
+            }
         }
     }
 }
@@ -311,10 +321,11 @@ fn definition_locations(value: &Value) -> Result<Vec<DefinitionLocation>> {
     reason = "Tests use assertions for expectations while returning Result for fallible setup."
 )]
 mod tests {
+    use std::fs;
     use std::path::Path;
 
     use anyhow::Result;
-    use anyhow::Context as _;
+    use anyhow::anyhow;
     use lsp_server::Message;
     use lsp_server::Notification;
     use lsp_server::RequestId;
@@ -323,6 +334,7 @@ mod tests {
     use rstest::rstest;
     use serde_json::Value;
     use serde_json::json;
+    use tempfile::NamedTempFile;
     use url::Url;
 
     use super::configuration_response;
@@ -336,7 +348,7 @@ mod tests {
     #[case::location_link(true, true)]
     fn test_definition_location_coordinates(#[case] link: bool, #[case] array: bool) -> Result<()> {
         let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("main.rs");
-        let uri = Url::from_file_path(&source).map_err(|()| anyhow::anyhow!("Cannot encode fixture path"))?;
+        let uri = Url::from_file_path(&source).map_err(|()| anyhow!("Cannot encode fixture path"))?;
         let range = json!({"start": {"line": 7, "character": 13}, "end": {"line": 7, "character": 17}});
         let response = if link {
             json!({"targetUri": uri.as_str(), "targetSelectionRange": range, "targetRange": {"start": {"line": 0, "character": 0}, "end": {"line": 20, "character": 0}}})
@@ -346,20 +358,20 @@ mod tests {
         let response = if array { json!([response]) } else { response };
 
         let system_under_test = definition_locations(&response)?;
-        let location = system_under_test.first().context("Missing decoded definition")?;
+        let location = system_under_test.first().map(|location| (location.file(), *location.line(), *location.column()));
 
         assert_eq!(system_under_test.len(), 1);
-        assert_eq!(location.file(), &source);
-        assert_eq!(*location.line(), 7);
-        assert_eq!(*location.column(), 13);
+        assert_eq!(location, Some((&source, 7, 13)));
         Ok(())
     }
 
     #[rstest]
-    #[case(json!({}))]
-    #[case(json!({"uri":"https://example.com/file.rs", "range":{"start":{"line":0,"character":0}}}))]
-    #[case(json!({"uri":"file:///fixture.rs", "range":{"start":{"line":-1,"character":0}}}))]
-    #[case(json!({"uri":"file:///fixture.rs", "range":{"start":{"line":0,"character":4_294_967_296_u64}}}))]
+    #[case::missing_uri(json!({}))]
+    #[case::remote_uri(json!({"uri":"https://example.com/file.rs", "range":{"start":{"line":0,"character":0}}}))]
+    #[case::negative_line(json!({"uri":"file:///C:/fixture.rs", "range":{"start":{"line":-1,"character":0}}}))]
+    #[case::negative_column(json!({"uri":"file:///C:/fixture.rs", "range":{"start":{"line":0,"character":-1}}}))]
+    #[case::overflowing_line(json!({"uri":"file:///C:/fixture.rs", "range":{"start":{"line":u64::from(u32::MAX) + 1,"character":0}}}))]
+    #[case::overflowing_column(json!({"uri":"file:///C:/fixture.rs", "range":{"start":{"line":0,"character":u64::from(u32::MAX) + 1}}}))]
     fn test_invalid_definition_locations(#[case] response: Value) {
         let system_under_test = definition_locations(&response);
 
@@ -378,8 +390,8 @@ mod tests {
 
     #[test]
     fn test_definition_configuration_preserves_analysis_settings() -> Result<()> {
-        let fixture = tempfile::NamedTempFile::new()?;
-        std::fs::write(fixture.path(), serde_json::to_vec(&json!({"cfg":{"setTest":false}, "cargo":{"features":["feature"]}, "cachePriming":{"numThreads":3}}))?)?;
+        let fixture = NamedTempFile::new()?;
+        fs::write(fixture.path(), serde_json::to_vec(&json!({"cfg":{"setTest":false}, "cargo":{"features":["feature"]}, "cachePriming":{"numThreads":3}}))?)?;
 
         let system_under_test = definition_configuration(Some(fixture.path()))?;
 

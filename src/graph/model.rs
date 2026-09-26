@@ -489,7 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn test_excluding_test_dependencies_preserves_production_and_all_files() -> Result<()> {
+    fn test_dependency_kind_filtering() -> Result<()> {
         let (files, dependencies) = mixed_dependency_fixture()?;
         let expected_files = files.clone();
         let system_under_test = FileGraph::new(files, dependencies)?;

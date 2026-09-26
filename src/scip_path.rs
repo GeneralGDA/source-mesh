@@ -6,8 +6,8 @@ use anyhow::ensure;
 
 use crate::model::FileNode;
 
-pub(crate) fn source_path(value: &str) -> Result<FileNode> {
-    let normalized = value.replace('\\', "/");
+pub(crate) fn source_path(relative_path: &str) -> Result<FileNode> {
+    let normalized = relative_path.replace('\\', "/");
     let path = PathBuf::from(&normalized);
     ensure!(
         !normalized.is_empty()
@@ -24,7 +24,7 @@ pub(crate) fn source_path(value: &str) -> Result<FileNode> {
             && path
                 .components()
                 .any(|part| matches!(part, Component::Normal(_))),
-        "SCIP document path must be a nonempty relative file path without '..': {value:?}"
+        "SCIP document path must be a nonempty relative file path without '..': {relative_path:?}"
     );
     FileNode::new(path
         .components()

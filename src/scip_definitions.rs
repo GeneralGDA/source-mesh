@@ -5,8 +5,10 @@ use std::collections::HashSet;
 use anyhow::Result;
 use anyhow::anyhow;
 use scip::symbol::format_symbol;
+use scip::symbol::is_local_symbol;
 use scip::symbol::parse_symbol;
 use scip::types::Index;
+use scip::types::Symbol;
 use scip::types::SymbolRole;
 use scip::types::descriptor::Suffix;
 use scip::types::symbol_information::Kind;
@@ -29,7 +31,7 @@ pub(crate) fn definitions(index: &Index) -> Result<BTreeMap<&str, BTreeSet<FileN
                 .filter(|occurrence| occurrence.symbol_roles & SymbolRole::Definition as i32 != 0)
                 .map(|occurrence| occurrence.symbol.as_str()));
         for symbol in symbols {
-            if !symbol.is_empty() && !symbol.starts_with("local ") && !namespaces.contains(symbol)
+            if !symbol.is_empty() && !is_local_symbol(symbol) && !namespaces.contains(symbol)
                 && !is_inherent_implementation_symbol(symbol)
             {
                 definitions.entry(symbol).or_default().insert(file.clone());
@@ -49,11 +51,11 @@ pub(crate) fn unresolved_symbols(index: &Index) -> Result<BTreeSet<String>> {
     let mut unresolved = BTreeSet::new();
     for symbol in index.documents.iter().flat_map(|document| &document.occurrences)
         .map(|occurrence| occurrence.symbol.as_str())
-        .filter(|symbol| !symbol.is_empty() && !symbol.starts_with("local ") && !known_symbols.contains(symbol)
+        .filter(|symbol| !symbol.is_empty() && !is_local_symbol(symbol) && !known_symbols.contains(symbol)
             && !is_inherent_implementation_symbol(symbol))
         .collect::<BTreeSet<_>>()
     {
-        let parsed = parse_symbol(symbol).map_err(|error| anyhow!("Cannot decode symbol {symbol:?}: {error:?}"))?;
+        let parsed = decode_symbol(symbol)?;
         if parsed.descriptors.last().is_some_and(|descriptor| descriptor.suffix.enum_value_or_default() != Suffix::Namespace)
             && packages.contains(&package_identity(symbol)?)
         {
@@ -73,8 +75,12 @@ fn is_inherent_implementation_symbol(symbol: &str) -> bool {
     })
 }
 
+pub(crate) fn decode_symbol(symbol: &str) -> Result<Symbol> {
+    parse_symbol(symbol).map_err(|error| anyhow!("Cannot decode symbol {symbol:?}: {error:?}"))
+}
+
 fn package_identity(symbol: &str) -> Result<String> {
-    let mut parsed = parse_symbol(symbol).map_err(|error| anyhow!("Cannot decode symbol {symbol:?}: {error:?}"))?;
+    let mut parsed = decode_symbol(symbol)?;
     parsed.descriptors.clear();
     Ok(format_symbol(parsed))
 }
@@ -111,13 +117,11 @@ mod tests {
             symbols: vec![SymbolInformation { symbol: symbol.into(), kind: kind.into(), ..SymbolInformation::default() }],
             ..Document::default()
         }], ..Index::default() };
+        let expected_owner = BTreeSet::from([FileNode::new(PathBuf::from("model.rs"))?]);
 
         let system_under_test = definitions(&fixture)?;
 
-        assert_eq!(system_under_test.contains_key(symbol), dependency_target);
-        if dependency_target {
-            assert_eq!(system_under_test.get(symbol), Some(&BTreeSet::from([FileNode::new(PathBuf::from("model.rs"))?])));
-        }
+        assert_eq!(system_under_test.get(symbol), dependency_target.then_some(&expected_owner));
         Ok(())
     }
 
@@ -170,7 +174,7 @@ mod tests {
     }
 
     #[test]
-    fn test_external_symbol_information_has_no_document_owner() -> Result<()> {
+    fn test_external_symbol_ownership() -> Result<()> {
         let symbol = "rust-analyzer cargo dependency 0.0.0 model/Value#";
         let fixture = Index {
             documents: vec![Document {

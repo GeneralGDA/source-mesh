@@ -23,10 +23,6 @@ pub(crate) fn without_test_cfg(mut configuration: Value) -> Result<Value> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Tests use assertions for expectations while returning Result for fallible setup."
-)]
 mod tests {
     use anyhow::Result;
     use pretty_assertions::assert_eq;
@@ -53,10 +49,9 @@ mod tests {
     #[case(json!([]))]
     #[case(json!({"cfg": null}))]
     #[case(json!({"cargo": {"cfgs": "test"}}))]
-    fn test_invalid_configuration(#[case] configuration: Value) -> Result<()> {
+    fn test_invalid_configuration(#[case] configuration: Value) {
         let system_under_test = without_test_cfg(configuration);
 
         assert!(system_under_test.is_err(), "Invalid configuration was accepted");
-        Ok(())
     }
 }

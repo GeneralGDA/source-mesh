@@ -10,6 +10,7 @@ mod repository_tests {
     use std::fs;
     use std::path::Component;
     use std::path::Path;
+    use std::path::PathBuf;
     use std::process::Command;
     use std::process::Output;
 
@@ -20,9 +21,13 @@ mod repository_tests {
     use roxmltree::Document;
     use rstest::fixture;
     use rstest::rstest;
+    use tempfile::TempDir;
     use tempfile::tempdir;
 
     const UPDATE_EXPECTED_OUTPUTS: &str = "SOURCE_MESH_UPDATE_EXPECTED_OUTPUTS";
+    const REPOSITORY_INDEX_NAME: &str = "repository.scip";
+    const FOLDER_CYCLE_REPORT_NAME: &str = "folder-cycles.md";
+    const FILE_CYCLE_REPORT_NAME: &str = "file-cycles.md";
 
     struct RepositoryFixture {
         index: Vec<u8>,
@@ -45,13 +50,14 @@ mod repository_tests {
                 Err(error) => return Err(error.into()),
             };
             let directory = tempdir()?;
-            let saved_index = directory.path().join("repository.scip");
+            let saved_index = directory.path().join(REPOSITORY_INDEX_NAME);
             let mut system_under_test = Command::new(env!("CARGO_BIN_EXE_source-mesh"));
             system_under_test.current_dir(repository_directory())
                 .args(["Cargo.toml", "--format", "graphml", "--save-scip"]).arg(&saved_index);
 
             let output = system_under_test.output().context("Cannot run live repository analysis")?;
             let diagnostics = String::from_utf8_lossy(&output.stderr);
+
             assert!(!["SCIP", "rust-analyzer", "warning:", "ERROR"].iter().any(|marker| diagnostics.contains(marker)),
                 "Normal repository analysis exposed backend diagnostics: {diagnostics}");
             let live_diagram = successful_stdout(output)?;
@@ -97,14 +103,20 @@ mod repository_tests {
     }
 
     fn successful_stdout(output: Output) -> Result<String> {
-        if !output.status.success() {
-            return Err(Error::msg(format!(
-                "CLI failed; stdout: {}\nstderr: {}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
+        assert!(
+            output.status.success(),
+            "CLI failed; stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         String::from_utf8(output.stdout).context("CLI stdout is not UTF-8")
+    }
+
+    fn replay_fixture(index: &[u8]) -> Result<(TempDir, PathBuf)> {
+        let directory = tempdir()?;
+        let saved_index = directory.path().join(REPOSITORY_INDEX_NAME);
+        fs::write(&saved_index, index)?;
+        Ok((directory, saved_index))
     }
 
     #[fixture]
@@ -124,12 +136,8 @@ mod repository_tests {
         repository_fixture: &Result<RepositoryFixture, String>,
         #[case] include_tests: bool,
     ) -> Result<()> {
-        const EMPTY_CYCLE_REPORT_END: &str = "\n\nNo cycles found.\n";
-
         let fixture = repository_fixture.as_ref().map_err(|error| Error::msg(error.clone()))?;
-        let directory = tempdir()?;
-        let saved_index = directory.path().join("repository.scip");
-        fs::write(&saved_index, &fixture.index)?;
+        let (directory, saved_index) = replay_fixture(&fixture.index)?;
         let maximum_directory_depth = {
             let document = Document::parse(&fixture.live_diagram)
                 .context("Cannot read indexed repository folders from GraphML")?;
@@ -142,30 +150,28 @@ mod repository_tests {
         };
 
         for depth in 0..=maximum_directory_depth {
-            let folder_report_path = directory.path().join(format!("folder-cycles-{depth}.md"));
-            let file_report_path = directory.path().join(format!("file-cycles-{depth}.md"));
             let mut system_under_test = Command::new(env!("CARGO_BIN_EXE_source-mesh"));
             system_under_test.current_dir(repository_directory())
                 .arg("--from-scip").arg(&saved_index)
                 .arg("--depth").arg(depth.to_string())
-                .args(["--cycle-limit", "100"])
-                .arg("--cycles-output").arg(&folder_report_path)
-                .arg("--file-cycles-output").arg(&file_report_path);
+                .arg("--fail-on-cycles");
             if !include_tests {
                 system_under_test.arg("--exclude-tests");
             }
 
             let output = system_under_test.output()
                 .with_context(|| format!("Cannot run repository cycle analysis at depth {depth}"))?;
-            let diagram = successful_stdout(output)?;
-            let file_diagnostics = fs::read_to_string(&file_report_path)?.replace("\r\n", "\n");
-            let folder_diagnostics = fs::read_to_string(&folder_report_path)?.replace("\r\n", "\n");
 
-            assert!(!diagram.is_empty(), "Repository cycle analysis did not produce a diagram");
-            assert!(file_diagnostics.ends_with(EMPTY_CYCLE_REPORT_END),
-                "Expected no repository file dependency cycles (include_tests={include_tests}):\n{file_diagnostics}");
-            assert!(folder_diagnostics.ends_with(EMPTY_CYCLE_REPORT_END),
-                "Expected no repository folder dependency cycles at depth {depth} (include_tests={include_tests}):\n{folder_diagnostics}");
+            assert!(
+                output.status.success(),
+                "Repository dependency architecture failed at depth {depth} (include_tests={include_tests}); stdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                !output.stdout.is_empty(),
+                "Repository cycle analysis did not produce a diagram"
+            );
         }
 
         directory.close()?;
@@ -191,13 +197,11 @@ mod repository_tests {
         #[values("dot", "mermaid", "graphml")] format: &str,
     ) -> Result<()> {
         let fixture = repository_fixture.as_ref().map_err(|error| Error::msg(error.clone()))?;
-        let directory = tempdir()?;
-        let saved_index = directory.path().join("repository.scip");
-        fs::write(&saved_index, &fixture.index)?;
+        let (directory, saved_index) = replay_fixture(&fixture.index)?;
         let diagram_name = format!("diagram.{format}");
         let diagram_path = directory.path().join(&diagram_name);
-        let folder_report_path = directory.path().join("folder-cycles.md");
-        let file_report_path = directory.path().join("file-cycles.md");
+        let folder_report_path = directory.path().join(FOLDER_CYCLE_REPORT_NAME);
+        let file_report_path = directory.path().join(FILE_CYCLE_REPORT_NAME);
         let reports = format == "graphml" && arguments.contains(&"--highlight-cycles");
         let mut system_under_test = Command::new(env!("CARGO_BIN_EXE_source-mesh"));
         system_under_test.current_dir(directory.path())
@@ -214,6 +218,13 @@ mod repository_tests {
         let diagram = fs::read_to_string(&diagram_path)?;
         let directory_entry_count = fs::read_dir(directory.path())?
             .try_fold(0_usize, |count, entry| entry.map(|_| count + 1))?;
+        let cycle_reports = reports
+            .then(|| -> Result<_> {
+                let folder_report = fs::read_to_string(folder_report_path)?;
+                let file_report = fs::read_to_string(file_report_path)?.replace("&#92;", "/");
+                Ok((folder_report, file_report))
+            })
+            .transpose()?;
 
         assert!(stdout.is_empty(), "File export also wrote to stdout");
         assert_eq!(directory_entry_count, if reports { 4 } else { 2 }, "Diagram export created unrequested files");
@@ -221,12 +232,9 @@ mod repository_tests {
             assert_eq!(diagram, fixture.live_diagram, "Live indexing and replay produced different diagrams");
         }
         fixture.check_expected_output(&Path::new(scenario).join(diagram_name), &diagram)?;
-        if reports {
-            let folder_report = fs::read_to_string(folder_report_path)?;
-            let file_report = fs::read_to_string(file_report_path)?.replace("&#92;", "/");
-
-            fixture.check_expected_output(&Path::new(scenario).join("folder-cycles.md"), &folder_report)?;
-            fixture.check_expected_output(&Path::new(scenario).join("file-cycles.md"), &file_report)?;
+        if let Some((folder_report, file_report)) = cycle_reports {
+            fixture.check_expected_output(&Path::new(scenario).join(FOLDER_CYCLE_REPORT_NAME), &folder_report)?;
+            fixture.check_expected_output(&Path::new(scenario).join(FILE_CYCLE_REPORT_NAME), &file_report)?;
         }
 
         directory.close()?;
@@ -234,8 +242,8 @@ mod repository_tests {
     }
 
     #[rstest]
-    #[case::folder("--cycles-output", "report-only", "folder-cycles.md")]
-    #[case::file("--file-cycles-output", "cycles", "file-cycles.md")]
+    #[case::folder("--cycles-output", "report-only", FOLDER_CYCLE_REPORT_NAME)]
+    #[case::file("--file-cycles-output", "cycles", FILE_CYCLE_REPORT_NAME)]
     #[ignore = "indexes the current repository with rust-analyzer; run explicitly in release mode"]
     fn test_repository_report_without_highlighting(
         repository_fixture: &Result<RepositoryFixture, String>,
@@ -244,9 +252,7 @@ mod repository_tests {
         #[case] report_name: &str,
     ) -> Result<()> {
         let fixture = repository_fixture.as_ref().map_err(|error| Error::msg(error.clone()))?;
-        let directory = tempdir()?;
-        let saved_index = directory.path().join("repository.scip");
-        fs::write(&saved_index, &fixture.index)?;
+        let (directory, saved_index) = replay_fixture(&fixture.index)?;
         let report_path = directory.path().join(report_name);
         let mut system_under_test = Command::new(env!("CARGO_BIN_EXE_source-mesh"));
         system_under_test.current_dir(directory.path())

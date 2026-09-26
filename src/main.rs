@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::Context as _;
+use anyhow::Error;
 use anyhow::Result;
 use anyhow::ensure;
 use clap::Args;
@@ -248,8 +249,18 @@ fn run(cli: Cli, standard_output: &mut dyn Write) -> Result<()> {
     Ok(())
 }
 
+#[must_use]
 const fn should_display_help(has_arguments: bool, has_project_file: bool) -> bool {
     !has_arguments && !has_project_file
+}
+
+#[must_use]
+fn error_message(error: &Error, verbose: bool) -> String {
+    if verbose {
+        format!("{error:#}")
+    } else {
+        error.to_string()
+    }
 }
 
 fn main() -> ExitCode {
@@ -263,14 +274,16 @@ fn main() -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
-    if let Err(error) = run(Cli::parse(), &mut io::stdout().lock()) {
+    let cli = Cli::parse();
+    let verbose = cli.analyzer.verbose;
+    if let Err(error) = run(cli, &mut io::stdout().lock()) {
         if error
             .downcast_ref::<io::Error>()
             .is_some_and(|source| source.kind() == io::ErrorKind::BrokenPipe)
         {
             return ExitCode::SUCCESS;
         }
-        eprintln!("error: {error:#}");
+        eprintln!("error: {}", error_message(&error, verbose));
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
@@ -282,6 +295,7 @@ fn main() -> ExitCode {
     reason = "Tests use assertions for expectations while returning Result for fallible setup."
 )]
 mod cli_tests;
+
 #[cfg(test)]
 #[expect(
     clippy::panic_in_result_fn,

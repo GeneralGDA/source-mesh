@@ -5,8 +5,9 @@ pub const fn production() -> u32 { crate::shared::value::read() }
 mod tests {
     #[test]
     fn test_dependencies() {
-        let system_under_test = crate::shared::value::read();
         let fixture = crate::test_only::value::read();
+
+        let system_under_test = crate::shared::value::read();
 
         assert_eq!(system_under_test, fixture);
     }

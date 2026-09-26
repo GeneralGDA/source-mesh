@@ -272,11 +272,9 @@ mod tests {
         let expected: Vec<_> = expected_paths.into_iter().map(|labels| folder_path(&labels)).collect();
 
         let cycles = system_under_test.cycles(NonZeroUsize::new(10).context("Invalid test cycle limit")?)?;
+        let paths: Vec<_> = cycles.into_iter().map(|cycle| cycle.nodes).collect();
 
-        assert!(
-            cycles.iter().map(|cycle| cycle.nodes().as_slice()).eq(expected.iter().map(Vec::as_slice)),
-            "Directed cycle routes or their canonical order differ"
-        );
+        assert_eq!(expected, paths, "Directed cycle routes or their canonical order differ");
         Ok(())
     }
 
@@ -325,12 +323,11 @@ mod tests {
         let expected = [folder_path(&["alpha", "beta", "alpha"]), folder_path(&["gamma", "omega", "gamma"])];
 
         let cycles = system_under_test.cycles(NonZeroUsize::new(2).context("Invalid test cycle limit")?)?;
+        let groups: Vec<_> = cycles.iter().map(|cycle| cycle.group().number().get()).collect();
+        let paths: Vec<_> = cycles.into_iter().map(|cycle| cycle.nodes).collect();
 
-        assert!(cycles.iter().map(|cycle| cycle.group().number().get()).eq([1, 2]), "Cycle group numbers differ");
-        assert!(
-            cycles.iter().map(|cycle| cycle.nodes().as_slice()).eq(expected.iter().map(Vec::as_slice)),
-            "Independent cycle routes or their order differ"
-        );
+        assert_eq!(groups, [1, 2], "Cycle group numbers differ");
+        assert_eq!(paths, expected, "Independent cycle routes or their order differ");
         Ok(())
     }
 
@@ -405,13 +402,13 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_dependency_endpoint() -> Result<()> {
+    fn test_dependency_endpoint_membership() -> Result<()> {
         let nodes = BTreeSet::from([FolderNode::new("alpha".into())]);
         let edge = FolderEdge::new(FolderNode::new("alpha".into()), FolderNode::new("unknown".into()), Production);
 
-        let result = CycleAnalysis::new(&nodes, iter::once(&edge));
+        let system_under_test = CycleAnalysis::new(&nodes, iter::once(&edge));
 
-        assert!(result.is_err(), "Unknown dependency endpoint was accepted");
+        assert!(system_under_test.is_err(), "Unknown dependency endpoint was accepted");
         Ok(())
     }
 

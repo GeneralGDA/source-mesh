@@ -32,6 +32,18 @@ fn graphml_data<'document>(node: Node<'document, '_>, key: &str) -> Result<&'doc
         .and_then(|child| child.text()).context("GraphML edge data is missing")
 }
 
+pub(super) fn parallel_dependency_fixture() -> Result<FolderGraph> {
+    let source = FolderNode::new("src/api/http".into());
+    let target = FolderNode::new("src/storage".into());
+    FolderGraph::new(
+        [source.clone(), target.clone()].into(),
+        BTreeMap::from([
+            (FolderEdge::new(source.clone(), target.clone(), DependencyKind::Production), DependencyCount::new(2)),
+            (FolderEdge::new(source, target, DependencyKind::Test), DependencyCount::new(3)),
+        ]),
+    )
+}
+
 #[rstest]
 #[case(Format::Dot)]
 #[case(Format::Mermaid)]
@@ -40,15 +52,7 @@ fn test_parallel_dependency_styles(
     #[case] format: Format,
     #[values(false, true)] grouped: bool,
 ) -> Result<()> {
-    let source = FolderNode::new("src/api/http".into());
-    let target = FolderNode::new("src/storage".into());
-    let fixture = FolderGraph::new(
-        [source.clone(), target.clone()].into(),
-        BTreeMap::from([
-            (FolderEdge::new(source.clone(), target.clone(), DependencyKind::Production), DependencyCount::new(2)),
-            (FolderEdge::new(source, target, DependencyKind::Test), DependencyCount::new(3)),
-        ]),
-    )?;
+    let fixture = parallel_dependency_fixture()?;
     let system_under_test = format.exporter();
     let mut output = Vec::new();
 
@@ -98,6 +102,8 @@ fn test_parallel_dependency_styles(
                 .context("Production GraphML style is missing")?;
             let test_style = test_edge.descendants().find(|node| node.has_tag_name("LineStyle"))
                 .context("Test GraphML style is missing")?;
+            let visible_label = test_edge.descendants().find(|node| node.has_tag_name("EdgeLabel"))
+                .and_then(|node| node.text()).context("Test GraphML visual label is missing")?;
 
             assert_eq!(edges.len(), 2, "GraphML merged parallel dependency kinds");
             assert_ne!(production_edge.attribute("id"), test_edge.attribute("id"), "Parallel GraphML edges share an identifier");
@@ -111,9 +117,6 @@ fn test_parallel_dependency_styles(
                 && production_style.attribute("color") != Some(TEST_EDGE_COLOR), "Production GraphML style changed");
             assert!(test_style.attribute("type") == Some("dashed")
                 && test_style.attribute("color") == Some(TEST_EDGE_COLOR), "Test GraphML edge is not orange and dashed");
-            let visible_label = test_edge.descendants().find(|node| node.has_tag_name("EdgeLabel"))
-                .and_then(|node| node.text()).context("Test GraphML visual label is missing")?;
-
             assert_eq!(visible_label, test_label.as_str(), "Test GraphML label lost its dependency kind");
         }
     }

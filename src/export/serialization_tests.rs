@@ -4,6 +4,7 @@ use std::io::ErrorKind;
 use std::io::Write;
 
 use anyhow::Context as _;
+use anyhow::Error;
 use anyhow::Result;
 use anyhow::bail;
 use graphviz_rust::dot_structures::EdgeTy;
@@ -11,9 +12,12 @@ use graphviz_rust::dot_structures::Graph;
 use graphviz_rust::dot_structures::Id;
 use graphviz_rust::dot_structures::Stmt as Statement;
 use graphviz_rust::dot_structures::Vertex;
+use roxmltree::Document;
 use rstest::rstest;
 
 use pretty_assertions::assert_eq;
+use super::graphml::GRAPHML_NAMESPACE;
+use super::graphml::YWORKS_NAMESPACE;
 use crate::export::Exporter;
 use crate::export::Format;
 use crate::export::GraphMl;
@@ -50,7 +54,7 @@ fn test_dot_labels_direction_weights_and_isolated_nodes() -> Result<()> {
 
     let output = render(system_under_test.as_ref(), &fixture)?;
     let Graph::DiGraph { strict, stmts: statements, .. } =
-        graphviz_rust::parse(&output).map_err(anyhow::Error::msg)? else {
+        graphviz_rust::parse(&output).map_err(Error::msg)? else {
         bail!("expected directed graph");
     };
     let nodes: Vec<_> = statements
@@ -97,13 +101,11 @@ fn test_dot_labels_direction_weights_and_isolated_nodes() -> Result<()> {
 
 #[test]
 fn test_graphml_text_yed_graphics_and_references() -> Result<()> {
-    const GRAPHML_NAMESPACE: &str = "http://graphml.graphdrawing.org/xmlns";
-    const YWORKS_NAMESPACE: &str = "http://www.yworks.com/xml/graphml";
     let fixture = graph_fixture()?;
     let system_under_test = Format::Graphml.exporter();
 
     let output = render(system_under_test.as_ref(), &fixture)?;
-    let xml = roxmltree::Document::parse(&output)?;
+    let xml = Document::parse(&output)?;
     let graph_element = xml
         .descendants()
         .find(|node| node.has_tag_name((GRAPHML_NAMESPACE, "graph")))
@@ -207,11 +209,11 @@ fn test_empty_graph_serialization(#[case] format: Format) -> Result<()> {
 
     match format {
         Format::Dot => {
-            graphviz_rust::parse(&output).map_err(anyhow::Error::msg)?;
+            graphviz_rust::parse(&output).map_err(Error::msg)?;
         }
         Format::Mermaid => assert_eq!(output.as_str(), "flowchart LR\n", "Empty Mermaid graph must contain only its header"),
         Format::Graphml => {
-            roxmltree::Document::parse(&output)?;
+            Document::parse(&output)?;
         }
     }
     Ok(())

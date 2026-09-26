@@ -16,6 +16,7 @@ use roxmltree::Node;
 use rstest::rstest;
 
 use pretty_assertions::assert_eq;
+use super::edge_style::CYCLE_EDGE_WIDTH;
 use crate::cycles::CycleGroupId;
 use crate::cycles::analyze_folders;
 use crate::export::Options;
@@ -73,7 +74,7 @@ fn remember_group_color(colors: &mut BTreeMap<NonZeroUsize, String>, group: Cycl
 #[case(Format::Dot)]
 #[case(Format::Mermaid)]
 #[case(Format::Graphml)]
-fn test_cycle_highlighting_preserves_topology_and_dependency_kinds(
+fn test_cycle_highlighting_topology_and_dependency_kinds(
     #[case] format: Format,
     #[values(false, true)] grouped: bool,
 ) -> Result<()> {
@@ -118,10 +119,8 @@ fn test_cycle_highlighting_preserves_topology_and_dependency_kinds(
                         bail!("Expected quoted DOT cycle color");
                     };
                     remember_group_color(&mut colors, group, color);
-                    let Id::Plain(ref width) = *dot_attribute(highlighted_edge, "penwidth")? else {
-                        bail!("Expected numerical DOT cycle width");
-                    };
-                    assert_eq!(width.parse::<f32>()?, 3.0, "Cycle edge has the wrong DOT width");
+                    assert_eq!(dot_attribute(highlighted_edge, "penwidth")?, &Id::Plain(CYCLE_EDGE_WIDTH.into()),
+                        "Cycle edge has the wrong DOT width");
                     assert_eq!(dot_attribute(highlighted_edge, "cycle_group")?, &Id::Plain(group.number().to_string()),
                         "DOT cycle group identifier is missing");
                 } else {
@@ -148,9 +147,11 @@ fn test_cycle_highlighting_preserves_topology_and_dependency_kinds(
                         .split(',').map(|attribute| attribute.split_once(':').context("Invalid Mermaid style"))
                         .collect::<Result<_>>()?;
                     let color = attributes.get("stroke").context("Mermaid cycle color is missing")?;
+                    let expected_width = format!("{CYCLE_EDGE_WIDTH}px");
                     remember_group_color(&mut colors, group, color);
+
                     assert_eq!(attributes.get("color"), Some(color), "Cycle label and arrow colors differ");
-                    assert_eq!(attributes.get("stroke-width"), Some(&"3.0px"), "Mermaid cycle edge has the wrong width");
+                    assert_eq!(attributes.get("stroke-width").copied(), Some(expected_width.as_str()), "Mermaid cycle edge has the wrong width");
                 } else {
                     assert_eq!(default_style, highlighted_style, "Bridge between Mermaid cycle groups changed style");
                 }
@@ -184,7 +185,7 @@ fn test_cycle_highlighting_preserves_topology_and_dependency_kinds(
                     .context("GraphML edge has no line style")?;
                 if let Some(group) = cycles.edge_group(edge) {
                     remember_group_color(&mut colors, group, style.attribute("color").context("Cycle color is missing")?);
-                    assert_eq!(style.attribute("width").context("Cycle width is missing")?.parse::<f32>()?, 3.0,
+                    assert_eq!(style.attribute("width"), Some(CYCLE_EDGE_WIDTH),
                         "GraphML cycle edge has the wrong width");
                     assert_eq!(graphml_data(*highlighted_edge, "cycle_group")?, group.number().to_string(),
                         "GraphML cycle group identifier is missing");
@@ -206,7 +207,7 @@ fn test_cycle_highlighting_preserves_topology_and_dependency_kinds(
 #[case(Format::Dot)]
 #[case(Format::Mermaid)]
 #[case(Format::Graphml)]
-fn test_options_preserve_default_output(#[case] format: Format, #[values(false, true)] grouped: bool) -> Result<()> {
+fn test_default_export_options(#[case] format: Format, #[values(false, true)] grouped: bool) -> Result<()> {
     let fixture = graph_fixture()?;
     let system_under_test = format.exporter();
     let mut legacy_output = Vec::new();
@@ -227,7 +228,7 @@ fn test_options_preserve_default_output(#[case] format: Format, #[values(false, 
 #[case(Format::Dot)]
 #[case(Format::Mermaid)]
 #[case(Format::Graphml)]
-fn test_acyclic_highlighting_preserves_output(#[case] format: Format, #[values(false, true)] grouped: bool) -> Result<()> {
+fn test_acyclic_highlighting(#[case] format: Format, #[values(false, true)] grouped: bool) -> Result<()> {
     let source = FolderNode::new("src/api".into());
     let target = FolderNode::new("src/storage".into());
     let fixture = FolderGraph::new(
@@ -251,7 +252,7 @@ fn test_acyclic_highlighting_preserves_output(#[case] format: Format, #[values(f
 #[case(Format::Dot)]
 #[case(Format::Mermaid)]
 #[case(Format::Graphml)]
-fn test_highlighting_rejects_analysis_of_different_topology(
+fn test_highlighting_analysis_topology_validation(
     #[case] format: Format,
     #[values(false, true)] grouped: bool,
 ) -> Result<()> {
@@ -308,7 +309,7 @@ fn test_existing_exporter_default_dispatch(#[case] grouped: bool, #[case] expect
 }
 
 #[test]
-fn test_existing_exporter_unsupported_highlighting_preserves_output() -> Result<()> {
+fn test_existing_exporter_unsupported_highlighting() -> Result<()> {
     let fixture = graph_fixture()?;
     let cycles = analyze_folders(&fixture)?;
     let system_under_test = ExistingExporter;

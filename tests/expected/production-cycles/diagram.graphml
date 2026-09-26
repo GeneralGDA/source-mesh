@@ -71,14 +71,14 @@
       </data>
     </node>
     <edge id="e0" source="n0" target="n0">
-      <data key="weight">19</data>
+      <data key="weight">20</data>
       <data key="kind">production</data>
       <data key="cycle_group">1</data>
       <data key="eg">
         <y:PolyLineEdge>
           <y:LineStyle color="#E41A1C" type="line" width="3.0"/>
           <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>19</y:EdgeLabel>
+          <y:EdgeLabel>20</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>
