@@ -14,6 +14,7 @@ use serde_json::Value;
 
 use crate::analyzer_config::without_test_cfg;
 use crate::analyzer_options::Options as AnalyzerOptions;
+use crate::analyzer_prerequisites;
 use crate::analyzer_process::Phase;
 use crate::analyzer_process::ScipProcess;
 use crate::scip_repair::IndexRepair;
@@ -58,6 +59,7 @@ impl IndexSource for RustAnalyzer<'_> {
             "No Cargo.toml or rust-project.json in {}",
             project.display()
         );
+        analyzer_prerequisites::ensure_available(&project)?;
         let index_directory =
             tempfile::tempdir().context("Cannot create temporary index directory")?;
         let index_file = index_directory.path().join("index.scip");

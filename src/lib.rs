@@ -1,5 +1,6 @@
 mod analyzer_config;
 mod analyzer_definitions;
+mod analyzer_prerequisites;
 mod analyzer_process;
 pub mod analyzer_options;
 pub mod backend;

@@ -9,10 +9,10 @@ Draw dependencies between physical folders in a Rust project. Export **GraphML f
 
 ## Install
 
-Install the rust-analyzer component, then install the latest published release:
+Install the analysis components, then install the latest published release:
 
 ```console
-rustup component add rust-analyzer
+rustup component add rust-analyzer rust-src
 cargo install source-mesh --locked
 ```
 
@@ -22,7 +22,7 @@ Before the first crates.io release, install directly from GitHub:
 cargo install --git https://github.com/GeneralGDA/rust-arch --locked source-mesh
 ```
 
-Cargo installs an optimized release build. Keep Cargo and rust-analyzer on `PATH`; install the rust-analyzer component for the toolchain selected by the project you analyze.
+Cargo installs an optimized release build. Keep Cargo and rust-analyzer on `PATH`; install rust-analyzer and rust-src for the toolchain selected by the project you analyze. source-mesh checks both prerequisites before starting analysis.
 
 ## Run
 
@@ -102,7 +102,7 @@ pwsh -File ./Install-AgentTools.ps1
 
 The script installs missing `rg`, `fd`, `jaq`, and `ast-grep` through Cargo without replacing commands already on `PATH`.
 
-Unit and component tests live under `src`; normal runs use synthetic data and a bundled SCIP fixture. [Live component tests](src/fixtures/README.md) require rust-analyzer. Integration tests under `tests` run the compiled application on this repository and check [expected exports and dependency cycles](tests/expected/README.md).
+Unit and component tests live under `src`; normal runs use synthetic data and a bundled SCIP fixture. [Live component tests](src/fixtures/README.md) require rust-analyzer and rust-src. Integration tests under `tests` run the compiled application on this repository and check [expected exports and dependency cycles](tests/expected/README.md).
 
 CI checks release builds, Clippy, unit and component tests, documentation tests, and repository integration tests on Linux, macOS, and Windows for every push and pull request.
 

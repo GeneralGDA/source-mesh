@@ -2,7 +2,7 @@
 
 `dependency-graph.scip` is a real rust-analyzer SCIP index of the adjacent `dependency-graph` crate,
 with test dependencies classified by `source-mesh`. Tests replay it offline;
-rust-analyzer is required only for regeneration and the ignored live tests.
+rust-analyzer and rust-src are required only for regeneration and the ignored live tests.
 Document paths are relative, and metadata uses the generic `file:///fixture/dependency-graph`
 project root with no tool arguments, so the saved fixture contains no local checkout path.
 
