@@ -1,0 +1,5 @@
+[toolchain]
+# Clippy 1.99 flags derive-new constructors: https://github.com/rust-lang/rust-clippy/issues/17525
+channel = "1.98.0"
+profile = "minimal"
+components = ["clippy", "rust-analyzer", "rust-src"]

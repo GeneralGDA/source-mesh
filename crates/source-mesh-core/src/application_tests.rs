@@ -35,7 +35,7 @@ fn test_saved_analysis_replay() -> Result<()> {
     run(&system_under_test, &mut diagram)?;
 
     assert_eq!(diagram, expected);
-    assert!(!diagram.is_empty());
+    assert_ne!(diagram, [] as [u8; 0]);
     Ok(())
 }
 
@@ -56,7 +56,7 @@ fn test_replay_cannot_save_analysis() -> Result<()> {
 
     assert!(result.is_err_and(|error| error.to_string().contains("Cannot save analysis")));
     assert_eq!(preserved, EXISTING_CONTENT);
-    assert!(diagram.is_empty());
+    assert_eq!(diagram, [] as [u8; 0]);
     Ok(())
 }
 
@@ -77,6 +77,6 @@ fn test_replay_cannot_overwrite_input() -> Result<()> {
 
     assert!(result.is_err_and(|error| error.to_string().contains("must not overwrite input")));
     assert_eq!(preserved, bytes);
-    assert!(diagram.is_empty());
+    assert_eq!(diagram, [] as [u8; 0]);
     Ok(())
 }
