@@ -19,7 +19,7 @@ cargo install source-mesh --locked
 Before the first crates.io release, install directly from GitHub:
 
 ```console
-cargo install --git https://github.com/GeneralGDA/rust-arch --locked source-mesh
+cargo install --git https://github.com/GeneralGDA/source-mesh --locked source-mesh
 ```
 
 Cargo installs an optimized release build. Keep Cargo and rust-analyzer on `PATH`; install rust-analyzer and rust-src for the toolchain selected by the project you analyze. source-mesh checks both prerequisites before starting analysis.
@@ -69,7 +69,7 @@ jobs:
       - run: rustup component add rust-analyzer rust-src
       - uses: Swatinem/rust-cache@v2.9.2
       - name: Install source-mesh
-        run: cargo install --git https://github.com/GeneralGDA/rust-arch --locked source-mesh
+        run: cargo install --git https://github.com/GeneralGDA/source-mesh --locked source-mesh
       - name: Check dependency cycles
         run: |
           mkdir -p target/source-mesh
@@ -89,7 +89,7 @@ Save analysis with `--save-scip analysis.scip`; reuse it with `--from-scip analy
 
 ## Development
 
-The repository root is a virtual workspace with two sibling publishable crates:
+The repository root is a virtual workspace with two sibling crates:
 
 - `source-mesh` in `crates/source-mesh` owns argument parsing, help, and process exit handling. It installs the `source-mesh` executable.
 - [`source-mesh-core`](crates/source-mesh-core/README.md) owns analysis, graph processing, exports, output validation, and cycle checks. Its typed API can be used without the CLI or `clap`.
@@ -101,7 +101,7 @@ cargo test --release --locked --workspace
 cargo clippy --release --all-targets --locked --workspace -- -D warnings
 ```
 
-The test command above skips slow live-analysis tests. To run all workspace tests in release mode, including ignored tests and documentation tests, use PowerShell from the repository root:
+The test command above skips slow tests that run rust-analyzer. To run all workspace tests in release mode, including ignored tests and documentation tests, use PowerShell from the repository root:
 
 ```powershell
 ./Test-All.ps1
@@ -119,30 +119,11 @@ pwsh -File ./Install-AgentTools.ps1
 
 The script installs missing `rg`, `fd`, `jaq`, and `ast-grep` through Cargo without replacing commands already on `PATH`.
 
-Unit and component tests live under each crate's `src`; normal runs use synthetic data and a bundled SCIP fixture. [Live component tests](crates/source-mesh-core/src/fixtures/README.md) require rust-analyzer and rust-src. Integration tests under `crates/source-mesh/tests` enforce the virtual workspace boundary and run the compiled application on the whole repository to check [expected exports and dependency cycles](crates/source-mesh/tests/expected/README.md).
+Unit and component tests live under each crate's `src`; normal runs use synthetic data and a bundled SCIP fixture without launching rust-analyzer. [Component tests that run rust-analyzer](crates/source-mesh-core/src/fixtures/README.md) index fixture projects during execution and require rust-src. Integration tests under `crates/source-mesh/tests` enforce the virtual workspace boundary and run the compiled application on the whole repository to check [expected exports and dependency cycles](crates/source-mesh/tests/expected/README.md).
 
 Repository integration tests and their expected outputs remain in the checkout and are not included in the published CLI archive.
 
 CI checks release builds, Clippy, unit and component tests, documentation tests, and repository integration tests on Linux, macOS, and Windows for every push and pull request.
-
-## Publishing
-
-Verify both distributable archives, including a build of the CLI against the packaged library:
-
-```console
-cargo package --workspace --locked
-```
-
-This also works before the first release: Cargo packages the library first and uses it to verify the CLI without requiring an already-published library version.
-
-Publish the library before the CLI:
-
-```console
-cargo publish -p source-mesh-core --locked
-cargo publish -p source-mesh --locked
-```
-
-Keep the shared version in `[workspace.package]` and the CLI's `source-mesh-core` dependency version aligned for each release. The dependency specifies both `path` for workspace development and `version` for crates.io. The installed package and command remain `source-mesh`; end users continue to use `cargo install source-mesh --locked`.
 
 ## License
 

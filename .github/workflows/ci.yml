@@ -46,7 +46,7 @@ jobs:
       - name: Check workspace architecture
         run: cargo test --release --locked -p source-mesh --test workspace
 
-      - name: Run live rust-analyzer component tests
+      - name: Run component tests with rust-analyzer
         run: 'cargo test --release --locked -p source-mesh-core --lib backend::tests:: -- --ignored --test-threads=1'
 
       - name: Run Clippy

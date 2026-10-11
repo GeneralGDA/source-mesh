@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     #[ignore = "slow multi-pass rust-analyzer indexing; excluded to keep default tests fast; run Test-All.ps1 from the repository root"]
-    fn test_live_generated_method_dependencies() -> Result<()> {
+    fn test_rust_analyzer_generated_method_dependencies() -> Result<()> {
         let (fixture, options) = analyzer_fixture();
         let project = fixture.join("generated-methods");
         let source_directory = Path::new("src");
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     #[ignore = "slow multi-pass rust-analyzer indexing; excluded to keep default tests fast; run Test-All.ps1 from the repository root"]
-    fn test_live_cargo_target_collisions() -> Result<()> {
+    fn test_rust_analyzer_cargo_target_collisions() -> Result<()> {
         let (fixture, options) = analyzer_fixture();
         let project = fixture.join("cargo-targets");
         let library = FileNode::new(Path::new("src").join("library.rs"))?;
@@ -209,7 +209,7 @@ mod tests {
     }
     #[test]
     #[ignore = "slow multi-pass rust-analyzer indexing; excluded to keep default tests fast; run Test-All.ps1 from the repository root"]
-    fn test_live_manifest_file_graph() -> Result<()> {
+    fn test_rust_analyzer_manifest_file_graph() -> Result<()> {
         let (fixture, options) = analyzer_fixture();
         let manifest = fixture.join("dependency-graph").join("Cargo.toml");
         let expected = parse_scip(&ScipFile::new(fixture.join("dependency-graph.scip")).index()?)?;
@@ -221,19 +221,19 @@ mod tests {
         assert_eq!(
             graph.files(),
             expected.files(),
-            "Live indexing changed fixture files"
+            "rust-analyzer indexing changed fixture files"
         );
         assert_eq!(
             graph.edges(),
             expected.edges(),
-            "Live indexing changed fixture dependencies"
+            "rust-analyzer indexing changed fixture dependencies"
         );
         Ok(())
     }
 
     #[test]
     #[ignore = "slow multi-pass rust-analyzer indexing; excluded to keep default tests fast; run Test-All.ps1 from the repository root"]
-    fn test_live_test_configuration_classification() -> Result<()> {
+    fn test_rust_analyzer_test_configuration_classification() -> Result<()> {
         let (fixture, options) = analyzer_fixture();
         let manifest = fixture.join("test-dependencies").join("Cargo.toml");
         let source_directory = Path::new("src");
@@ -268,12 +268,12 @@ mod tests {
         assert_eq!(
             graph.files(),
             expected.files(),
-            "Live analysis changed classified fixture files"
+            "rust-analyzer analysis changed classified fixture files"
         );
         assert_eq!(
             graph.edges(),
             expected.edges(),
-            "Live analysis changed classified fixture dependencies"
+            "rust-analyzer analysis changed classified fixture dependencies"
         );
         Ok(())
     }

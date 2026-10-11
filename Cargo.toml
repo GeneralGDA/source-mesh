@@ -8,7 +8,7 @@ version = "1.0.0"
 edition = "2024"
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/GeneralGDA/rust-arch"
+repository = "https://github.com/GeneralGDA/source-mesh"
 keywords = ["rust", "dependency-graph", "architecture", "dependencies", "diagram"]
 categories = ["command-line-utilities", "development-tools"]
 

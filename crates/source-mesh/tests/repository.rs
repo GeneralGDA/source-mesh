@@ -31,7 +31,7 @@ mod repository_tests {
 
     struct RepositoryFixture {
         index: Vec<u8>,
-        live_diagram: String,
+        project_analysis_diagram: String,
         update_expected_outputs: bool,
     }
 
@@ -55,16 +55,16 @@ mod repository_tests {
             system_under_test.current_dir(repository_directory()?)
                 .args(["Cargo.toml", "--format", "graphml", "--save-scip"]).arg(&saved_index);
 
-            let output = system_under_test.output().context("Cannot run live repository analysis")?;
+            let output = system_under_test.output().context("Cannot run repository analysis with rust-analyzer")?;
             let diagnostics = String::from_utf8_lossy(&output.stderr);
 
             assert!(!["SCIP", "rust-analyzer", "warning:", "ERROR"].iter().any(|marker| diagnostics.contains(marker)),
                 "Normal repository analysis exposed backend diagnostics: {diagnostics}");
-            let live_diagram = successful_stdout(output)?;
+            let project_analysis_diagram = successful_stdout(output)?;
             let index = fs::read(saved_index)?;
             directory.close()?;
 
-            Ok(Self { index, live_diagram, update_expected_outputs })
+            Ok(Self { index, project_analysis_diagram, update_expected_outputs })
         }
 
         fn check_expected_output(&self, relative_path: &Path, actual: &str) -> Result<()> {
@@ -125,7 +125,7 @@ mod repository_tests {
     fn repository_fixture() -> Result<RepositoryFixture, String> {
         RepositoryFixture::new().map_err(|error| {
             eprintln!("{error:#}");
-            "Live repository analysis failed; see fixture initialization diagnostics".to_owned()
+            "Repository analysis with rust-analyzer failed; see fixture initialization diagnostics".to_owned()
         })
     }
 
@@ -140,7 +140,7 @@ mod repository_tests {
         let fixture = repository_fixture.as_ref().map_err(|error| Error::msg(error.clone()))?;
         let (directory, saved_index) = replay_fixture(&fixture.index)?;
         let maximum_directory_depth = {
-            let document = Document::parse(&fixture.live_diagram)
+            let document = Document::parse(&fixture.project_analysis_diagram)
                 .context("Cannot read indexed repository folders from GraphML")?;
             document.descendants()
                 .filter(|node| node.has_tag_name(("http://graphml.graphdrawing.org/xmlns", "data"))
@@ -230,7 +230,7 @@ mod repository_tests {
         assert!(stdout.is_empty(), "File export also wrote to stdout");
         assert_eq!(directory_entry_count, if reports { 4 } else { 2 }, "Diagram export created unrequested files");
         if arguments.is_empty() && format == "graphml" {
-            assert_eq!(diagram, fixture.live_diagram, "Live indexing and replay produced different diagrams");
+            assert_eq!(diagram, fixture.project_analysis_diagram, "rust-analyzer indexing and saved-index replay produced different diagrams");
         }
         fixture.check_expected_output(&Path::new(scenario).join(diagram_name), &diagram)?;
         if let Some((folder_report, file_report)) = cycle_reports {

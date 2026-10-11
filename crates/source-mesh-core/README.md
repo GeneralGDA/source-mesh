@@ -24,9 +24,9 @@ assert!(!diagram.is_empty());
 # }
 ```
 
-For live analysis, use `Input::Project(Project::new(project_path, configuration))`.
-Live analysis requires the Rust toolchain and rust-analyzer; replaying a saved index
-does not. `configuration` is an optional path to rust-analyzer JSON configuration.
+To analyze project sources, use `Input::Project(Project::new(project_path, configuration))`.
+This runs rust-analyzer and requires the Rust toolchain, rust-analyzer, and rust-src;
+replaying a saved index does not. `configuration` is an optional path to rust-analyzer JSON configuration.
 All boolean options default to false. Configure reports and cycle gating through
 `CycleOptions::builder()` and pass the result to the request's `.cycles(...)`
 setter. Reports default to at most `DEFAULT_CYCLE_LIMIT` simple cycles each.
@@ -38,13 +38,12 @@ errors can leave earlier files written; output writes are not a transaction.
 
 The low-level analyzer, graph, cycle, and exporter APIs remain available.
 
-## Development and publishing
+## Development
 
-Publish `source-mesh-core` before publishing the matching `source-mesh` CLI release.
 The package includes the saved SCIP fixture for offline tests and the API example.
-Cargo excludes nested fixture packages from published archives, so ignored live
-tests and index regeneration require a repository checkout. Fixture projects
-retain standalone workspaces. Run the regeneration tool from the checkout:
+Cargo excludes nested fixture packages from published archives, so the ignored tests that
+run rust-analyzer and the index regeneration tool require a repository checkout.
+Fixture projects retain standalone workspaces. Run the regeneration tool from the checkout:
 
 ```sh
 cargo run -p source-mesh-core --example regenerate-dependency-graph-scip
