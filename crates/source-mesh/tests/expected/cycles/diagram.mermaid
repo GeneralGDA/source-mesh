@@ -1,0 +1,33 @@
+flowchart LR
+    n0["crates/source-mesh-core/examples"]
+    n1["crates/source-mesh-core/src"]
+    n2["crates/source-mesh-core/src/export"]
+    n3["crates/source-mesh-core/src/graph"]
+    n4["crates/source-mesh/src"]
+    n5["crates/source-mesh/tests"]
+    n0 -->|3| n1
+    n1 -->|22| n1
+    linkStyle 1 stroke:#E41A1C,color:#E41A1C,stroke-width:3.0px
+    n1 -.->|test: 6| n1
+    linkStyle 2 stroke:#E41A1C,color:#E41A1C,stroke-width:3.0px
+    n1 -->|2| n2
+    n1 -.->|test: 2| n2
+    linkStyle 4 stroke:#D97706,color:#D97706
+    n1 -->|8| n3
+    n1 -.->|test: 5| n3
+    linkStyle 6 stroke:#D97706,color:#D97706
+    n2 -->|18| n2
+    linkStyle 7 stroke:#377EB8,color:#377EB8,stroke-width:3.0px
+    n2 -.->|test: 15| n2
+    linkStyle 8 stroke:#377EB8,color:#377EB8,stroke-width:3.0px
+    n2 -->|13| n3
+    n2 -.->|test: 7| n3
+    linkStyle 10 stroke:#D97706,color:#D97706
+    n3 -->|5| n3
+    linkStyle 11 stroke:#4DAF4A,color:#4DAF4A,stroke-width:3.0px
+    n3 -.->|test: 6| n3
+    linkStyle 12 stroke:#4DAF4A,color:#4DAF4A,stroke-width:3.0px
+    n4 -->|3| n1
+    n4 -->|1| n2
+    n4 -.->|test: 2| n4
+    linkStyle 15 stroke:#984EA3,color:#984EA3,stroke-width:3.0px

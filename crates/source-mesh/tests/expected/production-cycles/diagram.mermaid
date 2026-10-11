@@ -1,0 +1,19 @@
+flowchart LR
+    n0["crates/source-mesh-core/examples"]
+    n1["crates/source-mesh-core/src"]
+    n2["crates/source-mesh-core/src/export"]
+    n3["crates/source-mesh-core/src/graph"]
+    n4["crates/source-mesh/src"]
+    n5["crates/source-mesh/tests"]
+    n0 -->|3| n1
+    n1 -->|22| n1
+    linkStyle 1 stroke:#E41A1C,color:#E41A1C,stroke-width:3.0px
+    n1 -->|2| n2
+    n1 -->|8| n3
+    n2 -->|18| n2
+    linkStyle 4 stroke:#377EB8,color:#377EB8,stroke-width:3.0px
+    n2 -->|13| n3
+    n3 -->|5| n3
+    linkStyle 6 stroke:#4DAF4A,color:#4DAF4A,stroke-width:3.0px
+    n4 -->|3| n1
+    n4 -->|1| n2

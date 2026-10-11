@@ -1,0 +1,25 @@
+flowchart LR
+    subgraph g9["source-mesh"]
+    n4["source-mesh/src"]
+    n5["source-mesh/tests"]
+    end
+    subgraph g6["source-mesh-core"]
+    n0["source-mesh-core/examples"]
+    subgraph g1["source-mesh-core/src"]
+    n1["source-mesh-core/src"]
+    n2["source-mesh-core/src/export"]
+    n3["source-mesh-core/src/graph"]
+    end
+    end
+    n0 -->|3| n1
+    n1 -->|2| n2
+    n1 -.->|test: 2| n2
+    linkStyle 2 stroke:#D97706,color:#D97706
+    n1 -->|8| n3
+    n1 -.->|test: 5| n3
+    linkStyle 4 stroke:#D97706,color:#D97706
+    n2 -->|13| n3
+    n2 -.->|test: 7| n3
+    linkStyle 6 stroke:#D97706,color:#D97706
+    n4 -->|3| n1
+    n4 -->|1| n2

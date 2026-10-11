@@ -1,0 +1,4 @@
+strict digraph folders {
+  rankdir=LR
+  n0[label="crates" shape=box]
+}

@@ -1,0 +1,27 @@
+digraph folders {
+  rankdir=LR
+  subgraph cluster_n9 {
+    label="source-mesh"
+    n4[label="source-mesh/src" shape=box]
+    n5[label="source-mesh/tests" shape=box]
+  }
+  subgraph cluster_n6 {
+    label="source-mesh-core"
+    n0[label="source-mesh-core/examples" shape=box]
+    subgraph cluster_n1 {
+      label="source-mesh-core/src"
+      n1[label="source-mesh-core/src" shape=box]
+      n2[label="source-mesh-core/src/export" shape=box]
+      n3[label="source-mesh-core/src/graph" shape=box]
+    }
+  }
+  n0 -> n1 [label="3"]
+  n1 -> n2 [label="2"]
+  n1 -> n2 [label="test: 2" color="#D97706" style=dashed]
+  n1 -> n3 [label="8"]
+  n1 -> n3 [label="test: 5" color="#D97706" style=dashed]
+  n2 -> n3 [label="13"]
+  n2 -> n3 [label="test: 7" color="#D97706" style=dashed]
+  n4 -> n1 [label="3"]
+  n4 -> n2 [label="1"]
+}

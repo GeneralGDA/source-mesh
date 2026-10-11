@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns:y="http://www.yworks.com/xml/graphml"
+         xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://www.yworks.com/xml/schema/graphml/1.1/ygraphml.xsd">
+  <key id="label" for="node" attr.name="label" attr.type="string"/>
+  <key id="weight" for="edge" attr.name="dependencies" attr.type="long"/>
+  <key id="kind" for="edge" attr.name="dependency_kind" attr.type="string"/>
+  <key id="ng" for="node" yfiles.type="nodegraphics"/>
+  <key id="eg" for="edge" yfiles.type="edgegraphics"/>
+  <graph id="folders" edgedefault="directed">
+    <node id="n0">
+      <data key="label">crates</data>
+      <data key="ng">
+        <y:ShapeNode>
+          <y:Geometry x="0" y="0" width="88" height="40"/>
+          <y:Fill color="#E8F0FE" transparent="false"/>
+          <y:BorderStyle color="#47699B" type="line" width="1.0"/>
+          <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">crates</y:NodeLabel>
+          <y:Shape type="roundrectangle"/>
+        </y:ShapeNode>
+      </data>
+    </node>
+  </graph>
+</graphml>

@@ -35,26 +35,29 @@ jobs:
         uses: Swatinem/rust-cache@v2.9.2
 
       - name: Build release targets
-        run: cargo build --release --locked --all-targets
+        run: cargo build --release --locked --workspace --all-targets
 
       - name: Run unit and component tests
-        run: cargo test --release --locked --lib --bins
+        run: cargo test --release --locked --workspace --lib --bins
 
       - name: Run documentation tests
-        run: cargo test --release --locked --doc
+        run: cargo test --release --locked --workspace --doc
+
+      - name: Check workspace architecture
+        run: cargo test --release --locked -p source-mesh --test workspace
 
       - name: Run live rust-analyzer component tests
-        run: 'cargo test --release --locked --lib backend::tests:: -- --ignored --test-threads=1'
+        run: 'cargo test --release --locked -p source-mesh-core --lib backend::tests:: -- --ignored --test-threads=1'
 
       - name: Run Clippy
-        run: cargo clippy --release --locked --all-targets -- -D warnings
+        run: cargo clippy --release --locked --workspace --all-targets -- -D warnings
 
       - name: Check dependency cycles
         id: dependency_cycles
         if: matrix.os == 'ubuntu-latest'
         run: |
           mkdir -p target/source-mesh
-          cargo run --release --locked -- . --root src --format graphml --exclude-tests --highlight-cycles --fail-on-cycles --cycles-output target/source-mesh/folder-cycles.md --file-cycles-output target/source-mesh/file-cycles.md --output target/source-mesh/folder-dependencies.graphml
+          cargo run --release --locked -p source-mesh -- . --root . --format graphml --exclude-tests --highlight-cycles --fail-on-cycles --cycles-output target/source-mesh/folder-cycles.md --file-cycles-output target/source-mesh/file-cycles.md --output target/source-mesh/folder-dependencies.graphml
 
       - name: Upload dependency cycle diagnostics
         if: ${{ always() && matrix.os == 'ubuntu-latest' && steps.dependency_cycles.outcome == 'failure' }}
@@ -65,10 +68,10 @@ jobs:
           if-no-files-found: warn
 
       - name: Run repository integration tests
-        run: cargo test --release --locked --test repository -- --ignored
+        run: cargo test --release --locked -p source-mesh --test repository -- --ignored
 
   package:
-    name: Publishable package
+    name: Publishable packages
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -81,5 +84,5 @@ jobs:
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2.9.2
 
-      - name: Verify publishable package
-        run: cargo package --locked
+      - name: Verify publishable packages
+        run: cargo package --workspace --locked

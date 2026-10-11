@@ -1,0 +1,28 @@
+[package]
+name = "source-mesh"
+version.workspace = true
+edition.workspace = true
+description = "Dependency diagrams for Rust projects, powered by rust-analyzer SCIP"
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+include = ["/Cargo.toml", "/LICENSE", "/README.md", "/src/**"]
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+source-mesh-core = { version = "1.0.0", path = "../source-mesh-core" }
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+protobuf.workspace = true
+roxmltree.workspace = true
+rstest.workspace = true
+scip.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,26 +1,20 @@
 
-[package]
-name = "source-mesh"
+[workspace]
+members = ["crates/source-mesh", "crates/source-mesh-core"]
+resolver = "3"
+
+[workspace.package]
 version = "1.0.0"
 edition = "2024"
-description = "Dependency diagrams for Rust projects, powered by rust-analyzer SCIP"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/GeneralGDA/rust-arch"
 keywords = ["rust", "dependency-graph", "architecture", "dependencies", "diagram"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = [
-    "/bin/**",
-    "/target/**",
-    "/work/**",
-]
 
-[[example]]
-name = "regenerate-dependency-graph-scip"
-path = "tools/regenerate_dependency_graph_scip.rs"
-
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0.104"
+bon = "3.10.2"
 clap = { version = "4.6.7", features = ["derive"] }
 colorous = "1.0.16"
 dunce = "1.0.5"
@@ -37,12 +31,11 @@ tempfile = "3.27.0"
 lsp-server = "0.10.0"
 url = "2.5.8"
 
-[dev-dependencies]
 pretty_assertions = "1.4.1"
 roxmltree = "0.21.1"
 rstest = { version = "0.27", default-features = false }
 
-[lints.clippy]
+[workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
