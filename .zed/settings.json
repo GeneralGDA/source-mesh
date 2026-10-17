@@ -1,0 +1,8 @@
+{
+  "languages": {
+    "Rust": {
+      "preferred_line_length": 130,
+      "format_on_save": "off"
+    }
+  }
+}

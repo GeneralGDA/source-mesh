@@ -1,4 +1,5 @@
 use std::iter;
+use std::process::ExitCode;
 
 use anyhow::Error;
 use anyhow::Result;
@@ -10,6 +11,7 @@ use rstest::rstest;
 use crate::BOOLEAN_OPTIONS_DEFAULT_HELP;
 use crate::Cli;
 use crate::error_message;
+use crate::report_error;
 use crate::should_display_help;
 
 #[rstest]
@@ -21,23 +23,13 @@ use crate::should_display_help;
 #[case(&["--config", "config.json"])]
 #[case(&["--cycle-limit", "0"])]
 fn test_invalid_arguments(#[case] arguments: &[&str]) {
-    let system_under_test = Cli::try_parse_from(
-        [env!("CARGO_PKG_NAME"), "--from-scip", "input.scip"]
-            .into_iter()
-            .chain(arguments.iter().copied()),
-    );
+    let replay_arguments = [env!("CARGO_PKG_NAME"), "--from-scip", "input.scip"];
+    let system_under_test = Cli::try_parse_from(replay_arguments.into_iter().chain(arguments.iter().copied()));
 
     assert!(system_under_test.is_err(), "CLI accepted invalid or conflicting arguments");
     if let Err(error) = system_under_test {
-        assert_ne!(
-            error.kind(),
-            ErrorKind::DisplayHelp,
-            "CLI displayed help instead of rejecting arguments"
-        );
-        assert!(
-            !error.to_string().is_empty(),
-            "CLI omitted invalid-argument diagnostics"
-        );
+        assert_ne!(error.kind(), ErrorKind::DisplayHelp, "CLI displayed help instead of rejecting arguments");
+        assert!(!error.to_string().is_empty(), "CLI omitted invalid-argument diagnostics");
     }
 }
 
@@ -46,17 +38,10 @@ fn test_invalid_arguments(#[case] arguments: &[&str]) {
 #[case::arguments_without_project(true, false, false)]
 #[case::no_arguments_with_project(false, true, false)]
 #[case::arguments_with_project(true, true, false)]
-fn test_help_display_conditions(
-    #[case] has_arguments: bool,
-    #[case] has_project_file: bool,
-    #[case] expected: bool,
-) {
+fn test_help_display_conditions(#[case] has_arguments: bool, #[case] has_project_file: bool, #[case] expected: bool) {
     let system_under_test = should_display_help(has_arguments, has_project_file);
 
-    assert_eq!(
-        system_under_test, expected,
-        "CLI help display policy changed"
-    );
+    assert_eq!(system_under_test, expected, "CLI help display policy changed");
 }
 
 #[test]
@@ -67,19 +52,9 @@ fn test_folder_grouping_help() {
     if let Err(error) = system_under_test {
         let help = error.to_string();
 
-        assert_eq!(
-            error.kind(),
-            ErrorKind::DisplayHelp,
-            "CLI rejected the help argument"
-        );
-        assert!(
-            help.contains("--group-folders"),
-            "CLI help omitted folder grouping"
-        );
-        assert!(
-            help.contains(BOOLEAN_OPTIONS_DEFAULT_HELP),
-            "CLI help omitted boolean option defaults"
-        );
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp, "CLI rejected the help argument");
+        assert!(help.contains("--group-folders"), "CLI help omitted folder grouping");
+        assert!(help.contains(BOOLEAN_OPTIONS_DEFAULT_HELP), "CLI help omitted boolean option defaults");
     }
 }
 
@@ -87,10 +62,7 @@ fn test_folder_grouping_help() {
 fn test_cycle_failure_argument() -> Result<()> {
     let system_under_test = Cli::try_parse_from([env!("CARGO_PKG_NAME"), "--fail-on-cycles"])?;
 
-    assert!(
-        system_under_test.cycles.fail_on_cycles,
-        "CLI did not enable cycle failure"
-    );
+    assert!(system_under_test.cycles.fail_on_cycles, "CLI did not enable cycle failure");
     Ok(())
 }
 
@@ -98,8 +70,7 @@ fn test_cycle_failure_argument() -> Result<()> {
 #[case(&["--analyzer-threads", "0"])]
 #[case(&["--analysis-mode", "sequential"])]
 fn test_removed_analyzer_arguments(#[case] arguments: &[&str]) {
-    let system_under_test =
-        Cli::try_parse_from(iter::once(env!("CARGO_PKG_NAME")).chain(arguments.iter().copied()));
+    let system_under_test = Cli::try_parse_from(iter::once(env!("CARGO_PKG_NAME")).chain(arguments.iter().copied()));
 
     assert!(system_under_test.is_err(), "CLI accepted a removed analyzer option");
     if let Err(error) = system_under_test {
@@ -117,6 +88,30 @@ fn test_error_detail_visibility(#[values(false, true)] verbose: bool) {
 
     assert!(system_under_test.starts_with(FAILURE), "The failure reason is missing");
     assert_eq!(system_under_test.contains(DIAGNOSTIC), verbose, "Diagnostic details must require verbose output");
+}
+
+#[test]
+fn test_error_report() {
+    let mut fixture = Vec::new();
+
+    let system_under_test = report_error("Cannot analyze project", &mut fixture);
+
+    assert_eq!(system_under_test, ExitCode::FAILURE);
+    assert_eq!(fixture, b"error: Cannot analyze project\n");
+}
+
+#[rstest]
+#[case::unavailable(0, b"")]
+#[case::partial(3, b"err")]
+fn test_error_report_write_failure(#[case] capacity: usize, #[case] expected: &[u8]) {
+    /* A fixed-capacity slice fails with WriteZero once its buffer is full. */
+    let mut fixture = vec![0; capacity];
+    let mut standard_error = fixture.as_mut_slice();
+
+    let system_under_test = report_error("Cannot analyze project", &mut standard_error);
+
+    assert_eq!(system_under_test, ExitCode::FAILURE, "Unavailable stderr must preserve the failure exit code");
+    assert_eq!(fixture, expected);
 }
 
 #[rstest]

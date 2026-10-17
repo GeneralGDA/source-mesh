@@ -5,6 +5,7 @@ use std::iter;
 use std::num::NonZeroUsize;
 
 use anyhow::Context as _;
+use anyhow::Error;
 use anyhow::Result;
 use anyhow::ensure;
 use getset::CopyGetters;
@@ -12,6 +13,7 @@ use getset::Getters;
 use petgraph::algo::all_simple_paths;
 use petgraph::algo::kosaraju_scc;
 use petgraph::graph::DiGraph;
+use petgraph::graph::GraphError;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeFiltered;
 use petgraph::visit::EdgeRef as _;
@@ -54,61 +56,56 @@ impl<Node: Clone + Ord> CycleAnalysis<Node> {
         Node: 'a,
     {
         let edges: Vec<_> = edges.collect();
-        ensure!(
-            edges.iter().all(|edge| nodes.contains(edge.source()) && nodes.contains(edge.target())),
-            "Cycle analysis has an unknown dependency endpoint"
-        );
         let mut topology = DiGraph::new();
-        let node_indices: BTreeMap<_, _> = nodes.iter()
-            .map(|node| (node, topology.add_node(node.clone())))
-            .collect();
+        let node_indices = nodes.iter().map(|node| topology.try_add_node(node.clone()).map(|index| (node, index)));
+        let node_indices: Result<BTreeMap<_, _>, _> = node_indices.collect();
+        let node_indices = node_indices.context("Cycle analysis exceeds the supported node index capacity")?;
         for edge in &edges {
-            topology.update_edge(
-                *node_indices.get(edge.source()).context("Missing cycle source node")?,
-                *node_indices.get(edge.target()).context("Missing cycle target node")?,
-                (),
-            );
+            let endpoints = (node_indices.get(edge.source()), node_indices.get(edge.target()));
+            let (Some(source_index), Some(target_index)) = endpoints else {
+                unreachable!("Validated cycle edge endpoints must have topology indices");
+            };
+            topology.try_update_edge(*source_index, *target_index, ()).map_err(|error| match error {
+                GraphError::EdgeIxLimit => Error::new(error).context("Cycle analysis exceeds the supported edge index capacity"),
+                GraphError::NodeIxLimit => unreachable!("Updating a cycle edge cannot add nodes"),
+                GraphError::NodeMissed(_) | GraphError::NodeOutBounds => {
+                    unreachable!("Cycle edge endpoints were added to the topology")
+                }
+            })?;
         }
         let mut components = kosaraju_scc(&topology);
         components.retain(|component| {
-            component.len() > 1
-                || component.first().is_some_and(|node| topology.contains_edge(*node, *node))
+            component.len() > 1 || component.first().is_some_and(|node| topology.contains_edge(*node, *node))
         });
         for component in &mut components {
             component.sort_unstable();
         }
         components.sort_unstable();
-        let mut cyclic_components = Vec::new();
         let mut node_groups = BTreeMap::new();
-        for (index, component) in components.into_iter().enumerate() {
-            let group = CycleGroupId {
-                number: index.checked_add(1).and_then(NonZeroUsize::new)
-                    .context("Cycle group count overflow")?,
+        let cyclic_components = components.into_iter().enumerate().map(|(index, component)| {
+            let Some(number) = NonZeroUsize::new(index + 1) else {
+                unreachable!("One-based component vector indices are nonzero");
             };
+            let group = CycleGroupId { number };
             for node in &component {
                 node_groups.insert(*node, group);
             }
-            cyclic_components.push(CyclicComponent {
-                group,
-                nodes: component.into_iter().collect(),
-            });
-        }
+            CyclicComponent { group, nodes: component.into_iter().collect() }
+        }).collect();
         let edge_groups = edges.into_iter().map(|edge| {
-            let source = node_indices.get(edge.source()).and_then(|node| node_groups.get(node));
-            let target = node_indices.get(edge.target()).and_then(|node| node_groups.get(node));
+            let endpoints = (node_indices.get(edge.source()), node_indices.get(edge.target()));
+            let (Some(source_index), Some(target_index)) = endpoints else {
+                unreachable!("Cycle edge endpoints must remain indexed during grouping");
+            };
+            let source = node_groups.get(source_index);
+            let target = node_groups.get(target_index);
             let group = match (source, target) {
-                (Some(source_group), Some(target_group)) if source_group == target_group => {
-                    Some(*source_group)
-                }
+                (Some(source_group), Some(target_group)) if source_group == target_group => Some(*source_group),
                 _ => None,
             };
             (Edge::new(edge.source().clone(), edge.target().clone(), edge.kind()), group)
         }).collect();
-        Ok(Self {
-            topology,
-            components: cyclic_components,
-            edge_groups,
-        })
+        Ok(Self { topology, components: cyclic_components, edge_groups })
     }
 
     #[must_use]
@@ -126,23 +123,29 @@ impl<Node: Clone + Ord> CycleAnalysis<Node> {
         for component in &self.components {
             for &minimum_cycle_node in &component.nodes {
                 let cycle_subgraph = EdgeFiltered::from_fn(&self.topology, |edge| {
-                    [edge.source(), edge.target()].into_iter()
-                        .all(|node| node >= minimum_cycle_node && component.nodes.contains(&node))
+                    let endpoints = [edge.source(), edge.target()];
+                    endpoints.into_iter().all(|node| node >= minimum_cycle_node && component.nodes.contains(&node))
                 });
                 for first_successor in cycle_subgraph.neighbors(minimum_cycle_node) {
                     let paths: Box<dyn Iterator<Item = Vec<NodeIndex>> + '_> = if first_successor == minimum_cycle_node {
                         Box::new(iter::once(vec![minimum_cycle_node]))
                     } else {
-                        Box::new(all_simple_paths::<Vec<_>, _, RandomState>(&cycle_subgraph, first_successor, minimum_cycle_node, 0, None))
+                        let paths = all_simple_paths::<Vec<_>, _, RandomState>(
+                            &cycle_subgraph,
+                            first_successor,
+                            minimum_cycle_node,
+                            0,
+                            None,
+                        );
+                        Box::new(paths)
                     };
                     for path in paths {
                         ensure!(
                             cycles.len() < limit.get(),
                             "Cycle count exceeds the configured limit of {limit}; increase the limit to enumerate every cycle"
                         );
-                        let nodes = iter::once(minimum_cycle_node).chain(path)
-                            .map(|node| self.topology.node_weight(node).cloned().context("Missing cycle path node"))
-                            .collect::<Result<Vec<_>>>()?;
+                        let path_nodes = iter::once(minimum_cycle_node).chain(path);
+                        let nodes = path_nodes.map(|node| self.topology[node].clone()).collect();
                         cycles.push(Cycle { nodes, group: component.group });
                     }
                 }
@@ -163,23 +166,20 @@ pub fn analyze_files(graph: &FileGraph) -> Result<CycleAnalysis<FileNode>> {
 
 pub(crate) fn validate_folder_analysis(analysis: &CycleAnalysis<FolderNode>, graph: &FolderGraph) -> Result<()> {
     ensure!(
-        analysis.topology.node_weights().eq(graph.nodes())
-            && analysis.edge_groups.keys().eq(graph.edges().keys()),
+        analysis.topology.node_weights().eq(graph.nodes()) && analysis.edge_groups.keys().eq(graph.edges().keys()),
         "Cycle analysis does not match the folder graph"
     );
     Ok(())
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Tests use assertions for expectations while returning Result for fallible setup."
-)]
+#[expect(clippy::panic_in_result_fn, reason = "Tests use assertions for expectations while returning Result for fallible setup.")]
 mod tests {
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
     use std::iter;
     use std::num::NonZeroUsize;
+    use std::panic::catch_unwind;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -192,6 +192,7 @@ mod tests {
     use super::analyze_files;
     use super::analyze_folders;
     use super::validate_folder_analysis;
+    use crate::SourcePath;
     use crate::model::DependencyCount;
     use crate::model::DependencyKind;
     use crate::model::DependencyKind::Production;
@@ -205,16 +206,15 @@ mod tests {
 
     fn folder_fixture(dependencies: &[(&str, &str, DependencyKind)]) -> Result<FolderGraph> {
         let edges = folder_dependencies(dependencies);
-        let nodes = edges.keys()
-            .flat_map(|edge| [edge.source().clone(), edge.target().clone()])
-            .collect();
+        let nodes = edges.keys().flat_map(|edge| [edge.source().clone(), edge.target().clone()]).collect();
         FolderGraph::new(nodes, edges)
     }
 
     #[must_use]
     fn folder_dependencies(dependencies: &[(&str, &str, DependencyKind)]) -> BTreeMap<FolderEdge, DependencyCount> {
         dependencies.iter().map(|&(source, target, kind)| {
-            (FolderEdge::new(FolderNode::new(source.into()), FolderNode::new(target.into()), kind), DependencyCount::new(1))
+            let edge = FolderEdge::new(FolderNode::new(source.into()), FolderNode::new(target.into()), kind);
+            (edge, DependencyCount::new(1))
         }).collect()
     }
 
@@ -227,22 +227,19 @@ mod tests {
     #[case(&[], vec![])]
     #[case(&[("alpha", "beta", Production), ("beta", "gamma", Production)], vec![])]
     #[case(&[("alpha", "beta", Production), ("gamma", "beta", Production)], vec![])]
-    #[case(
-        &[("alpha", "beta", Production), ("beta", "alpha", Production)],
-        vec![vec!["alpha", "beta", "alpha"]]
-    )]
+    #[case(&[("alpha", "beta", Production), ("beta", "alpha", Production)], vec![vec!["alpha", "beta", "alpha"]])]
     #[case(
         &[("alpha", "beta", Production), ("beta", "gamma", Production), ("gamma", "alpha", Production)],
         vec![vec!["alpha", "beta", "gamma", "alpha"]]
     )]
     #[case(
-        &[("alpha", "beta", Production), ("beta", "alpha", Production), ("beta", "gamma", Production), ("gamma", "beta", Production)],
+        &[
+            ("alpha", "beta", Production), ("beta", "alpha", Production),
+            ("beta", "gamma", Production), ("gamma", "beta", Production),
+        ],
         vec![vec!["alpha", "beta", "alpha"], vec!["beta", "gamma", "beta"]]
     )]
-    #[case(
-        &[("alpha", "alpha", Production)],
-        vec![vec!["alpha", "alpha"]]
-    )]
+    #[case(&[("alpha", "alpha", Production)], vec![vec!["alpha", "alpha"]])]
     #[case(
         &[("alpha", "alpha", Production), ("alpha", "beta", Production), ("beta", "alpha", Production)],
         vec![vec!["alpha", "alpha"], vec!["alpha", "beta", "alpha"]]
@@ -251,17 +248,23 @@ mod tests {
         &[("alpha", "beta", Production), ("alpha", "beta", Test), ("beta", "alpha", Production), ("beta", "alpha", Test)],
         vec![vec!["alpha", "beta", "alpha"]]
     )]
+    #[case(&[("alpha", "alpha", Production), ("alpha", "alpha", Test)], vec![vec!["alpha", "alpha"]])]
     #[case(
-        &[("alpha", "alpha", Production), ("alpha", "alpha", Test)],
-        vec![vec!["alpha", "alpha"]]
-    )]
-    #[case(
-        &[("alpha", "beta", Production), ("alpha", "gamma", Production), ("beta", "omega", Production), ("gamma", "omega", Production), ("omega", "alpha", Production)],
+        &[
+            ("alpha", "beta", Production), ("alpha", "gamma", Production), ("beta", "omega", Production),
+            ("gamma", "omega", Production), ("omega", "alpha", Production),
+        ],
         vec![vec!["alpha", "beta", "omega", "alpha"], vec!["alpha", "gamma", "omega", "alpha"]]
     )]
     #[case(
-        &[("alpha", "beta", Production), ("beta", "gamma", Production), ("gamma", "alpha", Production), ("alpha", "gamma", Production), ("gamma", "beta", Production), ("beta", "alpha", Production)],
-        vec![vec!["alpha", "beta", "alpha"], vec!["alpha", "beta", "gamma", "alpha"], vec!["alpha", "gamma", "alpha"], vec!["alpha", "gamma", "beta", "alpha"], vec!["beta", "gamma", "beta"]]
+        &[
+            ("alpha", "beta", Production), ("beta", "gamma", Production), ("gamma", "alpha", Production),
+            ("alpha", "gamma", Production), ("gamma", "beta", Production), ("beta", "alpha", Production),
+        ],
+        vec![
+            vec!["alpha", "beta", "alpha"], vec!["alpha", "beta", "gamma", "alpha"],
+            vec!["alpha", "gamma", "alpha"], vec!["alpha", "gamma", "beta", "alpha"], vec!["beta", "gamma", "beta"],
+        ]
     )]
     fn test_directed_cycle_routes(
         #[case] dependencies: &[(&str, &str, DependencyKind)],
@@ -287,6 +290,9 @@ mod tests {
     #[case("alpha", "omega", Production, None)]
     #[case("alpha", "beta", Test, None)]
     #[case("unknown", "alpha", Production, None)]
+    #[case("entry", "alpha", Production, None)]
+    #[case("omega", "exit", Production, None)]
+    #[case("leaf", "sink", Production, None)]
     fn test_component_edge_membership(
         #[case] source: &str,
         #[case] target: &str,
@@ -299,6 +305,9 @@ mod tests {
             ("beta", "gamma", Production),
             ("beta", "alpha", Test),
             ("alpha", "beta", Production),
+            ("entry", "alpha", Production),
+            ("omega", "exit", Production),
+            ("leaf", "sink", Production),
         ])?;
         let system_under_test = analyze_folders(&fixture)?;
         let edge = FolderEdge::new(FolderNode::new(source.into()), FolderNode::new(target.into()), kind);
@@ -372,13 +381,9 @@ mod tests {
     #[case(Path::new("."), true, 0)]
     #[case(Path::new("alpha"), false, 0)]
     #[case(Path::new("beta"), false, 0)]
-    fn test_file_cycle_routes(
-        #[case] root: &Path,
-        #[case] exclude_tests: bool,
-        #[case] expected_cycles: usize,
-    ) -> Result<()> {
-        let first_file = FileNode::new(PathBuf::from_iter(["alpha", "source.rs"]))?;
-        let second_file = FileNode::new(PathBuf::from_iter(["beta", "source.rs"]))?;
+    fn test_file_cycle_routes(#[case] root: &Path, #[case] exclude_tests: bool, #[case] expected_cycles: usize) -> Result<()> {
+        let first_file = FileNode::new(SourcePath::new(PathBuf::from_iter(["alpha", "source.rs"]))?);
+        let second_file = FileNode::new(SourcePath::new(PathBuf::from_iter(["beta", "source.rs"]))?);
         let fixture = FileGraph::new(
             BTreeSet::from([first_file.clone(), second_file.clone()]),
             BTreeSet::from([
@@ -396,33 +401,38 @@ mod tests {
         assert_eq!(expected_cycles, cycles.len(), "File cycle count differs");
         if expected_cycles != 0 {
             assert!(cycles.first().is_some_and(|cycle| cycle.nodes() == &expected), "File cycle route differs");
-            assert!(fixture.edges().iter().all(|edge| system_under_test.edge_group(edge).is_some()), "File cycle edge was not grouped");
+            assert!(
+                fixture.edges().iter().all(|edge| system_under_test.edge_group(edge).is_some()),
+                "File cycle edge was not grouped"
+            );
         }
         Ok(())
     }
 
-    #[test]
-    fn test_dependency_endpoint_membership() -> Result<()> {
+    #[rstest]
+    #[case("alpha", "unknown")]
+    #[case("unknown", "alpha")]
+    fn test_dependency_endpoint_membership(#[case] source: &str, #[case] target: &str) {
         let nodes = BTreeSet::from([FolderNode::new("alpha".into())]);
-        let edge = FolderEdge::new(FolderNode::new("alpha".into()), FolderNode::new("unknown".into()), Production);
+        let edge = FolderEdge::new(FolderNode::new(source.into()), FolderNode::new(target.into()), Production);
+        let system_under_test = || CycleAnalysis::new(&nodes, iter::once(&edge));
 
-        let system_under_test = CycleAnalysis::new(&nodes, iter::once(&edge));
+        let result = catch_unwind(system_under_test);
 
-        assert!(system_under_test.is_err(), "Unknown dependency endpoint was accepted");
-        Ok(())
+        assert!(result.is_err(), "Missing validated endpoints must be invariant violations, not user errors");
     }
 
     #[rstest]
     #[case(&[("alpha", "beta", Production), ("beta", "gamma", Production)])]
-    #[case(&[("alpha", "beta", Production), ("beta", "alpha", Production), ("beta", "gamma", Production), ("gamma", "alpha", Production)])]
+    #[case(&[
+        ("alpha", "beta", Production), ("beta", "alpha", Production),
+        ("beta", "gamma", Production), ("gamma", "alpha", Production),
+    ])]
     #[case(&[("alpha", "beta", Test), ("beta", "alpha", Production), ("beta", "gamma", Production)])]
     #[case(&[("alpha", "beta", Production), ("beta", "alpha", Production)])]
     fn test_folder_analysis_dependencies(#[case] dependencies: &[(&str, &str, DependencyKind)]) -> Result<()> {
-        let fixture = folder_fixture(&[
-            ("alpha", "beta", Production),
-            ("beta", "alpha", Production),
-            ("beta", "gamma", Production),
-        ])?;
+        let fixture_dependencies = [("alpha", "beta", Production), ("beta", "alpha", Production), ("beta", "gamma", Production)];
+        let fixture = folder_fixture(&fixture_dependencies)?;
         let system_under_test = analyze_folders(&fixture)?;
         let changed_graph = FolderGraph::new(fixture.nodes().clone(), folder_dependencies(dependencies))?;
 

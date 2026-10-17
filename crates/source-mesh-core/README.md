@@ -10,18 +10,18 @@ use source_mesh_core::Input;
 use source_mesh_core::Request;
 use source_mesh_core::export::Format;
 
-# fn main() -> anyhow::Result<()> {
-let index = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    .join("src").join("fixtures").join("dependency-graph.scip");
-let request = Request::builder()
-    .input(Input::ScipFile(index))
-    .format(Format::Mermaid)
-    .build();
-let mut diagram = Vec::new();
-source_mesh_core::run(&request, &mut diagram)?;
-assert!(!diagram.is_empty());
-# Ok(())
-# }
+fn main() -> anyhow::Result<()> {
+    let index = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src").join("fixtures").join("dependency-graph.scip");
+    let request = Request::builder()
+        .input(Input::ScipFile(index))
+        .format(Format::Mermaid)
+        .build();
+    let mut diagram = Vec::new();
+    source_mesh_core::run(&request, &mut diagram)?;
+    assert!(!diagram.is_empty());
+    Ok(())
+}
 ```
 
 To analyze project sources, use `Input::Project(Project::new(project_path, configuration))`.
@@ -38,13 +38,5 @@ errors can leave earlier files written; output writes are not a transaction.
 
 The low-level analyzer, graph, cycle, and exporter APIs remain available.
 
-## Development
-
-The package includes the saved SCIP fixture for offline tests and the API example.
-Cargo excludes nested fixture packages from published archives, so the ignored tests that
-run rust-analyzer and the index regeneration tool require a repository checkout.
-Fixture projects retain standalone workspaces. Run the regeneration tool from the checkout:
-
-```sh
-cargo run -p source-mesh-core --example regenerate-dependency-graph-scip
-```
+For contributor documentation, see the
+[development guide](https://github.com/GeneralGDA/source-mesh/blob/main/crates/source-mesh-core/DEVELOPMENT.md).

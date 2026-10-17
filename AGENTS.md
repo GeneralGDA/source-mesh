@@ -3,8 +3,14 @@
 ## Code Style
 
 - Keep source identifiers, code comments, CLI messages, and repository documentation in English.
-- Prefer precise names and cohesive functions over explanatory comments. Remove comments that restate code;
-  keep only essential constraints or external behavior that code cannot express clearly, and verify their accuracy.
+- Limit hand-written source lines to 130 characters. Keep expressions and calls on one line when they fit within that limit;
+  do not introduce shorter arbitrary wrap limits. When a chain or expression is too long, prefer meaningful intermediate
+  statements over a staircase of wrapped method calls. Preserve evaluation order and avoid unnecessary temporary variables.
+- Prefer precise names and cohesive functions over explanatory comments. Remove comments that restate code.
+  If a type's purpose is unclear from its declaration, improve its name, field names, or decomposition instead of adding
+  a descriptive comment. Apply the same principle to functions and local variables; do not replace unclear code with prose.
+  Keep comments only for non-obvious constraints, rationale, or external behavior that code cannot express clearly,
+  and verify their accuracy. Preserve executable documentation examples and substantive API contracts.
 - Do not add section divider comments (e.g. `// --- Logging ---`, `// --- Main ---`).
   Let the code structure speak for itself.
 - When a source-code comment spans multiple lines, use a block comment (`/* ... */`) instead of consecutive `//` comments.
@@ -15,6 +21,9 @@
 - Do not use abbreviations in identifiers (e.g. use `destination` not `dest`, `directory` not `dir`,
   `source` not `src`, `buffer` not `buf`, `length` not `len`, `index` not `idx`, `capabilities` not `caps`).
   Acronyms that are widely understood as standalone terms (e.g. `url`, `json`, `api`) are fine.
+  This also applies to parameter names in implementations of external traits. Keep `clippy::renamed_function_params`
+  disabled so external trait parameter names cannot force local abbreviations. For other lint conflicts, ask the user
+  rather than shortening identifiers.
 - Name values by the domain entity and semantic kind they represent, not just their temporary role in an operation.
   Preserve meaningful type vocabulary without mechanically repeating type names (e.g. `cargo_build_output_directory`,
   not `output_directory`). Use terms that match what the code actually does: a downloaded and extracted directory is
@@ -67,16 +76,32 @@
 
 ## Error Handling
 
-- Every function must validate its input preconditions at entry. Prefer parameter types that encode invariants; when that
-  is impractical, use `assert!` with a descriptive message for programmer contract violations. Reuse shared precondition
-  helpers for recurring checks instead of duplicating assertion sequences. Do not silently accept an invalid input by
-  clamping or normalizing it. Assertions are for caller bugs, not recoverable runtime failures.
-- Avoid `unwrap()` and `expect()`. Prefer restructuring code so they are not needed —
-  for example, by calling methods on a local variable and only storing it in its final
-  location after the call succeeds.
-- If a `None` or `Err` case is logically unexpected but cannot be eliminated structurally,
-  handle it with `if let Some(...) { ... }` and log a warning. Do not panic in
-  production code paths.
+- Classify failures by the origin of the data and the guarantees established by callers, not by whether a function is
+  public or private. Malformed external input, filesystem and process failures, protocol errors, timeouts, and supported
+  resource limits require `Result`, `ensure!`, or other explicit handling. Output from a subprocess or external service
+  remains external data even when this application launches it; a backend bug is not a defect in the user's source code.
+- Programmer contract violations and impossible internal states must not become ordinary user-facing `Result` errors.
+  Prefer making invalid states unrepresentable through types and control flow. For residual internal preconditions use
+  descriptive `assert!` assertions; use `unreachable!` for a proven impossible branch. Do not silently skip, default, clamp,
+  or merely log an invariant violation and continue with potentially incorrect results.
+- Establish stable invariants once at the raw-input boundary and pass the validated or parsed representation downstream.
+  Consumers must not recheck guarantees already encoded by parameter types or discard those types only to parse the
+  original data again. Fallible constructors of validated types are appropriate when their inputs have not been validated.
+  Keep format-defined normalization in the input adapter; do not normalize away programmer contract violations.
+- Distinguish valid optional absence from malformed values. A wrong JSON type, malformed protocol field, or failed parse
+  must not silently become the default for an absent value unless the external format explicitly defines that behavior.
+- Determine whether a filesystem operation can succeed by attempting it and handling its result. Do not use `exists`,
+  `try_exists`, `is_file`, `is_dir`, or separate metadata queries as proof that a later operation will succeed: the filesystem
+  can change between the check and use (TOCTOU). Metadata may be queried when it is the actual information needed.
+  A stored path guarantees only lexical properties. When correctness depends on file identity, use and retain the opened
+  objects for both identity checks and subsequent I/O; do not validate one object and then reopen its path for destructive I/O.
+- Keep worker creation failures, operation `Result`s, and worker panics distinct. Use fallible thread creation for runtime
+  resource failures. Do not downgrade a worker panic to an ordinary operational error or lose its payload; inspect all joined
+  worker outcomes before returning an operation error. Preserve internal-failure identity across concurrency boundaries.
+- Avoid `unwrap()` and `expect()`. Prefer restructuring ownership and control flow so they are not needed. Do not introduce
+  arbitrary assertion-only wrappers to hide a panic in a fallible operation; place internal invariants in cohesive domain
+  operations. Retain warning-and-continue handling only for explicitly best-effort work, such as cleanup or extra diagnostics,
+  whose failure does not invalidate the requested result.
 - Do not silence callback or channel operation results by assigning them to an underscore-prefixed variable. Handle the
   error explicitly; in tests, assert success with a descriptive message.
 
@@ -85,8 +110,9 @@
 - Keep unit and component tests under `src`, near the implementation they exercise, including synthetic graphs,
   SCIP fixtures, argument validation, and application pipeline checks. Keep their fixture projects under `src/fixtures`.
 - Reserve `tests` for repository-level checks that launch the compiled application on this repository and compare
-  its output with expected output files under `tests/expected` or enforce repository architecture constraints. Do not call production library APIs
-  from these tests. A fresh temporary index may be shared between executable runs within one test session.
+  its output with expected output files under `tests/expected` or enforce repository architecture constraints.
+  Do not call production library APIs from these tests. A fresh temporary index may be shared between executable runs
+  within one test session.
 - Keep successful CLI export combinations in repository integration tests. Keep argument validation and
   output preservation on errors as focused command tests; exercise graph algorithms, exporters, and analyzer
   semantics directly in their owning component tests instead of repeating the full command pipeline.
@@ -97,7 +123,8 @@
   (e.g. `selection_key`, not `source_returns_original_format`).
 - Prefix all test function names with `test_` (e.g. `test_selection_key`).
 - Name the instance of the type under test `system_under_test` (e.g. `let system_under_test = MyStruct::new();`).
-- Prefer `Fixture` terminology for shared test resources/environment types and variables (e.g. `TestFixture`, `let fixture = ...`).
+- Prefer `Fixture` terminology for shared test resources/environment types and variables
+  (e.g. `TestFixture`, `let fixture = ...`).
 - Structure test bodies as clear phases: fixture setup, system-under-test exercise, assertions, and cleanup when needed.
   Separate these phases with blank lines where it improves readability.
 - Keep side effects and result assertions in separate statements. Assign an operation's `Result` first, then pass that
@@ -127,6 +154,11 @@
 
 ## Architecture
 
+- Organize directories by feature or domain, not by artifact kind. Co-locate each feature's implementation, templates,
+  feature-specific tests, and supporting files; for example, keep DOT and GraphML in separate format directories.
+  Do not create cross-feature collections such as "all templates" or "all controllers". Keep genuinely shared code
+  and cross-feature tests at the closest common owner instead of duplicating them into feature directories.
+
 - Keep CLI help, normal output, and the README focused on dependency graphs and cycle checks. Backend formats and
   internal diagnostics are implementation details; expose raw backend output only with `--verbose`. Errors must explain
   why the requested result could not be produced, without treating internal backend messages as defects in the user's code.
@@ -140,6 +172,9 @@
   or extract it there for speculative reuse.
 - When a function needs all members of an existing cohesive context type, accept that context type instead of passing its
   members separately. Do not use a broad context type when the function needs only a small unrelated subset of its interface.
+- Use iteration and explicit work stacks or queues instead of recursion. This applies to traversal, construction, rendering,
+  and cleanup. Do not use recursively owned input-sized structures whose destruction can overflow the call stack. Handle
+  supported input-size and numeric limits explicitly rather than treating large external inputs as programmer errors.
 - Localize platform-dependent behaviour behind a dedicated abstraction with platform-specific implementations. Keep
   production `#[cfg(target_os = ...)]` and `#[cfg(target_arch = ...)]` directives at the narrow implementation-selection
   boundary instead of scattering them through common code. Common code must express the platform capabilities it needs
@@ -184,7 +219,8 @@
 - When the user corrects a design assumption, discard the previous mental model and restate the contract before making
   another patch. Do not incrementally repair an implementation built on the rejected assumption.
 - After a refactoring, run `cargo test -p <crate>`.
-- Never run `rustfmt`, `cargo fmt`, editor formatting actions, or any other formatting command. Leave all formatting to the user or their editor.
+- Never run `rustfmt`, `cargo fmt`, editor formatting actions, or any other formatting command.
+  Leave automatic formatting to the user or their editor; make requested style changes through explicit code edits.
 - Never suppress Clippy lints with `#[allow]`, `#[expect]`, crate- or module-level lint overrides, or command-line flags.
   The only exception is `#[expect(clippy::panic_in_result_fn, reason = "...")]` on a test-only module: tests may return
   `Result` for fallible fixture setup while using direct assertions. Rewrite production code to satisfy every lint using

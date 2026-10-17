@@ -8,7 +8,7 @@ keywords.workspace = true
 categories.workspace = true
 description = "Rust dependency graph analysis, diagrams, and cycle reports"
 readme = "README.md"
-include = ["Cargo.toml", "LICENSE", "README.md", "src/**", "examples/**"]
+include = ["Cargo.toml", "LICENSE", "README.md", "askama.toml", "src/**", "examples/**"]
 autoexamples = false
 
 [[example]]
@@ -17,6 +17,7 @@ path = "examples/regenerate_dependency_graph_scip.rs"
 
 [dependencies]
 anyhow.workspace = true
+askama.workspace = true
 bon.workspace = true
 colorous.workspace = true
 dunce.workspace = true
@@ -26,10 +27,12 @@ graphviz-rust.workspace = true
 quick-xml.workspace = true
 scip.workspace = true
 protobuf.workspace = true
+path-clean.workspace = true
 petgraph.workspace = true
 same-file.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+typed-path.workspace = true
 lsp-server.workspace = true
 url.workspace = true
 

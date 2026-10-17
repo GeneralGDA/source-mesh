@@ -2,16 +2,17 @@ use std::io::Write;
 
 use anyhow::Result;
 use anyhow::ensure;
-use derive_new::new;
+use bon::Builder;
 use getset::CopyGetters;
 
 use crate::cycles::CycleAnalysis;
 use crate::model::FolderGraph;
 use crate::model::FolderNode;
 
-#[derive(CopyGetters, new)]
+#[derive(Builder, CopyGetters, Default)]
 #[getset(get_copy = "pub")]
 pub struct Options<'analysis> {
+    #[builder(default)]
     group_folders: bool,
     cycles: Option<&'analysis CycleAnalysis<FolderNode>>,
 }

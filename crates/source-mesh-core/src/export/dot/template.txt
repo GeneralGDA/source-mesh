@@ -1,0 +1,24 @@
+{% if strict %}strict {% endif %}digraph folders {
+  rankdir=LR
+{%- for event in node_events %}
+  {%- match event %}
+  {%- when NodeEvent::Leaf with (node) %}
+{{ "  ".repeat(node.depth.to_owned()) }}n{{ node.index }}[label="{{ node.label }}" shape=box]
+  {%- when NodeEvent::EnterGroup with (group) %}
+{{ "  ".repeat(group.node.depth.to_owned()) }}subgraph cluster_n{{ group.node.index }} {
+{{ "  ".repeat(group.node.depth + 1) }}label="{{ group.node.label }}"
+    {%- if group.dependency %}
+{{ "  ".repeat(group.node.depth + 1) }}n{{ group.node.index }}[label="{{ group.node.label }}" shape=box]
+    {%- endif %}
+  {%- when NodeEvent::LeaveGroup with (depth) %}
+{{ "  ".repeat(depth.to_owned()) }}}
+  {%- endmatch %}
+{%- endfor %}
+{%- for edge in edges %}
+  n{{ edge.source }} -> n{{ edge.target }} [label="{{ edge.label }}"
+  {%- if let Some(color) = edge.color %} color="{{ color }}"{% endif %}
+  {%- if edge.test %} style=dashed{% endif %}
+  {%- if let Some(group) = edge.cycle_group %} penwidth={{ self::CYCLE_EDGE_WIDTH }} cycle_group={{ group }}{% endif -%}
+  ]
+{%- endfor %}
+}{{ "\n" -}}

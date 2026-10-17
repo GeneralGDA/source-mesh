@@ -2,20 +2,23 @@
 
 mod analyzer_config;
 mod analyzer_definitions;
+pub mod analyzer_options;
 mod analyzer_prerequisites;
 mod analyzer_process;
-pub mod analyzer_options;
 pub mod backend;
+mod diagnostics;
 pub mod export;
 mod graph;
 pub mod scip_backend;
 mod scip_definitions;
-mod scip_repair;
+mod scip_index;
 mod scip_path;
+mod scip_repair;
 mod test_dependencies;
 
 mod application;
 mod output_paths;
+mod parallel;
 
 #[cfg(test)]
 #[expect(
@@ -35,3 +38,4 @@ pub(crate) use graph::cycle_presentation;
 pub use graph::cycle_report;
 pub use graph::cycles;
 pub use graph::model;
+pub use graph::source_path::SourcePath;

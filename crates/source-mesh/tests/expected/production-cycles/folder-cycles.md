@@ -12,4 +12,16 @@ These cycles belong to the final folder graph, after root filtering and depth fo
 
 ## C3 (#4DAF4A)
 
+- <code>crates/source-mesh-core/src/export/dot</code> -> <code>crates/source-mesh-core/src/export/dot</code>
+
+## C4 (#984EA3)
+
+- <code>crates/source-mesh-core/src/export/graphml</code> -> <code>crates/source-mesh-core/src/export/graphml</code>
+
+## C5 (#FF7F00)
+
+- <code>crates/source-mesh-core/src/export/mermaid</code> -> <code>crates/source-mesh-core/src/export/mermaid</code>
+
+## C6 (#FFFF33)
+
 - <code>crates/source-mesh-core/src/graph</code> -> <code>crates/source-mesh-core/src/graph</code>

@@ -16,12 +16,12 @@ mod workspace_tests {
     #[test]
     fn test_workspace_dependency_boundary() -> Result<()> {
         const CORE_PACKAGE_NAME: &str = "source-mesh-core";
-        let repository_directory = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent().and_then(Path::parent)
-            .context("CLI crate must be located under the workspace crates directory")?;
+        let Some(repository_directory) = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent) else {
+            unreachable!("CLI crate must be located under the workspace crates directory");
+        };
         let mut system_under_test = Command::new(env!("CARGO"));
-        system_under_test.current_dir(repository_directory)
-            .args(["metadata", "--format-version", "1", "--no-deps", "--locked", "--offline"]);
+        system_under_test.current_dir(repository_directory);
+        system_under_test.args(["metadata", "--format-version", "1", "--no-deps", "--locked", "--offline"]);
 
         let output = system_under_test.output()?;
 

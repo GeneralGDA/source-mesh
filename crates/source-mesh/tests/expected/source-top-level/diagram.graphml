@@ -58,13 +58,13 @@
       </data>
     </edge>
     <edge id="e1" source="n0" target="n2">
-      <data key="weight">8</data>
+      <data key="weight">12</data>
       <data key="kind">production</data>
       <data key="eg">
         <y:PolyLineEdge>
           <y:LineStyle color="#47699B" type="line" width="1.0"/>
           <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>8</y:EdgeLabel>
+          <y:EdgeLabel>12</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>

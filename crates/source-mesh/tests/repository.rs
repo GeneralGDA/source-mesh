@@ -40,9 +40,7 @@ mod repository_tests {
             let update_expected_outputs = match env::var(UPDATE_EXPECTED_OUTPUTS) {
                 Ok(value) => {
                     if value != "1" {
-                        return Err(Error::msg(format!(
-                            "{UPDATE_EXPECTED_OUTPUTS} must be 1 or unset"
-                        )));
+                        return Err(Error::msg(format!("{UPDATE_EXPECTED_OUTPUTS} must be 1 or unset")));
                     }
                     true
                 }
@@ -52,14 +50,15 @@ mod repository_tests {
             let directory = tempdir()?;
             let saved_index = directory.path().join(REPOSITORY_INDEX_NAME);
             let mut system_under_test = Command::new(env!("CARGO_BIN_EXE_source-mesh"));
-            system_under_test.current_dir(repository_directory()?)
-                .args(["Cargo.toml", "--format", "graphml", "--save-scip"]).arg(&saved_index);
+            system_under_test.current_dir(repository_directory());
+            system_under_test.args(["Cargo.toml", "--format", "graphml", "--save-scip"]).arg(&saved_index);
 
             let output = system_under_test.output().context("Cannot run repository analysis with rust-analyzer")?;
             let diagnostics = String::from_utf8_lossy(&output.stderr);
 
-            assert!(!["SCIP", "rust-analyzer", "warning:", "ERROR"].iter().any(|marker| diagnostics.contains(marker)),
-                "Normal repository analysis exposed backend diagnostics: {diagnostics}");
+            let backend_markers = ["SCIP", "rust-analyzer", "warning:", "ERROR"];
+            let exposes_backend = backend_markers.iter().any(|marker| diagnostics.contains(marker));
+            assert!(!exposes_backend, "Normal repository analysis exposed backend diagnostics: {diagnostics}");
             let project_analysis_diagram = successful_stdout(output)?;
             let index = fs::read(saved_index)?;
             directory.close()?;
@@ -68,23 +67,22 @@ mod repository_tests {
         }
 
         fn check_expected_output(&self, relative_path: &Path, actual: &str) -> Result<()> {
-            assert!(
-                relative_path.file_name().is_some()
-                    && relative_path
-                        .components()
-                        .all(|component| matches!(component, Component::Normal(_))),
-                "Expected output path must be a relative file path with normal components"
-            );
+            let normal_components = relative_path.components().all(|component| matches!(component, Component::Normal(_)));
+            let relative_file_path = relative_path.file_name().is_some() && normal_components;
+            assert!(relative_file_path, "Expected output path must be a relative file path with normal components");
             let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("expected").join(relative_path);
             let actual = actual.replace("\r\n", "\n");
             if self.update_expected_outputs {
-                fs::create_dir_all(path.parent().context("Expected output path has no parent directory")?)?;
+                let Some(directory) = path.parent() else {
+                    unreachable!("Expected output path must retain its constructed parent directory");
+                };
+                fs::create_dir_all(directory)?;
                 fs::write(&path, &actual)?;
                 eprintln!("Updated {}", path.display());
             } else {
-                let expected = fs::read_to_string(&path)
-                    .with_context(|| format!("Cannot read expected output {}", path.display()))?
-                    .replace("\r\n", "\n");
+                let contents = fs::read_to_string(&path);
+                let contents = contents.with_context(|| format!("Cannot read expected output {}", path.display()))?;
+                let expected = contents.replace("\r\n", "\n");
 
                 assert_eq!(
                     actual,
@@ -97,10 +95,12 @@ mod repository_tests {
         }
     }
 
-    fn repository_directory() -> Result<&'static Path> {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent().and_then(Path::parent)
-            .context("CLI crate directory must have a repository ancestor")
+    #[must_use]
+    fn repository_directory() -> &'static Path {
+        let Some(directory) = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent) else {
+            unreachable!("CLI crate directory must have a repository ancestor");
+        };
+        directory
     }
 
     fn successful_stdout(output: Output) -> Result<String> {
@@ -132,7 +132,8 @@ mod repository_tests {
     #[rstest]
     #[case::including_tests(true)]
     #[case::excluding_tests(false)]
-    #[ignore = "slow whole-workspace indexing with rust-analyzer; excluded to keep default tests fast; run Test-All.ps1 from the repository root"]
+    #[ignore = "slow whole-workspace indexing with rust-analyzer; excluded to keep default tests fast; \
+                run Test-All.ps1 from the repository root"]
     fn test_repository_dependency_architecture(
         repository_fixture: &Result<RepositoryFixture, String>,
         #[case] include_tests: bool,
@@ -140,39 +141,35 @@ mod repository_tests {
         let fixture = repository_fixture.as_ref().map_err(|error| Error::msg(error.clone()))?;
         let (directory, saved_index) = replay_fixture(&fixture.index)?;
         let maximum_directory_depth = {
-            let document = Document::parse(&fixture.project_analysis_diagram)
-                .context("Cannot read indexed repository folders from GraphML")?;
-            document.descendants()
-                .filter(|node| node.has_tag_name(("http://graphml.graphdrawing.org/xmlns", "data"))
-                    && node.attribute("key") == Some("label"))
-                .filter_map(|node| node.text())
-                .map(|label| label.split('/').filter(|part| *part != ".").count())
-                .max().context("Repository diagram has no indexed folders")?
+            let document = Document::parse(&fixture.project_analysis_diagram);
+            let document = document.context("Cannot read indexed repository folders from GraphML")?;
+            let label_nodes = document.descendants().filter(|node| {
+                node.has_tag_name(("http://graphml.graphdrawing.org/xmlns", "data")) && node.attribute("key") == Some("label")
+            });
+            let labels = label_nodes.filter_map(|node| node.text());
+            let depths = labels.map(|label| label.split('/').filter(|part| *part != ".").count());
+            depths.max().context("Repository diagram has no indexed folders")?
         };
 
         for depth in 0..=maximum_directory_depth {
             let mut system_under_test = Command::new(env!("CARGO_BIN_EXE_source-mesh"));
-            system_under_test.current_dir(repository_directory()?)
-                .arg("--from-scip").arg(&saved_index)
-                .arg("--depth").arg(depth.to_string())
-                .arg("--fail-on-cycles");
+            system_under_test.current_dir(repository_directory()).arg("--from-scip").arg(&saved_index);
+            system_under_test.arg("--depth").arg(depth.to_string()).arg("--fail-on-cycles");
             if !include_tests {
                 system_under_test.arg("--exclude-tests");
             }
 
-            let output = system_under_test.output()
-                .with_context(|| format!("Cannot run repository cycle analysis at depth {depth}"))?;
+            let output = system_under_test.output();
+            let output = output.with_context(|| format!("Cannot run repository cycle analysis at depth {depth}"))?;
 
             assert!(
                 output.status.success(),
-                "Repository dependency architecture failed at depth {depth} (include_tests={include_tests}); stdout: {}\nstderr: {}",
+                "Repository dependency architecture failed at depth {depth} (include_tests={include_tests}); \
+                 stdout: {}\nstderr: {}",
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
-            assert!(
-                !output.stdout.is_empty(),
-                "Repository cycle analysis did not produce a diagram"
-            );
+            assert!(!output.stdout.is_empty(), "Repository cycle analysis did not produce a diagram");
         }
 
         directory.close()?;
@@ -190,7 +187,8 @@ mod repository_tests {
     #[case::source_top_level("source-top-level", &["--root", "crates/source-mesh-core/src", "--depth", "1", "--exclude-tests"])]
     #[case::cycles("cycles", &["--highlight-cycles", "--include-self"])]
     #[case::production_cycles("production-cycles", &["--highlight-cycles", "--include-self", "--exclude-tests"])]
-    #[ignore = "slow whole-workspace indexing with rust-analyzer; excluded to keep default tests fast; run Test-All.ps1 from the repository root"]
+    #[ignore = "slow whole-workspace indexing with rust-analyzer; excluded to keep default tests fast; \
+                run Test-All.ps1 from the repository root"]
     fn test_repository_exports(
         repository_fixture: &Result<RepositoryFixture, String>,
         #[case] scenario: &str,
@@ -205,32 +203,28 @@ mod repository_tests {
         let file_report_path = directory.path().join(FILE_CYCLE_REPORT_NAME);
         let reports = format == "graphml" && arguments.contains(&"--highlight-cycles");
         let mut system_under_test = Command::new(env!("CARGO_BIN_EXE_source-mesh"));
-        system_under_test.current_dir(directory.path())
-            .arg("--from-scip").arg(saved_index)
-            .args(["--format", format]).args(arguments)
-            .arg("--output").arg(&diagram_path);
+        system_under_test.current_dir(directory.path()).arg("--from-scip").arg(saved_index);
+        system_under_test.args(["--format", format]).args(arguments).arg("--output").arg(&diagram_path);
         if reports {
-            system_under_test.arg("--cycles-output").arg(&folder_report_path)
-                .arg("--file-cycles-output").arg(&file_report_path);
+            system_under_test.arg("--cycles-output").arg(&folder_report_path).arg("--file-cycles-output").arg(&file_report_path);
         }
 
         let output = system_under_test.output()?;
         let stdout = successful_stdout(output)?;
         let diagram = fs::read_to_string(&diagram_path)?;
-        let directory_entry_count = fs::read_dir(directory.path())?
-            .try_fold(0_usize, |count, entry| entry.map(|_| count + 1))?;
-        let cycle_reports = reports
-            .then(|| -> Result<_> {
-                let folder_report = fs::read_to_string(folder_report_path)?;
-                let file_report = fs::read_to_string(file_report_path)?.replace("&#92;", "/");
-                Ok((folder_report, file_report))
-            })
-            .transpose()?;
+        let directory_entry_count = fs::read_dir(directory.path())?.try_fold(0_usize, |count, entry| entry.map(|_| count + 1))?;
+        let cycle_reports = reports.then(|| -> Result<_> {
+            let folder_report = fs::read_to_string(folder_report_path)?;
+            let file_report = fs::read_to_string(file_report_path)?.replace("&#92;", "/");
+            Ok((folder_report, file_report))
+        });
+        let cycle_reports = cycle_reports.transpose()?;
 
         assert!(stdout.is_empty(), "File export also wrote to stdout");
         assert_eq!(directory_entry_count, if reports { 4 } else { 2 }, "Diagram export created unrequested files");
         if arguments.is_empty() && format == "graphml" {
-            assert_eq!(diagram, fixture.project_analysis_diagram, "rust-analyzer indexing and saved-index replay produced different diagrams");
+            let expected = &fixture.project_analysis_diagram;
+            assert_eq!(&diagram, expected, "rust-analyzer indexing and saved-index replay produced different diagrams");
         }
         fixture.check_expected_output(&Path::new(scenario).join(diagram_name), &diagram)?;
         if let Some((folder_report, file_report)) = cycle_reports {
@@ -245,7 +239,8 @@ mod repository_tests {
     #[rstest]
     #[case::folder("--cycles-output", "report-only", FOLDER_CYCLE_REPORT_NAME)]
     #[case::file("--file-cycles-output", "cycles", FILE_CYCLE_REPORT_NAME)]
-    #[ignore = "slow whole-workspace indexing with rust-analyzer; excluded to keep default tests fast; run Test-All.ps1 from the repository root"]
+    #[ignore = "slow whole-workspace indexing with rust-analyzer; excluded to keep default tests fast; \
+                run Test-All.ps1 from the repository root"]
     fn test_repository_report_without_highlighting(
         repository_fixture: &Result<RepositoryFixture, String>,
         #[case] output_argument: &str,
@@ -256,15 +251,13 @@ mod repository_tests {
         let (directory, saved_index) = replay_fixture(&fixture.index)?;
         let report_path = directory.path().join(report_name);
         let mut system_under_test = Command::new(env!("CARGO_BIN_EXE_source-mesh"));
-        system_under_test.current_dir(directory.path())
-            .arg("--from-scip").arg(saved_index)
-            .arg(output_argument).arg(&report_path);
+        system_under_test.current_dir(directory.path()).arg("--from-scip").arg(saved_index);
+        system_under_test.arg(output_argument).arg(&report_path);
 
         let output = system_under_test.output()?;
         let diagram = successful_stdout(output)?;
         let report = fs::read_to_string(report_path)?;
-        let directory_entry_count = fs::read_dir(directory.path())?
-            .try_fold(0_usize, |count, entry| entry.map(|_| count + 1))?;
+        let directory_entry_count = fs::read_dir(directory.path())?.try_fold(0_usize, |count, entry| entry.map(|_| count + 1))?;
 
         assert_eq!(directory_entry_count, 2, "Report-only export created unrequested files");
         fixture.check_expected_output(&Path::new("all-folders").join("diagram.dot"), &diagram)?;

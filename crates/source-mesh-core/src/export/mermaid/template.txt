@@ -1,0 +1,22 @@
+flowchart LR
+{%- for event in node_events %}
+  {%- match event %}
+  {%- when NodeEvent::Leaf with (node) %}
+    n{{ node.index }}["{{ node.label }}"]
+  {%- when NodeEvent::EnterGroup with (group) %}
+    subgraph g{{ group.node.index }}["{{ group.node.label }}"]
+    {%- if group.dependency %}
+    n{{ group.node.index }}["{{ group.node.label }}"]
+    {%- endif %}
+  {%- when NodeEvent::LeaveGroup %}
+    end
+  {%- endmatch %}
+{%- endfor %}
+{%- for edge in edges %}
+    n{{ edge.source }} {% if edge.test %}-.->{% else %}-->{% endif %}|{{ edge.label }}| n{{ edge.target }}
+  {%- if let Some(color) = edge.color %}
+    linkStyle {{ loop.index0 }} stroke:{{ color }},color:{{ color }}
+    {%- if edge.cycle %},stroke-width:{{ self::CYCLE_EDGE_WIDTH }}px{% endif %}
+  {%- endif %}
+{%- endfor -%}
+{{ "\n" -}}

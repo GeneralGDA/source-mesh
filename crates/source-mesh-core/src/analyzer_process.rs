@@ -10,6 +10,7 @@ use anyhow::bail;
 use derive_new::new;
 
 use crate::analyzer_options::Options as AnalyzerOptions;
+use crate::diagnostics::emit;
 
 const MAXIMUM_EXAMPLES: usize = 3;
 const MAXIMUM_LINE_CHARACTERS: usize = 240;
@@ -40,16 +41,16 @@ const DUPLICATE_NOTICE_LINES: &[&str] = &[
 
 #[derive(Clone, Copy)]
 pub enum Phase {
-    Configured,
-    Production,
+    Original,
+    WithoutTest,
 }
 
 impl Phase {
     #[must_use]
     const fn label(self) -> &'static str {
         match self {
-            Self::Configured => "configured analysis",
-            Self::Production => "analysis without tests",
+            Self::Original => "analysis with original configuration",
+            Self::WithoutTest => "analysis without cfg(test)",
         }
     }
 }
@@ -64,11 +65,9 @@ pub struct ScipProcess<'a> {
 impl ScipProcess<'_> {
     pub fn generate_index(&self, index_file: &Path, phase: Phase) -> Result<Vec<u8>> {
         let mut analyzer_command = Command::new("rust-analyzer");
-        analyzer_command
-            .current_dir(self.project)
-            .args(["scip", ".", "--exclude-vendored-libraries", "--num-threads", "0"])
-            .arg("--output")
-            .arg(index_file);
+        analyzer_command.current_dir(self.project);
+        analyzer_command.args(["scip", ".", "--exclude-vendored-libraries", "--num-threads", "0"]);
+        analyzer_command.arg("--output").arg(index_file);
         if let Some(configuration_path) = self.configuration_path {
             analyzer_command.arg("--config-path").arg(configuration_path);
         }
@@ -79,13 +78,13 @@ impl ScipProcess<'_> {
             )
         })?;
         if self.options.verbose() {
-            eprintln!(
+            emit(format_args!(
                 "rust-analyzer ({}) stdout:\n{}\nrust-analyzer ({}) stderr:\n{}",
                 phase.label(),
                 String::from_utf8_lossy(&output.stdout),
                 phase.label(),
                 String::from_utf8_lossy(&output.stderr)
-            );
+            ));
         }
         let diagnostics = Diagnostics::from_streams(&output.stdout, &output.stderr);
         if !output.status.success() {
@@ -144,7 +143,12 @@ impl Diagnostics {
                 if line.is_empty()
                     || line == INDEXING_STARTED
                     || line.starts_with(INDEXING_FINISHED_PREFIX)
-                    || (line.starts_with(LOADING_PREFIX) && !contains_failure(line) && !line.split_whitespace().any(|word| word.trim_end_matches(':').eq_ignore_ascii_case("warning") || word.trim_end_matches(':').eq_ignore_ascii_case("warn")))
+                    || (line.starts_with(LOADING_PREFIX)
+                        && !contains_failure(line)
+                        && !line.split_whitespace().any(|word| {
+                            let word = word.trim_end_matches(':');
+                            word.eq_ignore_ascii_case("warning") || word.eq_ignore_ascii_case("warn")
+                        }))
                     || line == EMPTY_CONFIGURATION_ERRORS
                     || (line.starts_with(MISSING_DEFINITION_PREFIX) && line.ends_with(MISSING_DEFINITION_SUFFIX))
                     || line.starts_with(UNNAMED_DEFINITION_PREFIX)
@@ -199,16 +203,21 @@ impl Diagnostics {
 
 #[must_use]
 fn blocks_analysis(line: &str) -> bool {
-    line.starts_with("error:") || line.starts_with("error[")
-        || line.strip_prefix(CONFIGURATION_ERRORS_PREFIX)
-            .and_then(|errors| errors.strip_suffix("])"))
-            .is_some_and(|errors| !errors.trim().is_empty())
+    line.starts_with("error:") || line.starts_with("error[") || {
+        let errors = line.strip_prefix(CONFIGURATION_ERRORS_PREFIX).and_then(|errors| errors.strip_suffix("])"));
+        errors.is_some_and(|errors| !errors.trim().is_empty())
+    }
 }
 #[must_use]
 fn contains_failure(line: &str) -> bool {
     line.split_whitespace().any(|word| {
-        let word = word.trim_matches(|character: char| !character.is_ascii_alphanumeric() && character != '[' && character != ']');
-        word.starts_with("error[") || ["error", "failed", "panic", "panicked"].iter().any(|marker| word.eq_ignore_ascii_case(marker))
+        let word = word.trim_matches(|character: char| {
+            !character.is_ascii_alphanumeric() && character != '[' && character != ']'
+        });
+        word.starts_with("error[") || {
+            let markers = ["error", "failed", "panic", "panicked"];
+            markers.iter().any(|marker| word.eq_ignore_ascii_case(marker))
+        }
     })
 }
 #[must_use]
@@ -237,11 +246,11 @@ mod tests {
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
-    use super::Diagnostics;
     use super::CONFIGURATION_ERRORS_PREFIX;
     use super::DEPENDENCY_GRAPH_FAILURE;
     use super::DUPLICATE_NOTICE_LINES;
     use super::DUPLICATE_SYMBOL_PREFIX;
+    use super::Diagnostics;
     use super::EMPTY_CONFIGURATION_ERRORS;
     use super::INDEXING_FINISHED_PREFIX;
     use super::INDEXING_STARTED;
@@ -250,8 +259,8 @@ mod tests {
     use super::MAXIMUM_LINE_CHARACTERS;
     use super::MISSING_DEFINITION_PREFIX;
     use super::MISSING_DEFINITION_SUFFIX;
-    use super::Phase;
     use super::PROJECT_LOADING_ERRORS;
+    use super::Phase;
     use super::UNNAMED_DEFINITION_PREFIX;
     use super::UNSPECIFIED_FAILURE;
     use super::VERBOSE_HINT;
@@ -259,11 +268,16 @@ mod tests {
 
     #[must_use]
     fn internal_diagnostics() -> String {
-        format!("{MISSING_DEFINITION_PREFIX}source.rs:1:0-1:3{MISSING_DEFINITION_SUFFIX}\n{UNNAMED_DEFINITION_PREFIX}def=Module\n")
+        format!(
+            "{MISSING_DEFINITION_PREFIX}source.rs:1:0-1:3{MISSING_DEFINITION_SUFFIX}\n{UNNAMED_DEFINITION_PREFIX}def=Module\n"
+        )
     }
     #[test]
     fn test_progress_and_empty_configuration_diagnostics() {
-        let fixture = format!("{INDEXING_STARTED}\n{LOADING_PREFIX}cargo metadata: ?\n2026-09-26T00:06:16+06:00 {EMPTY_CONFIGURATION_ERRORS}\n{INDEXING_FINISHED_PREFIX}12s\n");
+        let fixture = format!(
+            "{INDEXING_STARTED}\n{LOADING_PREFIX}cargo metadata: ?\n\
+             2026-09-26T00:06:16+06:00 {EMPTY_CONFIGURATION_ERRORS}\n{INDEXING_FINISHED_PREFIX}12s\n"
+        );
         let system_under_test = Diagnostics::from_streams(&[], fixture.as_bytes());
 
         assert_eq!(system_under_test.summary(), "");
@@ -314,7 +328,10 @@ mod tests {
     }
     #[test]
     fn test_duplicate_notices_leave_unknown_diagnostics_visible() {
-        let fixture = format!("{}\nsource.rs:1:0-1:3\n  {DUPLICATE_SYMBOL_PREFIX}example main().\nwarning: failed to load build script\n", DUPLICATE_NOTICE_LINES.join("\n"));
+        let fixture = format!(
+            "{}\nsource.rs:1:0-1:3\n  {DUPLICATE_SYMBOL_PREFIX}example main().\nwarning: failed to load build script\n",
+            DUPLICATE_NOTICE_LINES.join("\n")
+        );
         let system_under_test = Diagnostics::from_streams(&[], fixture.as_bytes());
 
         assert_eq!(system_under_test.errors.occurrences, 1);
@@ -367,7 +384,7 @@ mod tests {
         let fixture = internal_diagnostics();
         let system_under_test = Diagnostics::from_streams(&[], fixture.as_bytes());
 
-        let message = system_under_test.failure_message(Phase::Configured, &"exit code 1", verbose);
+        let message = system_under_test.failure_message(Phase::Original, &"exit code 1", verbose);
 
         assert!(message.contains(DEPENDENCY_GRAPH_FAILURE));
         assert!(message.contains("exit code 1"));
@@ -376,8 +393,8 @@ mod tests {
         assert!(!message.contains(UNNAMED_DEFINITION_PREFIX));
     }
     #[rstest]
-    #[case::configured(Phase::Configured)]
-    #[case::production(Phase::Production)]
+    #[case::original(Phase::Original)]
+    #[case::without_test(Phase::WithoutTest)]
     fn test_process_failure_without_actionable_diagnostics(#[case] phase: Phase, #[values(false, true)] verbose: bool) {
         let system_under_test = Diagnostics::from_streams(&[], INDEXING_STARTED.as_bytes());
 
@@ -399,11 +416,11 @@ mod tests {
     ) {
         let system_under_test = Diagnostics::from_streams(&[], diagnostic.as_bytes());
 
-        let message = system_under_test.failure_message(Phase::Configured, &reason, verbose);
+        let message = system_under_test.failure_message(Phase::Original, &reason, verbose);
 
         assert_eq!(message.contains(diagnostic), verbose);
         assert!(message.contains(DEPENDENCY_GRAPH_FAILURE));
-        assert!(message.contains(Phase::Configured.label()));
+        assert!(message.contains(Phase::Original.label()));
         assert!(message.contains(reason));
         assert!(message.contains(VERBOSE_HINT));
         assert!(system_under_test.summary().contains(diagnostic));

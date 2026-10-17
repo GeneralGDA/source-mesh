@@ -1,57 +1,66 @@
-use std::collections::BTreeSet;
-
-use anyhow::Context as _;
 use anyhow::Result;
+use anyhow::bail;
 use anyhow::ensure;
-use protobuf::Message as _;
-use scip::types::Index;
 use scip::types::SymbolRole;
 
+use crate::diagnostics::emit;
+use crate::model::DependencyKind;
 use crate::model::FileEdge;
 use crate::model::FileGraph;
-use crate::model::DependencyKind;
-use crate::scip_path::source_path;
+use crate::scip_definitions::DefinitionFiles;
 use crate::scip_definitions::definitions;
+use crate::scip_index::ParsedIndex;
 use crate::test_dependencies::has_test_classification;
 
 pub fn parse_scip(bytes: &[u8]) -> Result<FileGraph> {
-    ensure!(!bytes.is_empty(), "SCIP index is empty");
-    let index = Index::parse_from_bytes(bytes).context("Cannot parse SCIP protobuf index")?;
-    ensure!(
-        !index.documents.is_empty(),
-        "SCIP index contains no source documents"
-    );
-    if !has_test_classification(&index) {
-        eprintln!("warning: This SCIP index has no test classification. Raw rust-analyzer indices do not mark tests; --exclude-tests cannot identify them. Regenerate with source-mesh to classify dependencies.");
+    file_graph(&ParsedIndex::parse(bytes)?)
+}
+
+pub(crate) fn file_graph(index: &ParsedIndex) -> Result<FileGraph> {
+    ensure!(!index.documents().is_empty(), "SCIP index contains no source documents");
+    if !has_test_classification(index) {
+        emit(format_args!(
+            "warning: This SCIP index has no test classification. Raw rust-analyzer indices do not mark tests; \
+             --exclude-tests cannot identify them. Regenerate with source-mesh to classify dependencies."
+        ));
     }
-    let files = index
-        .documents
-        .iter()
-        .map(|document| source_path(&document.relative_path))
-        .collect::<Result<Vec<_>>>()?;
-    let definitions = definitions(&index)?;
-    let mut edges = BTreeSet::new();
-    for (document, source) in index.documents.iter().zip(&files) {
-        for occurrence in &document.occurrences {
+    let source_files = index.documents().iter().map(|document| document.file().clone()).collect();
+    let mut graph = FileGraph::from_files(source_files);
+    let definitions = definitions(index);
+    for document in index.documents() {
+        let source = document.file();
+        for occurrence in &document.document().occurrences {
             if occurrence.symbol_roles & SymbolRole::Definition as i32 == 0
                 && let Some(candidates) = definitions.get(occurrence.symbol.as_str())
             {
-                ensure!(candidates.len() == 1,
-                    "Cannot resolve reference to SCIP symbol {:?} in {} at {:?}: rust-analyzer assigned it to multiple files ({}). Run source-mesh on the original project to resolve Cargo target collisions; an offline index cannot recover the missing target identity.",
-                    occurrence.symbol, source.path().display(), occurrence.range,
-                    candidates.iter().map(|file| file.path().display().to_string()).collect::<Vec<_>>().join(", "));
-                let target = candidates.first().context("SCIP definition has no source file")?;
-                if source == target { continue; }
+                let target = match *candidates {
+                    DefinitionFiles::Unique(ref target) => target,
+                    DefinitionFiles::Ambiguous(ref files) => {
+                        let paths: Vec<_> = files.iter().map(|file| file.path().display().to_string()).collect();
+                        bail!(
+                            "Cannot resolve reference to SCIP symbol {:?} in {} at {:?}: \
+                             rust-analyzer assigned it to multiple files ({}). Run source-mesh on the original project \
+                             to resolve Cargo target collisions; an offline index cannot recover the missing target identity.",
+                            occurrence.symbol,
+                            source.path().display(),
+                            occurrence.range,
+                            paths.join(", ")
+                        );
+                    }
+                };
+                if source == target {
+                    continue;
+                }
                 let kind = if occurrence.symbol_roles & SymbolRole::Test as i32 != 0 {
                     DependencyKind::Test
                 } else {
                     DependencyKind::Production
                 };
-                edges.insert(FileEdge::new(source.clone(), target.clone(), kind));
+                graph.insert_dependency(FileEdge::new(source.clone(), target.clone(), kind));
             }
         }
     }
-    FileGraph::new(files.into_iter().collect(), edges)
+    Ok(graph)
 }
 
 #[cfg(test)]
@@ -68,59 +77,56 @@ mod tests {
     use pretty_assertions::assert_eq;
     use protobuf::Enum as _;
     use protobuf::Message as _;
+    use protobuf::SpecialFields;
     use rstest::rstest;
     use scip::types::Document;
     use scip::types::Index;
+    use scip::types::Metadata;
     use scip::types::Occurrence;
     use scip::types::SymbolInformation;
     use scip::types::SymbolRole;
     use scip::types::symbol_information::Kind;
 
+    use super::file_graph;
     use super::parse_scip;
+    use crate::SourcePath;
     use crate::model::DependencyKind;
     use crate::model::FileEdge;
     use crate::model::FileNode;
+    use crate::scip_definitions::DefinitionFiles;
+    use crate::scip_definitions::definitions;
+    use crate::scip_index::ParsedIndex;
 
     #[must_use]
     fn occurrence(symbol: &str, roles: i32) -> Occurrence {
-        Occurrence {
-            symbol: symbol.into(),
-            symbol_roles: roles,
-            ..Occurrence::default()
-        }
+        Occurrence { symbol: symbol.into(), symbol_roles: roles, ..Occurrence::default() }
     }
 
     #[must_use]
     fn document(path: &str, occurrences: Vec<Occurrence>) -> Document {
-        Document {
-            relative_path: path.into(),
-            language: "rust".into(),
-            occurrences,
-            ..Document::default()
-        }
+        Document { relative_path: path.into(), language: "rust".into(), occurrences, ..Document::default() }
     }
 
     fn index_bytes(documents: Vec<Document>) -> Result<Vec<u8>> {
-        Ok(Index {
-            documents,
-            ..Index::default()
-        }
-        .write_to_bytes()?)
+        Ok(Index { documents, ..Index::default() }.write_to_bytes()?)
     }
 
     #[test]
     fn test_reference_kind_bitmasks_and_mixed_file_pairs() -> Result<()> {
         let index = index_bytes(vec![
-            document("source.rs", vec![
-                occurrence("target", SymbolRole::ReadAccess.value()),
-                occurrence("target", SymbolRole::Test.value() | SymbolRole::ReadAccess.value()),
-                occurrence("target", SymbolRole::Test.value()),
-                occurrence("defined_here", SymbolRole::Test.value() | SymbolRole::Definition.value()),
-            ]),
+            document(
+                "source.rs",
+                vec![
+                    occurrence("target", SymbolRole::ReadAccess.value()),
+                    occurrence("target", SymbolRole::Test.value() | SymbolRole::ReadAccess.value()),
+                    occurrence("target", SymbolRole::Test.value()),
+                    occurrence("defined_here", SymbolRole::Test.value() | SymbolRole::Definition.value()),
+                ],
+            ),
             document("target.rs", vec![occurrence("target", SymbolRole::Test.value() | SymbolRole::Definition.value())]),
         ])?;
-        let source = FileNode::new(PathBuf::from("source.rs"))?;
-        let target = FileNode::new(PathBuf::from("target.rs"))?;
+        let source = FileNode::new(SourcePath::new(PathBuf::from("source.rs"))?);
+        let target = FileNode::new(SourcePath::new(PathBuf::from("target.rs"))?);
         let expected = BTreeSet::from([
             FileEdge::new(source.clone(), target.clone(), DependencyKind::Production),
             FileEdge::new(source, target, DependencyKind::Test),
@@ -128,7 +134,51 @@ mod tests {
 
         let system_under_test = parse_scip(&index)?;
 
-        assert_eq!(system_under_test.edges(), &expected, "SCIP lost source reference kinds or counted definitions as references");
+        assert_eq!(
+            system_under_test.edges(), &expected, "SCIP lost source reference kinds or counted definitions as references"
+        );
+        Ok(())
+    }
+
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
+    fn test_file_graph_document_order(#[case] reverse_documents: bool) -> Result<()> {
+        let fixture = index_bytes(vec![
+            document(
+                "caller.rs",
+                vec![
+                    occurrence("target", 0),
+                    occurrence("target", 0),
+                    occurrence("target", SymbolRole::Test.value()),
+                    occurrence("external", 0),
+                ],
+            ),
+            document("target.rs", vec![occurrence("target", SymbolRole::Definition.value())]),
+            document("isolated.rs", vec![]),
+        ])?;
+        let mut fixture = ParsedIndex::parse(&fixture)?;
+        let expected_files: BTreeSet<_> = fixture.documents().iter().map(|document| document.file().clone()).collect();
+        let source = FileNode::new(SourcePath::new(PathBuf::from("caller.rs"))?);
+        let target = FileNode::new(SourcePath::new(PathBuf::from("target.rs"))?);
+        let expected_edges = BTreeSet::from([
+            FileEdge::new(source.clone(), target.clone(), DependencyKind::Production),
+            FileEdge::new(source, target, DependencyKind::Test),
+        ]);
+        if reverse_documents {
+            fixture.documents_mut().reverse();
+        }
+
+        let system_under_test = file_graph(&fixture)?;
+
+        assert_eq!(
+            &expected_files, system_under_test.files(), "Graph construction lost parsed files or introduced external files"
+        );
+        assert_eq!(
+            &expected_edges,
+            system_under_test.edges(),
+            "Document order changed dependency endpoints, kinds, or deduplication"
+        );
         Ok(())
     }
 
@@ -137,26 +187,15 @@ mod tests {
         let index = index_bytes(vec![
             document(
                 "src/api/entry.rs",
-                vec![
-                    occurrence("domain/Foo#method().", 0),
-                    occurrence("domain/Foo#method().", SymbolRole::ReadAccess.value()),
-                ],
+                vec![occurrence("domain/Foo#method().", 0), occurrence("domain/Foo#method().", SymbolRole::ReadAccess.value())],
             ),
-            document(
-                "src/service/impls.rs",
-                vec![occurrence("domain/Foo#method().", SymbolRole::Definition.value())],
-            ),
-            document(
-                "src/domain/types.rs",
-                vec![occurrence("domain/Foo#", SymbolRole::Definition.value())],
-            ),
+            document("src/service/impls.rs", vec![occurrence("domain/Foo#method().", SymbolRole::Definition.value())]),
+            document("src/domain/types.rs", vec![occurrence("domain/Foo#", SymbolRole::Definition.value())]),
             document("src/unused/isolated.rs", vec![]),
         ])?;
-        let expected_dependencies = BTreeSet::from([FileEdge::new(
-            FileNode::new(Path::new("src").join("api").join("entry.rs"))?,
-            FileNode::new(Path::new("src").join("service").join("impls.rs"))?,
-            DependencyKind::Production,
-        )]);
+        let source = FileNode::new(SourcePath::new(Path::new("src").join("api").join("entry.rs"))?);
+        let target = FileNode::new(SourcePath::new(Path::new("src").join("service").join("impls.rs"))?);
+        let expected_dependencies = BTreeSet::from([FileEdge::new(source, target, DependencyKind::Production)]);
 
         let system_under_test = parse_scip(&index)?;
 
@@ -171,33 +210,23 @@ mod tests {
             document(
                 "a.rs",
                 vec![
-                    occurrence(
-                        "global",
-                        SymbolRole::Definition.value() | SymbolRole::ReadAccess.value(),
-                    ),
+                    occurrence("global", SymbolRole::Definition.value() | SymbolRole::ReadAccess.value()),
                     occurrence("global", 0),
                     occurrence("local 0", SymbolRole::Definition.value()),
                 ],
             ),
             document("b.rs", vec![occurrence("global", SymbolRole::ReadAccess.value())]),
-            document(
-                "c.rs",
-                vec![
-                    occurrence("local 0", 0),
-                    occurrence("external symbol", 0),
-                    occurrence("", 0),
-                ],
-            ),
+            document("c.rs", vec![occurrence("local 0", 0), occurrence("external symbol", 0), occurrence("", 0)]),
         ])?;
-        let expected_dependencies = BTreeSet::from([FileEdge::new(
-            FileNode::new(PathBuf::from("b.rs"))?,
-            FileNode::new(PathBuf::from("a.rs"))?,
-            DependencyKind::Production,
-        )]);
+        let source = FileNode::new(SourcePath::new(PathBuf::from("b.rs"))?);
+        let target = FileNode::new(SourcePath::new(PathBuf::from("a.rs"))?);
+        let expected_dependencies = BTreeSet::from([FileEdge::new(source, target, DependencyKind::Production)]);
 
         let system_under_test = parse_scip(&index)?;
 
-        assert_eq!(system_under_test.edges(), &expected_dependencies, "Definition bitmasks or local symbols changed dependencies");
+        assert_eq!(
+            system_under_test.edges(), &expected_dependencies, "Definition bitmasks or local symbols changed dependencies"
+        );
         Ok(())
     }
 
@@ -206,40 +235,22 @@ mod tests {
         let mut declarations = document(
             "src/lib.rs",
             vec![
-                occurrence("module/", SymbolRole::Definition.value()),
-                occurrence("namespace/", SymbolRole::Definition.value()),
+                occurrence("module/", SymbolRole::Definition.value()), occurrence("namespace/", SymbolRole::Definition.value())
             ],
         );
         declarations.symbols = vec![
-            SymbolInformation {
-                symbol: "module/".into(),
-                kind: Kind::Module.into(),
-                ..SymbolInformation::default()
-            },
-            SymbolInformation {
-                symbol: "namespace/".into(),
-                kind: Kind::Namespace.into(),
-                ..SymbolInformation::default()
-            },
+            SymbolInformation { symbol: "module/".into(), kind: Kind::Module.into(), ..SymbolInformation::default() },
+            SymbolInformation { symbol: "namespace/".into(), kind: Kind::Namespace.into(), ..SymbolInformation::default() },
         ];
         let caller = document(
             "src/caller/use.rs",
-            vec![
-                occurrence("module/", 0),
-                occurrence("namespace/", 0),
-                occurrence("module/run().", 0),
-            ],
+            vec![occurrence("module/", 0), occurrence("namespace/", 0), occurrence("module/run().", 0)],
         );
-        let target = document(
-            "src/module/run.rs",
-            vec![occurrence("module/run().", SymbolRole::Definition.value())],
-        );
-        let index = index_bytes(vec![declarations, caller, target])?;
-        let expected_dependencies = BTreeSet::from([FileEdge::new(
-            FileNode::new(Path::new("src").join("caller").join("use.rs"))?,
-            FileNode::new(Path::new("src").join("module").join("run.rs"))?,
-            DependencyKind::Production,
-        )]);
+        let target_document = document("src/module/run.rs", vec![occurrence("module/run().", SymbolRole::Definition.value())]);
+        let index = index_bytes(vec![declarations, caller, target_document])?;
+        let source = FileNode::new(SourcePath::new(Path::new("src").join("caller").join("use.rs"))?);
+        let target = FileNode::new(SourcePath::new(Path::new("src").join("module").join("run.rs"))?);
+        let expected_dependencies = BTreeSet::from([FileEdge::new(source, target, DependencyKind::Production)]);
 
         let system_under_test = parse_scip(&index)?;
 
@@ -259,7 +270,9 @@ mod tests {
 
         assert!(system_under_test.is_err(), "Ambiguous definitions were accepted");
         if let Err(error) = system_under_test {
-            assert!(error.to_string().contains("multiple files"), "Unexpected diagnostic for ambiguous symbol definitions: {error}");
+            assert!(
+                error.to_string().contains("multiple files"), "Unexpected diagnostic for ambiguous symbol definitions: {error}"
+            );
         }
         Ok(())
     }
@@ -285,11 +298,9 @@ mod tests {
             document("a.rs", vec![definition.clone(), definition]),
             document("b.rs", vec![occurrence("same", 0)]),
         ])?;
-        let expected_dependencies = BTreeSet::from([FileEdge::new(
-            FileNode::new(PathBuf::from("b.rs"))?,
-            FileNode::new(PathBuf::from("a.rs"))?,
-            DependencyKind::Production,
-        )]);
+        let source = FileNode::new(SourcePath::new(PathBuf::from("b.rs"))?);
+        let target = FileNode::new(SourcePath::new(PathBuf::from("a.rs"))?);
+        let expected_dependencies = BTreeSet::from([FileEdge::new(source, target, DependencyKind::Production)]);
 
         let system_under_test = parse_scip(&index)?;
 
@@ -309,12 +320,24 @@ mod tests {
     #[rstest]
     #[case("")]
     #[case(".")]
-    #[case("src/")]
+    #[case("src/..")]
     #[case("../outside.rs")]
     #[case("src/../../outside.rs")]
+    #[case("../src/../outside.rs")]
+    #[case("..\\outside.rs")]
+    #[case("src\\..\\..\\outside.rs")]
+    #[case("src/../..\\outside.rs")]
     #[case("/absolute.rs")]
+    #[case("/../absolute.rs")]
+    #[case("\\absolute.rs")]
     #[case("C:\\absolute.rs")]
+    #[case("C:/absolute.rs")]
+    #[case("C:relative.rs")]
     #[case("\\\\server\\share\\file.rs")]
+    #[case("//server/share/file.rs")]
+    #[case("\\\\?\\C:\\absolute.rs")]
+    #[case("\\\\?\\UNC\\server\\share\\file.rs")]
+    #[case("\\\\.\\device")]
     fn test_unsafe_document_paths(#[case] path: &str) -> Result<()> {
         let index = index_bytes(vec![document(path, vec![])])?;
 
@@ -329,13 +352,112 @@ mod tests {
     #[case("./src/file.rs")]
     #[case("src\\file.rs")]
     #[case("src/file.rs")]
+    #[case("src//./file.rs/")]
+    #[case("src\\file.rs\\")]
+    #[case("src/internal/../file.rs")]
+    #[case("src\\internal\\..\\file.rs")]
+    #[case("src/internal\\../file.rs")]
+    #[case("other/../src/file.rs")]
+    #[case("src/internal/../../src/file.rs")]
     fn test_relative_document_path_normalization(#[case] path: &str) -> Result<()> {
         let index = index_bytes(vec![document(path, vec![])])?;
-        let expected_files = BTreeSet::from([FileNode::new(Path::new("src").join("file.rs"))?]);
+        let expected_files = BTreeSet::from([FileNode::new(SourcePath::new(Path::new("src").join("file.rs"))?)]);
 
         let system_under_test = parse_scip(&index)?;
 
         assert_eq!(system_under_test.files(), &expected_files, "Unexpected normalized source paths");
+        Ok(())
+    }
+
+    #[rstest]
+    #[case("src/")]
+    #[case("file:name.rs")]
+    #[case("file\0.rs")]
+    #[case("CON")]
+    #[case("file?.rs")]
+    #[case("file*.rs")]
+    #[case("file. ")]
+    #[case("..hidden.rs")]
+    fn test_document_paths_without_filesystem_validation(#[case] path: &str) -> Result<()> {
+        let index = index_bytes(vec![document(path, vec![])])?;
+        let expected_files = BTreeSet::from([FileNode::new(SourcePath::new(PathBuf::from(path))?)]);
+
+        let system_under_test = parse_scip(&index)?;
+
+        assert_eq!(system_under_test.files(), &expected_files, "Document path was validated against filesystem naming rules");
+        Ok(())
+    }
+
+    #[test]
+    fn test_normalized_document_identity() -> Result<()> {
+        let index = index_bytes(vec![
+            document("src/file.rs", vec![occurrence("target", SymbolRole::Definition as i32)]),
+            document("src/internal/../file.rs", vec![occurrence("target", SymbolRole::Definition as i32)]),
+            document("src/other/../caller.rs", vec![occurrence("target", 0)]),
+        ])?;
+        let target = FileNode::new(SourcePath::new(Path::new("src").join("file.rs"))?);
+        let source = FileNode::new(SourcePath::new(Path::new("src").join("caller.rs"))?);
+        let expected_files = BTreeSet::from([source.clone(), target.clone()]);
+        let expected_dependencies = BTreeSet::from([FileEdge::new(source, target, DependencyKind::Production)]);
+
+        let system_under_test = parse_scip(&index)?;
+
+        assert_eq!(system_under_test.files(), &expected_files, "Equivalent paths produced distinct file nodes");
+        assert_eq!(system_under_test.edges(), &expected_dependencies, "Normalized paths changed dependency identity");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parsed_document_identity_and_round_trip() -> Result<()> {
+        let mut special_fields = SpecialFields::new();
+        special_fields.mut_unknown_fields().add_varint(100, 42);
+        special_fields.mut_unknown_fields().add_length_delimited(101, b"unknown payload".to_vec());
+        let metadata = Metadata {
+            project_root: "file:///fixture".into(),
+            special_fields: special_fields.clone(),
+            ..Metadata::default()
+        };
+        let definition = occurrence("target", SymbolRole::Definition as i32);
+        let mut target_document = document("src/internal/../target.rs", vec![definition]);
+        target_document.special_fields = special_fields.clone();
+        let external_symbol = SymbolInformation {
+            symbol: "external".into(),
+            special_fields: special_fields.clone(),
+            ..SymbolInformation::default()
+        };
+        let fixture = Index {
+            metadata: Some(metadata).into(),
+            documents: vec![target_document, document("./src/caller.rs", vec![occurrence("target", 0)])],
+            external_symbols: vec![external_symbol],
+            special_fields,
+        };
+        let target = FileNode::new(SourcePath::new(Path::new("src").join("target.rs"))?);
+        let mut system_under_test = ParsedIndex::parse(&fixture.write_to_bytes()?)?;
+
+        system_under_test.documents_mut().reverse();
+        let ownership = definitions(&system_under_test);
+
+        assert_eq!(ownership.get("target"), Some(&DefinitionFiles::Unique(target)));
+        assert_eq!(system_under_test.symbols().count(), 1, "External symbol metadata was lost");
+
+        system_under_test.documents_mut().reverse();
+        let restored = system_under_test.into_index();
+
+        assert_eq!(restored, fixture, "Parsed identities must preserve paths, metadata, external symbols, and unknown fields");
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_index_without_test_graph_boundary() -> Result<()> {
+        let fixture = Index { metadata: Some(Metadata::default()).into(), ..Index::default() }.write_to_bytes()?;
+        let system_under_test = ParsedIndex::parse(&fixture)?;
+
+        let graph = file_graph(&system_under_test);
+        let public_graph = parse_scip(&fixture);
+
+        assert!(system_under_test.documents().is_empty(), "An empty index without cfg(test) must remain representable");
+        assert!(graph.is_err(), "An index without source documents cannot produce a graph");
+        assert!(public_graph.is_err(), "The public byte adapter must preserve source-document validation");
         Ok(())
     }
 }

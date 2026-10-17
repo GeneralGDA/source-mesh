@@ -124,40 +124,42 @@ fn test_cycle_limit_output_preservation(
     Ok(())
 }
 
-#[test]
-fn test_cycle_gate_diagnostics() -> Result<()> {
+#[rstest]
+#[case::report_cycles(false)]
+#[case::cycle_gate(true)]
+fn test_cyclic_graph_outputs(#[case] fail_on_cycles: bool, #[values(false, true)] diagram_to_file: bool) -> Result<()> {
     let fixture = tempdir()?;
     let index_path = fixture.path().join("input.scip");
     let diagram_path = fixture.path().join("diagram.graphml");
     let folder_report_path = fixture.path().join("folders.md");
     let file_report_path = fixture.path().join("files.md");
     fs::write(&index_path, cyclic_index_fixture()?)?;
-    let system_under_test = Cli::try_parse_from([
+    let mut system_under_test = Cli::try_parse_from([
         OsStr::new(env!("CARGO_PKG_NAME")),
         OsStr::new("--from-scip"), index_path.as_os_str(),
         OsStr::new("--format"), OsStr::new("graphml"),
         OsStr::new("--highlight-cycles"),
-        OsStr::new("--fail-on-cycles"),
-        OsStr::new("--output"), diagram_path.as_os_str(),
         OsStr::new("--cycles-output"), folder_report_path.as_os_str(),
         OsStr::new("--file-cycles-output"), file_report_path.as_os_str(),
     ])?;
+    system_under_test.cycles.fail_on_cycles = fail_on_cycles;
+    system_under_test.output = diagram_to_file.then(|| diagram_path.clone());
     let mut output = Vec::new();
 
     let result = run(system_under_test, &mut output);
-    let diagram = fs::read_to_string(&diagram_path)?;
+    let standard_output_is_empty = output.is_empty();
+    let diagram = if diagram_to_file { fs::read_to_string(&diagram_path)? } else { String::from_utf8(output)? };
     let folder_report = fs::read_to_string(&folder_report_path)?;
     let file_report = fs::read_to_string(&file_report_path)?;
 
-    assert!(result.is_err(), "Cycle gate accepted a cyclic graph");
-    assert!(
-        result.as_ref().err().is_some_and(|error| error.to_string().contains("Dependency cycles found:")),
-        "Cycle gate did not explain why it failed"
-    );
-    assert!(output.is_empty(), "File export also wrote to stdout");
-    assert!(diagram.contains("cycle_group"), "Cycle gate did not write a highlighted diagram");
-    assert!(folder_report.contains("## C1 ("), "Cycle gate did not write a folder cycle report");
-    assert!(file_report.contains("## C1 ("), "Cycle gate did not write a file cycle report");
+    assert_eq!(result.is_err(), fail_on_cycles, "Cycles must fail only when explicitly requested: {result:?}");
+    if let Err(error) = result {
+        assert!(error.to_string().contains("Dependency cycles found:"), "Cycle gate failed for an unrelated reason: {error:#}");
+    }
+    assert_eq!(standard_output_is_empty, diagram_to_file, "Diagram output did not follow the selected destination");
+    assert!(diagram.contains("cycle_group"), "Cyclic graph did not produce a highlighted diagram");
+    assert!(folder_report.contains("## C1 ("), "Cyclic graph did not produce a folder cycle report");
+    assert!(file_report.contains("## C1 ("), "Cyclic graph did not produce a file cycle report");
     Ok(())
 }
 

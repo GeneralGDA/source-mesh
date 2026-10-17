@@ -11,6 +11,16 @@ use derive_new::new;
 use getset::CopyGetters;
 use getset::Getters;
 
+use crate::SourcePath;
+
+/**
+```compile_fail
+use std::path::PathBuf;
+use source_mesh_core::model::FileNode;
+
+let node = FileNode::new(PathBuf::from("source.rs"));
+```
+*/
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Getters)]
 #[getset(get = "pub")]
 pub struct FileNode {
@@ -18,13 +28,17 @@ pub struct FileNode {
 }
 
 impl FileNode {
-    pub fn new(path: PathBuf) -> Result<Self> {
-        ensure!(
-            path.components().all(|component| matches!(component, Component::Normal(_)))
-                && path.file_name().is_some(),
-            "File graph requires nonempty relative source paths with normal path components"
-        );
-        Ok(Self { path })
+    #[must_use]
+    pub fn new(path: SourcePath) -> Self {
+        Self { path: path.into_path() }
+    }
+
+    #[must_use]
+    fn directory(&self) -> &Path {
+        let Some(directory) = self.path.parent() else {
+            unreachable!("A validated source file path always has a parent directory");
+        };
+        directory
     }
 }
 
@@ -76,9 +90,9 @@ pub struct DependencyCount {
 }
 
 impl DependencyCount {
-    fn increment(&mut self) -> Result<()> {
-        self.value = self.value.checked_add(1).context("Dependency count overflow")?;
-        Ok(())
+    const fn increment(&mut self) {
+        assert!(self.value < usize::MAX, "Dependency counts are bounded by the number of input edges");
+        self.value += 1;
     }
 }
 
@@ -127,6 +141,19 @@ impl FileGraph {
     }
 
     #[must_use]
+    pub(crate) const fn from_files(files: BTreeSet<FileNode>) -> Self {
+        Self { files, edges: BTreeSet::new() }
+    }
+
+    pub(crate) fn insert_dependency(&mut self, dependency: FileEdge) {
+        assert!(
+            self.files.contains(dependency.source()) && self.files.contains(dependency.target()),
+            "File dependency endpoints must belong to the graph"
+        );
+        self.edges.insert(dependency);
+    }
+
+    #[must_use]
     pub fn without_test_dependencies(mut self) -> Self {
         self.edges.retain(|edge| edge.kind() == DependencyKind::Production);
         self
@@ -134,39 +161,23 @@ impl FileGraph {
 
     pub fn within_root(mut self, root: &Path) -> Result<Self> {
         let root = relative_directory_root(root)?;
-        self.files.retain(|file| file.path().parent().is_some_and(|parent| parent.starts_with(&root)));
+        self.files.retain(|file| file.directory().starts_with(&root));
         self.edges.retain(|edge| self.files.contains(edge.source()) && self.files.contains(edge.target()));
         Ok(self)
     }
 
-    pub fn folders(
-        &self,
-        root: &Path,
-        depth: Option<usize>,
-        include_self: bool,
-    ) -> Result<FolderGraph> {
+    pub fn folders(&self, root: &Path, depth: Option<usize>, include_self: bool) -> Result<FolderGraph> {
         let root = relative_directory_root(root)?;
         let mut folder_graph = FolderGraph::default();
         let mut file_folders = BTreeMap::new();
         for file in &self.files {
-            let parent = file.path().parent().context("Indexed source file has no parent")?;
-            let Ok(relative) = parent.strip_prefix(&root) else {
+            let Ok(relative) = file.directory().strip_prefix(&root) else {
                 continue;
             };
-            let parts = relative
-                .components()
-                .take(depth.unwrap_or(usize::MAX))
-                .map(|part| {
-                    part.as_os_str()
-                        .to_str()
-                        .context("Folder path is not UTF-8")
-                })
-                .collect::<Result<Vec<_>>>()?;
-            let label = if parts.is_empty() {
-                ".".into()
-            } else {
-                parts.join("/")
-            };
+            let directory_components = relative.components().take(depth.unwrap_or(usize::MAX));
+            let parts = directory_components.map(|part| part.as_os_str().to_str().context("Folder path is not UTF-8"));
+            let parts = parts.collect::<Result<Vec<_>>>()?;
+            let label = if parts.is_empty() { ".".into() } else { parts.join("/") };
             let folder = FolderNode::new(label);
             folder_graph.nodes.insert(folder.clone());
             file_folders.insert(file, folder);
@@ -179,8 +190,8 @@ impl FileGraph {
             if let (Some(source_folder), Some(target_folder)) = (file_folders.get(source), file_folders.get(target))
                 && (include_self || source_folder != target_folder)
             {
-                folder_graph.edges.entry(FolderEdge::new(source_folder.clone(), target_folder.clone(), edge.kind()))
-                    .or_default().increment()?;
+                let folder_edge = FolderEdge::new(source_folder.clone(), target_folder.clone(), edge.kind());
+                folder_graph.edges.entry(folder_edge).or_default().increment();
             }
         }
         Ok(folder_graph)
@@ -188,20 +199,20 @@ impl FileGraph {
 }
 
 fn relative_directory_root(root: &Path) -> Result<PathBuf> {
-    ensure!(root.components()
-        .all(|component| matches!(component, Component::Normal(_) | Component::CurDir)),
-        "--root must be a relative directory inside the indexed project (no '..')");
+    ensure!(
+        root.components().all(|component| matches!(component, Component::Normal(_) | Component::CurDir)),
+        "--root must be a relative directory inside the indexed project (no '..')"
+    );
     Ok(root.components().filter(|component| !matches!(component, Component::CurDir)).collect())
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Tests use assertions for expectations while returning Result for fallible setup."
-)]
+#[expect(clippy::panic_in_result_fn, reason = "Tests use assertions for expectations while returning Result for fallible setup.")]
 mod tests {
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
+    use std::panic::AssertUnwindSafe;
+    use std::panic::catch_unwind;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -217,55 +228,54 @@ mod tests {
     use super::FolderEdge;
     use super::FolderGraph;
     use super::FolderNode;
+    use crate::SourcePath;
 
     #[rstest]
     #[case(0, 1)]
     #[case(7, 8)]
     #[case(usize::MAX - 1, usize::MAX)]
-    fn test_dependency_count_increment(#[case] initial: usize, #[case] expected: usize) -> Result<()> {
+    fn test_dependency_count_increment(#[case] initial: usize, #[case] expected: usize) {
         let mut system_under_test = DependencyCount::new(initial);
 
-        system_under_test.increment()?;
+        system_under_test.increment();
 
         assert_eq!(expected, system_under_test.value(), "Dependency count did not increase by one");
-        Ok(())
     }
 
     #[test]
-    fn test_dependency_count_overflow() -> Result<()> {
+    fn test_dependency_count_overflow() {
         let mut system_under_test = DependencyCount::new(usize::MAX);
 
-        let result = system_under_test.increment();
+        let result = catch_unwind(AssertUnwindSafe(|| system_under_test.increment()));
 
-        assert!(result.is_err(), "Dependency count overflow was accepted");
+        assert!(result.is_err(), "Dependency count overflow must violate the input-edge bound");
         assert_eq!(usize::MAX, system_under_test.value(), "Overflow changed the dependency count");
-        Ok(())
     }
 
     fn file_graph_fixture() -> Result<(BTreeSet<FileNode>, BTreeSet<FileEdge>)> {
         let source_directory = Path::new("src");
-        let service_module = FileNode::new(source_directory.join("api").join("service.rs"))?;
-        let http_module = FileNode::new(source_directory.join("api").join("http.rs"))?;
-        let routes_module = FileNode::new(source_directory.join("api").join("v1").join("routes.rs"))?;
-        let request_module = FileNode::new(source_directory.join("domain").join("request.rs"))?;
-        let rules_module = FileNode::new(source_directory.join("domain").join("rules.rs"))?;
-        let database_module = FileNode::new(source_directory.join("storage").join("db.rs"))?;
-        let calls_module = FileNode::new(source_directory.join("body_only").join("calls.rs"))?;
+        let service_module = FileNode::new(SourcePath::new(source_directory.join("api").join("service.rs"))?);
+        let http_module = FileNode::new(SourcePath::new(source_directory.join("api").join("http.rs"))?);
+        let routes_module = FileNode::new(SourcePath::new(source_directory.join("api").join("v1").join("routes.rs"))?);
+        let request_module = FileNode::new(SourcePath::new(source_directory.join("domain").join("request.rs"))?);
+        let rules_module = FileNode::new(SourcePath::new(source_directory.join("domain").join("rules.rs"))?);
+        let database_module = FileNode::new(SourcePath::new(source_directory.join("storage").join("db.rs"))?);
+        let calls_module = FileNode::new(SourcePath::new(source_directory.join("body_only").join("calls.rs"))?);
         let files = BTreeSet::from([
-            FileNode::new(source_directory.join("lib.rs"))?,
-            FileNode::new(source_directory.join("api").join("mod.rs"))?,
+            FileNode::new(SourcePath::new(source_directory.join("lib.rs"))?),
+            FileNode::new(SourcePath::new(source_directory.join("api").join("mod.rs"))?),
             service_module.clone(),
             http_module.clone(),
-            FileNode::new(source_directory.join("api").join("v1").join("mod.rs"))?,
+            FileNode::new(SourcePath::new(source_directory.join("api").join("v1").join("mod.rs"))?),
             routes_module.clone(),
-            FileNode::new(source_directory.join("domain").join("mod.rs"))?,
+            FileNode::new(SourcePath::new(source_directory.join("domain").join("mod.rs"))?),
             request_module.clone(),
             rules_module.clone(),
             database_module.clone(),
-            FileNode::new(source_directory.join("body_only").join("mod.rs"))?,
+            FileNode::new(SourcePath::new(source_directory.join("body_only").join("mod.rs"))?),
             calls_module.clone(),
-            FileNode::new(source_directory.join("isolated").join("mod.rs"))?,
-            FileNode::new(source_directory.join("isolated").join("sample.rs"))?,
+            FileNode::new(SourcePath::new(source_directory.join("isolated").join("mod.rs"))?),
+            FileNode::new(SourcePath::new(source_directory.join("isolated").join("sample.rs"))?),
         ]);
         let dependencies = BTreeSet::from([
             FileEdge::new(service_module.clone(), http_module.clone(), DependencyKind::Production),
@@ -283,13 +293,10 @@ mod tests {
 
     #[must_use]
     fn folder_edges(values: &[(&str, &str, usize)], kind: DependencyKind) -> BTreeMap<FolderEdge, DependencyCount> {
-        values
-            .iter()
-            .map(|&(source, destination, weight)| (
-                FolderEdge::new(FolderNode::new(source.into()), FolderNode::new(destination.into()), kind),
-                DependencyCount::new(weight),
-            ))
-            .collect()
+        values.iter().map(|&(source, destination, weight)| {
+            let edge = FolderEdge::new(FolderNode::new(source.into()), FolderNode::new(destination.into()), kind);
+            (edge, DependencyCount::new(weight))
+        }).collect()
     }
 
     #[must_use]
@@ -299,13 +306,16 @@ mod tests {
 
     fn mixed_dependency_fixture() -> Result<(BTreeSet<FileNode>, BTreeSet<FileEdge>)> {
         let source_directory = Path::new("src");
-        let http_module = FileNode::new(source_directory.join("api").join("http.rs"))?;
-        let routes_module = FileNode::new(source_directory.join("api").join("v1").join("routes.rs"))?;
-        let request_module = FileNode::new(source_directory.join("domain").join("request.rs"))?;
-        let checks_module = FileNode::new(source_directory.join("tests").join("checks.rs"))?;
+        let http_module = FileNode::new(SourcePath::new(source_directory.join("api").join("http.rs"))?);
+        let routes_module = FileNode::new(SourcePath::new(source_directory.join("api").join("v1").join("routes.rs"))?);
+        let request_module = FileNode::new(SourcePath::new(source_directory.join("domain").join("request.rs"))?);
+        let checks_module = FileNode::new(SourcePath::new(source_directory.join("tests").join("checks.rs"))?);
         let files = BTreeSet::from([
-            http_module.clone(), routes_module.clone(), request_module.clone(), checks_module.clone(),
-            FileNode::new(source_directory.join("isolated").join("sample.rs"))?,
+            http_module.clone(),
+            routes_module.clone(),
+            request_module.clone(),
+            checks_module.clone(),
+            FileNode::new(SourcePath::new(source_directory.join("isolated").join("sample.rs"))?),
         ]);
         let dependencies = BTreeSet::from([
             FileEdge::new(http_module.clone(), request_module.clone(), DependencyKind::Production),
@@ -323,24 +333,28 @@ mod tests {
     fn test_physical_directories_and_isolated_files() -> Result<()> {
         let (files, dependencies) = file_graph_fixture()?;
         let system_under_test = FileGraph::new(files, dependencies)?;
-        let expected_nodes = folder_nodes(&[
-            ".", "api", "api/v1", "body_only", "domain", "isolated", "storage",
-        ]);
-        let expected_edges = folder_edges(&[
-            ("api", "api/v1", 1),
-            ("api", "domain", 1),
-            ("api", "storage", 1),
-            ("api/v1", "domain", 1),
-            ("api/v1", "storage", 1),
-            ("body_only", "storage", 1),
-            ("domain", "storage", 1),
-        ], DependencyKind::Production);
+        let expected_nodes = folder_nodes(&[".", "api", "api/v1", "body_only", "domain", "isolated", "storage"]);
+        let expected_edges = folder_edges(
+            &[
+                ("api", "api/v1", 1),
+                ("api", "domain", 1),
+                ("api", "storage", 1),
+                ("api/v1", "domain", 1),
+                ("api/v1", "storage", 1),
+                ("body_only", "storage", 1),
+                ("domain", "storage", 1),
+            ],
+            DependencyKind::Production,
+        );
 
         let graph = system_under_test.folders(Path::new("src"), None, false)?;
 
         assert_eq!(&expected_nodes, graph.nodes(), "Physical directory nodes differ");
         assert_eq!(&expected_edges, graph.edges(), "Physical directory dependencies differ");
-        assert!(!graph.nodes().contains(&FolderNode::new("persistence".into())), "A semantic module name was substituted for the physical folder");
+        assert!(
+            !graph.nodes().contains(&FolderNode::new("persistence".into())),
+            "A semantic module name was substituted for the physical folder"
+        );
         Ok(())
     }
 
@@ -355,8 +369,16 @@ mod tests {
 
         let graph = system_under_test.folders(Path::new("src"), depth, false)?;
 
-        assert_eq!(complete_graph.nodes(), graph.nodes(), "Depth {depth:?} changed nodes in a graph shallower than the requested limit");
-        assert_eq!(complete_graph.edges(), graph.edges(), "Depth {depth:?} changed dependencies in a graph shallower than the requested limit");
+        assert_eq!(
+            complete_graph.nodes(),
+            graph.nodes(),
+            "Depth {depth:?} changed nodes in a graph shallower than the requested limit"
+        );
+        assert_eq!(
+            complete_graph.edges(),
+            graph.edges(),
+            "Depth {depth:?} changed dependencies in a graph shallower than the requested limit"
+        );
         Ok(())
     }
 
@@ -377,7 +399,11 @@ mod tests {
         let graph = system_under_test.folders(Path::new("src"), Some(depth), false)?;
 
         assert_eq!(&folder_nodes(expected_nodes), graph.nodes(), "Depth {depth} grouped nodes incorrectly");
-        assert_eq!(&folder_edges(expected_edges, DependencyKind::Production), graph.edges(), "Depth {depth} grouped dependencies incorrectly");
+        assert_eq!(
+            &folder_edges(expected_edges, DependencyKind::Production),
+            graph.edges(),
+            "Depth {depth} grouped dependencies incorrectly"
+        );
         Ok(())
     }
 
@@ -400,23 +426,29 @@ mod tests {
         #[case] expected_edges: &[(&str, &str, usize)],
     ) -> Result<()> {
         let (files, mut dependencies) = file_graph_fixture()?;
-        let request_module = FileNode::new(Path::new("src").join("domain").join("request.rs"))?;
+        let request_module = FileNode::new(SourcePath::new(Path::new("src").join("domain").join("request.rs"))?);
         dependencies.insert(FileEdge::new(request_module.clone(), request_module, DependencyKind::Production));
         let system_under_test = FileGraph::new(files, dependencies)?;
 
         let graph = system_under_test.folders(Path::new("src"), depth, true)?;
 
-        assert_eq!(&folder_edges(expected_edges, DependencyKind::Production), graph.edges(), "Self-edge handling at depth {depth:?} differs");
+        assert_eq!(
+            &folder_edges(expected_edges, DependencyKind::Production),
+            graph.edges(),
+            "Self-edge handling at depth {depth:?} differs"
+        );
         Ok(())
     }
 
     #[test]
     fn test_scope_boundaries_use_path_components() -> Result<()> {
         let (mut files, mut dependencies) = file_graph_fixture()?;
-        let outside_module = FileNode::new(Path::new("src2").join("outside.rs"))?;
+        let outside_module = FileNode::new(SourcePath::new(Path::new("src2").join("outside.rs"))?);
         files.insert(outside_module.clone());
         dependencies.insert(FileEdge::new(
-            outside_module, FileNode::new(Path::new("src").join("api").join("service.rs"))?, DependencyKind::Production,
+            outside_module,
+            FileNode::new(SourcePath::new(Path::new("src").join("api").join("service.rs"))?),
+            DependencyKind::Production,
         ));
         let system_under_test = FileGraph::new(files, dependencies)?;
 
@@ -424,8 +456,15 @@ mod tests {
         let source_graph = system_under_test.folders(Path::new("src"), None, false)?;
 
         assert_eq!(&folder_nodes(&[".", "v1"]), api_graph.nodes(), "API scope contains unexpected folders");
-        assert_eq!(&folder_edges(&[(".", "v1", 1)], DependencyKind::Production), api_graph.edges(), "API scope contains unexpected dependencies");
-        assert!(!source_graph.nodes().contains(&FolderNode::new("src2".into())), "Scope included a directory with a shared prefix outside the source tree");
+        assert_eq!(
+            &folder_edges(&[(".", "v1", 1)], DependencyKind::Production),
+            api_graph.edges(),
+            "API scope contains unexpected dependencies"
+        );
+        assert!(
+            !source_graph.nodes().contains(&FolderNode::new("src2".into())),
+            "Scope included a directory with a shared prefix outside the source tree"
+        );
         assert_eq!(7, source_graph.edges().len(), "Scope changed the seven dependencies internal to the source tree");
         Ok(())
     }
@@ -447,7 +486,11 @@ mod tests {
         let graph = system_under_test.folders(Path::new(""), Some(depth), false)?;
 
         assert_eq!(&folder_nodes(expected_nodes), graph.nodes(), "Default root produced incorrect nodes at depth {depth}");
-        assert_eq!(&folder_edges(expected_edges, DependencyKind::Production), graph.edges(), "Default root produced incorrect dependencies at depth {depth}");
+        assert_eq!(
+            &folder_edges(expected_edges, DependencyKind::Production),
+            graph.edges(),
+            "Default root produced incorrect dependencies at depth {depth}"
+        );
         Ok(())
     }
 
@@ -467,9 +510,7 @@ mod tests {
     #[case(None, &[("api", "domain", 1), ("api/v1", "domain", 1)], &[
         ("api", "domain", 1), ("api/v1", "domain", 1), ("domain", "api", 1), ("tests", "domain", 1),
     ])]
-    #[case(Some(1), &[("api", "domain", 2)], &[
-        ("api", "domain", 2), ("domain", "api", 1), ("tests", "domain", 1),
-    ])]
+    #[case(Some(1), &[("api", "domain", 2)], &[("api", "domain", 2), ("domain", "api", 1), ("tests", "domain", 1)])]
     #[case(Some(0), &[(".", ".", 2)], &[(".", ".", 4)])]
     fn test_dependency_kinds_deduplication_and_depth_aggregation(
         #[case] depth: Option<usize>,
@@ -483,7 +524,11 @@ mod tests {
 
         let graph = system_under_test.folders(Path::new("src"), depth, true)?;
 
-        assert_eq!(6, system_under_test.edges().len(), "Duplicate occurrences were retained or distinct dependency kinds were merged");
+        assert_eq!(
+            6,
+            system_under_test.edges().len(),
+            "Duplicate occurrences were retained or distinct dependency kinds were merged"
+        );
         assert_eq!(&expected_edges, graph.edges(), "Depth {depth:?} changed dependency kinds or distinct file-pair counts");
         Ok(())
     }
@@ -501,24 +546,45 @@ mod tests {
         assert_eq!(&expected_files, graph.files(), "Excluding test dependencies removed source files");
         assert_eq!(2, graph.edges().len(), "Excluding test dependencies lost production edges or retained test edges");
         assert_eq!(&expected_edges, folders.edges(), "Excluding test dependencies changed production dependencies or counts");
-        assert_eq!(&folder_nodes(&["api", "api/v1", "domain", "isolated", "tests"]), folders.nodes(),
-            "Excluding test dependencies removed isolated or test-only source folders");
+        assert_eq!(
+            &folder_nodes(&["api", "api/v1", "domain", "isolated", "tests"]),
+            folders.nodes(),
+            "Excluding test dependencies removed isolated or test-only source folders"
+        );
         Ok(())
     }
 
     #[rstest]
-    #[case("")]
-    #[case(".")]
-    #[case("..")]
-    #[case("../outside.rs")]
-    #[case("./source.rs")]
-    #[case("/absolute.rs")]
-    fn test_file_node_source_path_preconditions(#[case] source_path: &str) {
-        let path = PathBuf::from(source_path);
+    #[case(PathBuf::from("source.rs"), PathBuf::new())]
+    #[case(Path::new("src").join("source.rs"), PathBuf::from("src"))]
+    #[case(PathBuf::from("src//source.rs/"), PathBuf::from("src"))]
+    #[case(PathBuf::from("src/./source.rs"), PathBuf::from("src"))]
+    fn test_file_node_source_path(#[case] path: PathBuf, #[case] directory: PathBuf) -> Result<()> {
+        let source_path = SourcePath::new(path.clone())?;
 
-        let system_under_test = FileNode::new(path);
+        let system_under_test = FileNode::new(source_path);
 
-        assert!(system_under_test.is_err(), "Invalid file source path was accepted: {source_path}");
+        assert_eq!(path.as_os_str(), system_under_test.path().as_os_str(), "File node changed its source path");
+        assert_eq!(directory, system_under_test.directory(), "File node has the wrong parent directory");
+        Ok(())
+    }
+
+    #[rstest]
+    #[case("", true)]
+    #[case(".", true)]
+    #[case("source.rs", false)]
+    #[case("src", false)]
+    fn test_project_root_file_scope(#[case] root: &str, #[case] included: bool) -> Result<()> {
+        let file = FileNode::new(SourcePath::new(PathBuf::from("source.rs"))?);
+        let system_under_test = FileGraph::new(BTreeSet::from([file.clone()]), BTreeSet::new())?;
+        let expected_folders = if included { folder_nodes(&["."]) } else { BTreeSet::new() };
+
+        let folders = system_under_test.folders(Path::new(root), None, false)?;
+        let scoped_files = system_under_test.within_root(Path::new(root))?;
+
+        assert_eq!(included, scoped_files.files().contains(&file), "Root filtering changed root-level file membership");
+        assert_eq!(&expected_folders, folders.nodes(), "Folder aggregation changed root-level file membership");
+        Ok(())
     }
 
     #[rstest]
@@ -539,15 +605,36 @@ mod tests {
     #[case("known.rs", "missing.rs")]
     #[case("missing.rs", "known.rs")]
     fn test_file_graph_endpoint_membership(#[case] source: &str, #[case] destination: &str) -> Result<()> {
-        let files = BTreeSet::from([FileNode::new(PathBuf::from("known.rs"))?]);
+        let files = BTreeSet::from([FileNode::new(SourcePath::new(PathBuf::from("known.rs"))?)]);
         let dependencies = BTreeSet::from([FileEdge::new(
-            FileNode::new(PathBuf::from(source))?, FileNode::new(PathBuf::from(destination))?,
+            FileNode::new(SourcePath::new(PathBuf::from(source))?),
+            FileNode::new(SourcePath::new(PathBuf::from(destination))?),
             DependencyKind::Production,
         )]);
 
         let system_under_test = FileGraph::new(files, dependencies);
 
         assert!(system_under_test.is_err(), "File graph accepted an unknown dependency endpoint");
+        Ok(())
+    }
+
+    #[rstest]
+    #[case("known.rs", "missing.rs")]
+    #[case("missing.rs", "known.rs")]
+    fn test_file_dependency_insertion_membership(#[case] source: &str, #[case] target: &str) -> Result<()> {
+        let files = BTreeSet::from([FileNode::new(SourcePath::new(PathBuf::from("known.rs"))?)]);
+        let dependency = FileEdge::new(
+            FileNode::new(SourcePath::new(PathBuf::from(source))?),
+            FileNode::new(SourcePath::new(PathBuf::from(target))?),
+            DependencyKind::Production,
+        );
+        let mut system_under_test = FileGraph::from_files(files.clone());
+
+        let result = catch_unwind(AssertUnwindSafe(|| system_under_test.insert_dependency(dependency)));
+
+        assert!(result.is_err(), "Inserting an unknown dependency endpoint must violate the graph invariant");
+        assert_eq!(&files, system_under_test.files(), "Invalid dependency insertion changed graph files");
+        assert!(system_under_test.edges().is_empty(), "Invalid dependency insertion changed graph edges");
         Ok(())
     }
 

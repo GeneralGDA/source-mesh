@@ -1,25 +1,60 @@
 flowchart LR
-    subgraph g9["source-mesh"]
-    n4["source-mesh/src"]
-    n5["source-mesh/tests"]
+    subgraph g13["source-mesh"]
+    n8["source-mesh/src"]
+    n9["source-mesh/tests"]
     end
-    subgraph g6["source-mesh-core"]
+    subgraph g10["source-mesh-core"]
     n0["source-mesh-core/examples"]
     subgraph g1["source-mesh-core/src"]
     n1["source-mesh-core/src"]
+    subgraph g2["source-mesh-core/src/export"]
     n2["source-mesh-core/src/export"]
-    n3["source-mesh-core/src/graph"]
+    n3["source-mesh-core/src/export/dot"]
+    n4["source-mesh-core/src/export/graphml"]
+    n5["source-mesh-core/src/export/mermaid"]
+    n6["source-mesh-core/src/export/rendering"]
+    end
+    n7["source-mesh-core/src/graph"]
     end
     end
-    n0 -->|3| n1
-    n1 -->|2| n2
-    n1 -.->|test: 2| n2
+    n0 -->|2| n1
+    n1 -->|1| n2
+    n1 -.->|test: 1| n2
     linkStyle 2 stroke:#D97706,color:#D97706
-    n1 -->|8| n3
-    n1 -.->|test: 5| n3
+    n1 -->|1| n6
+    n1 -.->|test: 1| n6
     linkStyle 4 stroke:#D97706,color:#D97706
-    n2 -->|13| n3
-    n2 -.->|test: 7| n3
+    n1 -->|12| n7
+    n1 -.->|test: 9| n7
     linkStyle 6 stroke:#D97706,color:#D97706
-    n4 -->|3| n1
-    n4 -->|1| n2
+    n2 -->|2| n3
+    n2 -.->|test: 1| n3
+    linkStyle 8 stroke:#D97706,color:#D97706
+    n2 -->|2| n4
+    n2 -.->|test: 1| n4
+    linkStyle 10 stroke:#D97706,color:#D97706
+    n2 -->|2| n5
+    n2 -->|2| n6
+    n2 -.->|test: 9| n6
+    linkStyle 13 stroke:#D97706,color:#D97706
+    n2 -.->|test: 5| n7
+    linkStyle 14 stroke:#D97706,color:#D97706
+    n3 -->|3| n6
+    n3 -.->|test: 3| n6
+    linkStyle 16 stroke:#D97706,color:#D97706
+    n3 -->|3| n7
+    n4 -->|3| n6
+    n4 -.->|test: 3| n6
+    linkStyle 19 stroke:#D97706,color:#D97706
+    n4 -->|3| n7
+    n4 -.->|test: 3| n7
+    linkStyle 21 stroke:#D97706,color:#D97706
+    n5 -->|3| n6
+    n5 -.->|test: 3| n6
+    linkStyle 23 stroke:#D97706,color:#D97706
+    n5 -->|2| n7
+    n6 -->|5| n7
+    n6 -.->|test: 3| n7
+    linkStyle 26 stroke:#D97706,color:#D97706
+    n8 -->|3| n1
+    n8 -->|1| n2

@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="{{ graphml_namespace }}"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns:y="{{ yworks_namespace }}"
+         xsi:schemaLocation="{{ graphml_namespace }} http://www.yworks.com/xml/schema/graphml/1.1/ygraphml.xsd">
+  <key id="label" for="node" attr.name="label" attr.type="string"/>
+  <key id="weight" for="edge" attr.name="dependencies" attr.type="long"/>
+  <key id="kind" for="edge" attr.name="dependency_kind" attr.type="string"/>
+{%- if has_cycle_groups %}
+  <key id="cycle_group" for="edge" attr.name="cycle_group" attr.type="int"/>
+{%- endif %}
+  <key id="ng" for="node" yfiles.type="nodegraphics"/>
+  <key id="eg" for="edge" yfiles.type="edgegraphics"/>
+  <graph id="folders" edgedefault="directed">
+{%- for event in node_events %}
+  {%- match event %}
+  {%- when NodeEvent::Leaf with (node) %}
+    <node id="n{{ node.index }}">
+      <data key="label">{{ node.label }}</data>
+      <data key="ng">
+        <y:ShapeNode>
+          <y:Geometry x="{{ node.horizontal }}" y="{{ node.vertical }}"{{ " " -}}
+            width="{{ node.width }}" height="{{ node.height }}"/>
+          <y:Fill color="#E8F0FE" transparent="false"/>
+          <y:BorderStyle color="{{ default_graphics_color }}" type="line" width="1.0"/>
+          <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">{{ node.display_label }}</y:NodeLabel>
+          <y:Shape type="roundrectangle"/>
+        </y:ShapeNode>
+      </data>
+    </node>
+  {%- when NodeEvent::EnterGroup with (group) %}
+    <node id="n{{ group.node.index }}" yfiles.foldertype="group">
+      <data key="label">{{ group.node.label }}</data>
+      <data key="ng">
+        <y:ProxyAutoBoundsNode>
+          <y:Realizers active="0">
+    {%- for realizer in group.realizers %}
+            <y:GroupNode>
+              <y:Geometry x="{{ group.node.horizontal }}" y="{{ group.node.vertical }}"{{ " " -}}
+                width="{{ realizer.width }}" height="{{ realizer.height }}"/>
+              <y:Fill color="#F5F7FB" transparent="false"/>
+              <y:BorderStyle color="{{ default_graphics_color }}" type="line" width="1.0"/>
+              <y:NodeLabel modelName="internal" modelPosition="t" fontStyle="bold"{{ " " -}}
+                backgroundColor="#DCE6F5" autoSizePolicy="node_width" xml:space="preserve">{{ group.node.display_label -}}
+              </y:NodeLabel>
+              <y:Shape type="roundrectangle"/>
+              <y:State closed="{{ realizer.closed }}" innerGraphDisplayEnabled="false"/>
+              <y:Insets top="20" bottom="20" left="20" right="20"/>
+              <y:BorderInsets top="0" bottom="0" left="0" right="0"/>
+            </y:GroupNode>
+    {%- endfor %}
+          </y:Realizers>
+        </y:ProxyAutoBoundsNode>
+      </data>
+      <graph id="n{{ group.node.index }}:" edgedefault="directed">
+  {%- when NodeEvent::LeaveGroup %}
+      </graph>
+    </node>
+  {%- endmatch %}
+{%- endfor %}
+{%- for edge in edges %}
+    <edge id="e{{ edge.index }}" source="n{{ edge.source }}" target="n{{ edge.target }}">
+      <data key="weight">{{ edge.weight }}</data>
+      <data key="kind">{{ edge.kind }}</data>
+  {%- if let Some(group) = edge.cycle_group %}
+      <data key="cycle_group">{{ group }}</data>
+  {%- endif %}
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="{{ edge.color }}" type="{{ edge.line_style }}" width="{{ edge.width }}"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>{{ edge.label }}</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+{%- endfor %}
+  </graph>
+</graphml>{{ "\n" -}}

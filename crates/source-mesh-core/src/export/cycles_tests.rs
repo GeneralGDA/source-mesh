@@ -16,7 +16,7 @@ use roxmltree::Node;
 use rstest::rstest;
 
 use pretty_assertions::assert_eq;
-use super::edge_style::CYCLE_EDGE_WIDTH;
+use super::rendering::edge_style::CYCLE_EDGE_WIDTH;
 use crate::cycles::CycleGroupId;
 use crate::cycles::analyze_folders;
 use crate::export::Options;
@@ -84,8 +84,9 @@ fn test_cycle_highlighting_topology_and_dependency_kinds(
     let mut default_output = Vec::new();
     let mut highlighted_output = Vec::new();
 
-    system_under_test.write_with_options(&fixture, &Options::new(grouped, None), &mut default_output)?;
-    system_under_test.write_with_options(&fixture, &Options::new(grouped, Some(&cycles)), &mut highlighted_output)?;
+    system_under_test.write_with_options(&fixture, &Options::builder().group_folders(grouped).build(), &mut default_output)?;
+    let highlighted_options = Options::builder().group_folders(grouped).cycles(&cycles).build();
+    system_under_test.write_with_options(&fixture, &highlighted_options, &mut highlighted_output)?;
     let default_output = String::from_utf8(default_output)?;
     let highlighted_output = String::from_utf8(highlighted_output)?;
     let mut colors = BTreeMap::new();
@@ -204,6 +205,14 @@ fn test_cycle_highlighting_topology_and_dependency_kinds(
 }
 
 #[rstest]
+#[case::default(&Options::default())]
+#[case::builder(&Options::builder().build())]
+fn test_export_options_defaults(#[case] system_under_test: &Options<'_>) {
+    assert!(!system_under_test.group_folders(), "Folder grouping must be disabled by default");
+    assert!(system_under_test.cycles().is_none(), "Cycle highlighting must be disabled by default");
+}
+
+#[rstest]
 #[case(Format::Dot)]
 #[case(Format::Mermaid)]
 #[case(Format::Graphml)]
@@ -218,7 +227,7 @@ fn test_default_export_options(#[case] format: Format, #[values(false, true)] gr
     } else {
         system_under_test.write(&fixture, &mut legacy_output)?;
     }
-    system_under_test.write_with_options(&fixture, &Options::new(grouped, None), &mut options_output)?;
+    system_under_test.write_with_options(&fixture, &Options::builder().group_folders(grouped).build(), &mut options_output)?;
 
     assert_eq!(legacy_output, options_output, "Options changed the default serializer output");
     Ok(())
@@ -240,8 +249,9 @@ fn test_acyclic_highlighting(#[case] format: Format, #[values(false, true)] grou
     let mut default_output = Vec::new();
     let mut highlighted_output = Vec::new();
 
-    system_under_test.write_with_options(&fixture, &Options::new(grouped, None), &mut default_output)?;
-    system_under_test.write_with_options(&fixture, &Options::new(grouped, Some(&cycles)), &mut highlighted_output)?;
+    system_under_test.write_with_options(&fixture, &Options::builder().group_folders(grouped).build(), &mut default_output)?;
+    let highlighted_options = Options::builder().group_folders(grouped).cycles(&cycles).build();
+    system_under_test.write_with_options(&fixture, &highlighted_options, &mut highlighted_output)?;
 
     assert_eq!(cycles.group_count(), 0, "Fixture unexpectedly contains cycles");
     assert_eq!(default_output, highlighted_output, "Highlighting changed an acyclic graph");
@@ -273,7 +283,8 @@ fn test_highlighting_analysis_topology_validation(
     let system_under_test = format.exporter();
     let mut output = Vec::new();
 
-    let result = system_under_test.write_with_options(&fixture, &Options::new(grouped, Some(&cycles)), &mut output);
+    let options = Options::builder().group_folders(grouped).cycles(&cycles).build();
+    let result = system_under_test.write_with_options(&fixture, &options, &mut output);
 
     assert!(result.is_err(), "Exporter accepted analysis of different topology");
     assert!(output.is_empty(), "Exporter wrote partial output for analysis of different topology");
@@ -302,7 +313,7 @@ fn test_existing_exporter_default_dispatch(#[case] grouped: bool, #[case] expect
     let system_under_test = ExistingExporter;
     let mut output = Vec::new();
 
-    system_under_test.write_with_options(&fixture, &Options::new(grouped, None), &mut output)?;
+    system_under_test.write_with_options(&fixture, &Options::builder().group_folders(grouped).build(), &mut output)?;
 
     assert_eq!(output, expected.as_bytes(), "Default options did not call the existing exporter method");
     Ok(())
@@ -315,7 +326,7 @@ fn test_existing_exporter_unsupported_highlighting() -> Result<()> {
     let system_under_test = ExistingExporter;
     let mut output = Vec::new();
 
-    let result = system_under_test.write_with_options(&fixture, &Options::new(false, Some(&cycles)), &mut output);
+    let result = system_under_test.write_with_options(&fixture, &Options::builder().cycles(&cycles).build(), &mut output);
 
     assert!(result.is_err(), "Unsupported highlighting was silently accepted");
     assert!(output.is_empty(), "Unsupported highlighting wrote partial output");

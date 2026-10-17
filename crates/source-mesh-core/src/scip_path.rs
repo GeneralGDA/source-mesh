@@ -1,36 +1,20 @@
-use std::path::Component;
-use std::path::PathBuf;
+use std::path::Path;
 
+use anyhow::Context as _;
 use anyhow::Result;
 use anyhow::ensure;
+use path_clean::PathClean as _;
+use typed_path::Utf8WindowsPath;
 
+use crate::SourcePath;
 use crate::model::FileNode;
 
 pub(crate) fn source_path(relative_path: &str) -> Result<FileNode> {
-    let normalized = relative_path.replace('\\', "/");
-    let path = PathBuf::from(&normalized);
+    let path = Utf8WindowsPath::new(relative_path);
     ensure!(
-        !normalized.is_empty()
-            && !normalized.contains('\0')
-            && !normalized.starts_with('/')
-            && !normalized.ends_with('/')
-            && !normalized
-                .split('/')
-                .next()
-                .is_some_and(|part| part.contains(':'))
-            && path
-                .components()
-                .all(|part| matches!(part, Component::Normal(_) | Component::CurDir))
-            && path
-                .components()
-                .any(|part| matches!(part, Component::Normal(_))),
-        "SCIP document path must be a nonempty relative file path without '..': {relative_path:?}"
+        !path.has_root() && !path.components().has_prefix(),
+        "SCIP document path must be relative to the project root: {relative_path:?}"
     );
-    FileNode::new(path
-        .components()
-        .filter_map(|part| match part {
-            Component::Normal(name) => Some(name),
-            Component::Prefix(_) | Component::RootDir | Component::CurDir | Component::ParentDir => None,
-        })
-        .collect())
+    let path = Path::new(path.with_unix_encoding().as_str()).clean();
+    SourcePath::new(path).with_context(|| format!("Invalid SCIP document path: {relative_path:?}")).map(FileNode::new)
 }

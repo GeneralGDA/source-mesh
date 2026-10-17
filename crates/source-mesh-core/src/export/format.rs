@@ -1,7 +1,7 @@
 use super::dot::Dot;
-use super::exporter::Exporter;
 use super::graphml::GraphMl;
 use super::mermaid::Mermaid;
+use super::rendering::exporter::Exporter;
 
 #[derive(Clone, Copy)]
 pub enum Format {

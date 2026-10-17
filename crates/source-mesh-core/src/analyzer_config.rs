@@ -37,10 +37,10 @@ mod tests {
     #[case(json!({"cfg": {"setTest": true, "other": 7}, "cargo": {"features": ["http"], "target": "custom"}}), json!({"cfg": {"setTest": false, "other": 7}, "cargo": {"features": ["http"], "target": "custom"}}))]
     #[case(json!({"cargo": {"cfgs": ["test", "debug_assertions", "feature=\"test\"", "!test"]}}), json!({"cfg": {"setTest": false}, "cargo": {"cfgs": ["debug_assertions", "feature=\"test\"", "!test"]}}))]
     #[case(json!({"cfg": {"setTest": false}, "cargo": {"cfgs": []}}), json!({"cfg": {"setTest": false}, "cargo": {"cfgs": []}}))]
-    fn test_production_configuration(#[case] configuration: Value, #[case] expected: Value) -> Result<()> {
+    fn test_configuration_without_test(#[case] configuration: Value, #[case] expected: Value) -> Result<()> {
         let system_under_test = without_test_cfg(configuration)?;
 
-        assert_eq!(system_under_test, expected, "Production pass changed unrelated settings");
+        assert_eq!(system_under_test, expected, "Analysis without cfg(test) changed unrelated settings");
         Ok(())
     }
 
