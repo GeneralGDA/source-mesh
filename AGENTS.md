@@ -109,6 +109,12 @@
 
 - Keep unit and component tests under `src`, near the implementation they exercise, including synthetic graphs,
   SCIP fixtures, argument validation, and application pipeline checks. Keep their fixture projects under `src/fixtures`.
+- By default, place tests for a single type or module in an inline `#[cfg(test)]` test module in the same ordinary `.rs`
+  file as the implementation. Do not create sibling `*_tests.rs` files solely to separate test code from production code.
+  Temporary files, fixtures, or application pipeline calls alone do not justify a separate test file.
+- Keep separate test files for large, complex suites or checks spanning multiple implementations. Attach them to the
+  owning feature module, and keep shared suites and fixtures at their closest common owner. Keep `mod.rs` and `lib.rs`
+  organizational-only; do not move inline test bodies into them.
 - Reserve `tests` for repository-level checks that launch the compiled application on this repository and compare
   its output with expected output files under `tests/expected` or enforce repository architecture constraints.
   Do not call production library APIs from these tests. A fresh temporary index may be shared between executable runs

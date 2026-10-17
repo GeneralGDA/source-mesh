@@ -161,11 +161,328 @@ fn main() -> ExitCode {
     clippy::panic_in_result_fn,
     reason = "Tests use assertions for expectations while returning Result for fallible setup."
 )]
-mod cli_tests;
+mod cli_tests {
+    use std::iter;
+    use std::process::ExitCode;
+
+    use anyhow::Error;
+    use anyhow::Result;
+    use clap::Parser as _;
+    use clap::error::ErrorKind;
+    use pretty_assertions::assert_eq;
+    use rstest::rstest;
+
+    use super::BOOLEAN_OPTIONS_DEFAULT_HELP;
+    use super::Cli;
+    use super::error_message;
+    use super::report_error;
+    use super::should_display_help;
+
+    #[rstest]
+    #[case(&["--depth=-1"])]
+    #[case(&["--depth", "not-a-number"])]
+    #[case(&["--format", "unknown"])]
+    #[case(&["--unknown-option"])]
+    #[case(&["--save-scip", "saved.scip"])]
+    #[case(&["--config", "config.json"])]
+    #[case(&["--cycle-limit", "0"])]
+    fn test_invalid_arguments(#[case] arguments: &[&str]) {
+        let replay_arguments = [env!("CARGO_PKG_NAME"), "--from-scip", "input.scip"];
+        let system_under_test = Cli::try_parse_from(replay_arguments.into_iter().chain(arguments.iter().copied()));
+
+        assert!(system_under_test.is_err(), "CLI accepted invalid or conflicting arguments");
+        if let Err(error) = system_under_test {
+            assert_ne!(error.kind(), ErrorKind::DisplayHelp, "CLI displayed help instead of rejecting arguments");
+            assert!(!error.to_string().is_empty(), "CLI omitted invalid-argument diagnostics");
+        }
+    }
+
+    #[rstest]
+    #[case::no_arguments_without_project(false, false, true)]
+    #[case::arguments_without_project(true, false, false)]
+    #[case::no_arguments_with_project(false, true, false)]
+    #[case::arguments_with_project(true, true, false)]
+    fn test_help_display_conditions(#[case] has_arguments: bool, #[case] has_project_file: bool, #[case] expected: bool) {
+        let system_under_test = should_display_help(has_arguments, has_project_file);
+
+        assert_eq!(system_under_test, expected, "CLI help display policy changed");
+    }
+
+    #[test]
+    fn test_folder_grouping_help() {
+        let system_under_test = Cli::try_parse_from([env!("CARGO_PKG_NAME"), "--help"]);
+
+        assert!(system_under_test.is_err(), "CLI did not return help");
+        if let Err(error) = system_under_test {
+            let help = error.to_string();
+
+            assert_eq!(error.kind(), ErrorKind::DisplayHelp, "CLI rejected the help argument");
+            assert!(help.contains("--group-folders"), "CLI help omitted folder grouping");
+            assert!(help.contains(BOOLEAN_OPTIONS_DEFAULT_HELP), "CLI help omitted boolean option defaults");
+        }
+    }
+
+    #[test]
+    fn test_cycle_failure_argument() -> Result<()> {
+        let system_under_test = Cli::try_parse_from([env!("CARGO_PKG_NAME"), "--fail-on-cycles"])?;
+
+        assert!(system_under_test.cycles.fail_on_cycles, "CLI did not enable cycle failure");
+        Ok(())
+    }
+
+    #[rstest]
+    #[case(&["--analyzer-threads", "0"])]
+    #[case(&["--analysis-mode", "sequential"])]
+    fn test_removed_analyzer_arguments(#[case] arguments: &[&str]) {
+        let system_under_test = Cli::try_parse_from(iter::once(env!("CARGO_PKG_NAME")).chain(arguments.iter().copied()));
+
+        assert!(system_under_test.is_err(), "CLI accepted a removed analyzer option");
+        if let Err(error) = system_under_test {
+            assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+        }
+    }
+
+    #[rstest]
+    fn test_error_detail_visibility(#[values(false, true)] verbose: bool) {
+        const FAILURE: &str = "Cannot resolve dependency definitions";
+        const DIAGNOSTIC: &str = "Internal analyzer diagnostic";
+        let fixture = Error::msg(DIAGNOSTIC).context(FAILURE);
+
+        let system_under_test = error_message(&fixture, verbose);
+
+        assert!(system_under_test.starts_with(FAILURE), "The failure reason is missing");
+        assert_eq!(system_under_test.contains(DIAGNOSTIC), verbose, "Diagnostic details must require verbose output");
+    }
+
+    #[test]
+    fn test_error_report() {
+        let mut fixture = Vec::new();
+
+        let system_under_test = report_error("Cannot analyze project", &mut fixture);
+
+        assert_eq!(system_under_test, ExitCode::FAILURE);
+        assert_eq!(fixture, b"error: Cannot analyze project\n");
+    }
+
+    #[rstest]
+    #[case::unavailable(0, b"")]
+    #[case::partial(3, b"err")]
+    fn test_error_report_write_failure(#[case] capacity: usize, #[case] expected: &[u8]) {
+        let mut fixture = vec![0; capacity];
+        let mut standard_error = fixture.as_mut_slice();
+
+        let system_under_test = report_error("Cannot analyze project", &mut standard_error);
+
+        assert_eq!(system_under_test, ExitCode::FAILURE, "Unavailable stderr must preserve the failure exit code");
+        assert_eq!(fixture, expected);
+    }
+
+    #[rstest]
+    #[case::default(&[], false)]
+    #[case::verbose(&["--verbose"], true)]
+    #[case::short(&["-v"], true)]
+    fn test_verbose_argument(#[case] arguments: &[&str], #[case] enabled: bool) -> Result<()> {
+        let system_under_test = Cli::try_parse_from(iter::once(env!("CARGO_PKG_NAME")).chain(arguments.iter().copied()))?;
+
+        assert_eq!(system_under_test.analyzer.verbose, enabled);
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 #[expect(
     clippy::panic_in_result_fn,
     reason = "Tests use assertions for expectations while returning Result for fallible setup."
 )]
-mod command_tests;
+mod command_tests {
+    use std::ffi::OsStr;
+    use std::fs;
+    use std::path::Path;
+
+    use anyhow::Result;
+    use clap::Parser as _;
+    use pretty_assertions::assert_eq;
+    use protobuf::Enum as _;
+    use protobuf::Message as _;
+    use rstest::rstest;
+    use scip::types::Document;
+    use scip::types::Index;
+    use scip::types::Occurrence;
+    use scip::types::SymbolRole;
+    use tempfile::tempdir;
+
+    use super::Cli;
+    use super::run;
+
+    #[rstest]
+    #[case::malformed_index(true, Path::new("."))]
+    #[case::outside_root(false, Path::new(".."))]
+    fn test_invalid_input_output_preservation(#[case] malformed_index: bool, #[case] root: &Path) -> Result<()> {
+        const EXISTING_OUTPUT: &str = "previous diagram";
+        let fixture = tempdir()?;
+        let index_path = fixture.path().join("input.scip");
+        let diagram_path = fixture.path().join("diagram.dot");
+        let index = if malformed_index {
+            b"this is not protobuf".to_vec()
+        } else {
+            acyclic_index_fixture()?
+        };
+        fs::write(&index_path, index)?;
+        fs::write(&diagram_path, EXISTING_OUTPUT)?;
+        let system_under_test = Cli::try_parse_from([
+            OsStr::new(env!("CARGO_PKG_NAME")),
+            OsStr::new("--from-scip"), index_path.as_os_str(),
+            OsStr::new("--root"), root.as_os_str(),
+            OsStr::new("--output"), diagram_path.as_os_str(),
+        ])?;
+        let mut output = Vec::new();
+
+        let result = run(system_under_test, &mut output);
+        let preserved = fs::read_to_string(&diagram_path)?;
+
+        assert!(result.is_err(), "Command accepted an invalid index or subtree");
+        if let Err(error) = result {
+            assert!(!error.to_string().is_empty(), "Command omitted invalid-input diagnostics");
+        }
+        assert!(output.is_empty(), "Command wrote to stdout for invalid input");
+        assert_eq!(preserved, EXISTING_OUTPUT, "Command overwrote the existing diagram");
+        Ok(())
+    }
+
+    fn acyclic_index_fixture() -> Result<Vec<u8>> {
+        Ok(Index {
+            documents: vec![Document {
+                relative_path: "src/item.rs".into(),
+                ..Document::default()
+            }],
+            ..Index::default()
+        }.write_to_bytes()?)
+    }
+
+    fn cyclic_index_fixture() -> Result<Vec<u8>> {
+        let documents = [
+            ("first/item.rs", &["second/item.rs"][..]),
+            ("second/item.rs", &["first/item.rs", "third/item.rs"]),
+            ("third/item.rs", &["second/item.rs"]),
+        ].into_iter().map(|(path, references)| {
+            let mut occurrences = vec![Occurrence {
+                symbol: path.into(),
+                symbol_roles: SymbolRole::Definition.value(),
+                ..Occurrence::default()
+            }];
+            occurrences.extend(references.iter().map(|&target| Occurrence {
+                symbol: target.into(),
+                ..Occurrence::default()
+            }));
+            Document { relative_path: path.into(), occurrences, ..Document::default() }
+        }).collect();
+        Ok(Index { documents, ..Index::default() }.write_to_bytes()?)
+    }
+
+    #[rstest]
+    #[case::folder_report(None)]
+    #[case::file_report(Some(0))]
+    fn test_cycle_limit_output_preservation(
+        #[case] depth: Option<usize>,
+        #[values(false, true)] diagram_to_file: bool,
+    ) -> Result<()> {
+        const EXISTING_OUTPUT: &str = "previous result";
+        let fixture = tempdir()?;
+        let index_path = fixture.path().join("input.scip");
+        let diagram_path = fixture.path().join("diagram.dot");
+        let folder_report_path = fixture.path().join("folders.md");
+        let file_report_path = fixture.path().join("files.md");
+        fs::write(&index_path, cyclic_index_fixture()?)?;
+        for path in [&diagram_path, &folder_report_path, &file_report_path] {
+            fs::write(path, EXISTING_OUTPUT)?;
+        }
+        let mut system_under_test = Cli::try_parse_from([
+            OsStr::new(env!("CARGO_PKG_NAME")),
+            OsStr::new("--from-scip"), index_path.as_os_str(),
+            OsStr::new("--cycle-limit"), OsStr::new("1"),
+            OsStr::new("--cycles-output"), folder_report_path.as_os_str(),
+            OsStr::new("--file-cycles-output"), file_report_path.as_os_str(),
+        ])?;
+        system_under_test.depth = depth;
+        system_under_test.output = diagram_to_file.then(|| diagram_path.clone());
+        let mut output = Vec::new();
+
+        let result = run(system_under_test, &mut output);
+
+        assert!(result.is_err(), "Command accepted more cycles than the limit");
+        if let Err(error) = result {
+            assert!(
+                error.to_string().contains("Cycle count exceeds"),
+                "Command failed before checking the cycle limit: {error:#}"
+            );
+        }
+        assert!(output.is_empty(), "Command wrote to stdout before checking the cycle limit");
+        for path in [&diagram_path, &folder_report_path, &file_report_path] {
+            let preserved = fs::read_to_string(path)?;
+            assert_eq!(preserved, EXISTING_OUTPUT, "Cycle limit error overwrote {}", path.display());
+        }
+        Ok(())
+    }
+
+    #[rstest]
+    #[case::report_cycles(false)]
+    #[case::cycle_gate(true)]
+    fn test_cyclic_graph_outputs(#[case] fail_on_cycles: bool, #[values(false, true)] diagram_to_file: bool) -> Result<()> {
+        let fixture = tempdir()?;
+        let index_path = fixture.path().join("input.scip");
+        let diagram_path = fixture.path().join("diagram.graphml");
+        let folder_report_path = fixture.path().join("folders.md");
+        let file_report_path = fixture.path().join("files.md");
+        fs::write(&index_path, cyclic_index_fixture()?)?;
+        let mut system_under_test = Cli::try_parse_from([
+            OsStr::new(env!("CARGO_PKG_NAME")),
+            OsStr::new("--from-scip"), index_path.as_os_str(),
+            OsStr::new("--format"), OsStr::new("graphml"),
+            OsStr::new("--highlight-cycles"),
+            OsStr::new("--cycles-output"), folder_report_path.as_os_str(),
+            OsStr::new("--file-cycles-output"), file_report_path.as_os_str(),
+        ])?;
+        system_under_test.cycles.fail_on_cycles = fail_on_cycles;
+        system_under_test.output = diagram_to_file.then(|| diagram_path.clone());
+        let mut output = Vec::new();
+
+        let result = run(system_under_test, &mut output);
+        let standard_output_is_empty = output.is_empty();
+        let diagram = if diagram_to_file { fs::read_to_string(&diagram_path)? } else { String::from_utf8(output)? };
+        let folder_report = fs::read_to_string(&folder_report_path)?;
+        let file_report = fs::read_to_string(&file_report_path)?;
+
+        assert_eq!(result.is_err(), fail_on_cycles, "Cycles must fail only when explicitly requested: {result:?}");
+        if let Err(error) = result {
+            assert!(
+                error.to_string().contains("Dependency cycles found:"),
+                "Cycle gate failed for an unrelated reason: {error:#}"
+            );
+        }
+        assert_eq!(standard_output_is_empty, diagram_to_file, "Diagram output did not follow the selected destination");
+        assert!(diagram.contains("cycle_group"), "Cyclic graph did not produce a highlighted diagram");
+        assert!(folder_report.contains("## C1 ("), "Cyclic graph did not produce a folder cycle report");
+        assert!(file_report.contains("## C1 ("), "Cyclic graph did not produce a file cycle report");
+        Ok(())
+    }
+
+    #[test]
+    fn test_acyclic_graph_cycle_gate() -> Result<()> {
+        let fixture = tempdir()?;
+        let index_path = fixture.path().join("input.scip");
+        fs::write(&index_path, acyclic_index_fixture()?)?;
+        let system_under_test = Cli::try_parse_from([
+            OsStr::new(env!("CARGO_PKG_NAME")),
+            OsStr::new("--from-scip"), index_path.as_os_str(),
+            OsStr::new("--root"), OsStr::new("src"),
+            OsStr::new("--fail-on-cycles"),
+        ])?;
+        let mut output = Vec::new();
+
+        let result = run(system_under_test, &mut output);
+
+        assert!(result.is_ok(), "Cycle gate rejected an acyclic graph: {result:?}");
+        assert!(!output.is_empty(), "Cycle gate did not export the acyclic graph");
+        Ok(())
+    }
+}

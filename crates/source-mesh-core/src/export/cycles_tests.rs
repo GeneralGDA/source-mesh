@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::io::Write;
 use std::num::NonZeroUsize;
 
 use anyhow::Context as _;
@@ -20,33 +19,13 @@ use super::rendering::edge_style::CYCLE_EDGE_WIDTH;
 use crate::cycles::CycleGroupId;
 use crate::cycles::analyze_folders;
 use crate::export::Options;
-use crate::export::Exporter;
 use crate::export::Format;
+use crate::export::rendering::serialization_fixture::cycle_graph_fixture as graph_fixture;
 use crate::model::DependencyCount;
 use crate::model::DependencyKind;
 use crate::model::FolderEdge;
 use crate::model::FolderGraph;
 use crate::model::FolderNode;
-
-fn graph_fixture() -> Result<FolderGraph> {
-    FolderGraph::new(
-        ["src/first/a", "src/first/b", "src/isolated", "src/second/a", "src/second/b", "src/third/self"]
-            .map(String::from).map(FolderNode::new).into(),
-        [
-            ("src/first/a", "src/first/b", DependencyKind::Production, 2),
-            ("src/first/a", "src/first/b", DependencyKind::Test, 3),
-            ("src/first/b", "src/first/a", DependencyKind::Production, 4),
-            ("src/first/b", "src/second/a", DependencyKind::Production, 5),
-            ("src/first/b", "src/second/a", DependencyKind::Test, 9),
-            ("src/second/a", "src/second/b", DependencyKind::Production, 6),
-            ("src/second/b", "src/second/a", DependencyKind::Production, 7),
-            ("src/third/self", "src/third/self", DependencyKind::Production, 8),
-        ].into_iter().map(|(source, target, kind, weight)| (
-            FolderEdge::new(FolderNode::new(source.into()), FolderNode::new(target.into()), kind),
-            DependencyCount::new(weight),
-        )).collect(),
-    )
-}
 
 fn dot_statements(output: &str) -> Result<Vec<Statement>> {
     let Graph::DiGraph { stmts: statements, .. } = graphviz_rust::parse(output).map_err(Error::msg)? else {
@@ -205,14 +184,6 @@ fn test_cycle_highlighting_topology_and_dependency_kinds(
 }
 
 #[rstest]
-#[case::default(&Options::default())]
-#[case::builder(&Options::builder().build())]
-fn test_export_options_defaults(#[case] system_under_test: &Options<'_>) {
-    assert!(!system_under_test.group_folders(), "Folder grouping must be disabled by default");
-    assert!(system_under_test.cycles().is_none(), "Cycle highlighting must be disabled by default");
-}
-
-#[rstest]
 #[case(Format::Dot)]
 #[case(Format::Mermaid)]
 #[case(Format::Graphml)]
@@ -288,47 +259,5 @@ fn test_highlighting_analysis_topology_validation(
 
     assert!(result.is_err(), "Exporter accepted analysis of different topology");
     assert!(output.is_empty(), "Exporter wrote partial output for analysis of different topology");
-    Ok(())
-}
-
-struct ExistingExporter;
-
-impl Exporter for ExistingExporter {
-    fn write(&self, graph: &FolderGraph, output: &mut dyn Write) -> Result<()> {
-        writeln!(output, "flat {}", graph.nodes().len())?;
-        Ok(())
-    }
-
-    fn write_grouped(&self, graph: &FolderGraph, output: &mut dyn Write) -> Result<()> {
-        writeln!(output, "grouped {}", graph.nodes().len())?;
-        Ok(())
-    }
-}
-
-#[rstest]
-#[case(false, "flat 0\n")]
-#[case(true, "grouped 0\n")]
-fn test_existing_exporter_default_dispatch(#[case] grouped: bool, #[case] expected: &str) -> Result<()> {
-    let fixture = FolderGraph::default();
-    let system_under_test = ExistingExporter;
-    let mut output = Vec::new();
-
-    system_under_test.write_with_options(&fixture, &Options::builder().group_folders(grouped).build(), &mut output)?;
-
-    assert_eq!(output, expected.as_bytes(), "Default options did not call the existing exporter method");
-    Ok(())
-}
-
-#[test]
-fn test_existing_exporter_unsupported_highlighting() -> Result<()> {
-    let fixture = graph_fixture()?;
-    let cycles = analyze_folders(&fixture)?;
-    let system_under_test = ExistingExporter;
-    let mut output = Vec::new();
-
-    let result = system_under_test.write_with_options(&fixture, &Options::builder().cycles(&cycles).build(), &mut output);
-
-    assert!(result.is_err(), "Unsupported highlighting was silently accepted");
-    assert!(output.is_empty(), "Unsupported highlighting wrote partial output");
     Ok(())
 }

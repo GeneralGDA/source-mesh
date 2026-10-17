@@ -12,8 +12,8 @@ use pretty_assertions::assert_eq;
 use super::graphml::GRAPHML_NAMESPACE;
 use super::graphml::YWORKS_NAMESPACE;
 use crate::export::Format;
+use crate::export::rendering::render;
 use crate::export::rendering::serialization_fixture::graph_fixture;
-use crate::export::rendering::serialization_fixture::render;
 use crate::model::FolderGraph;
 use crate::model::FolderNode;
 

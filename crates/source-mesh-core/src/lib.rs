@@ -2,6 +2,7 @@
 
 mod analyzer_config;
 mod analyzer_definitions;
+mod analyzer_diagnostics;
 pub mod analyzer_options;
 mod analyzer_prerequisites;
 mod analyzer_process;
@@ -19,13 +20,6 @@ mod test_dependencies;
 mod application;
 mod output_paths;
 mod parallel;
-
-#[cfg(test)]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Tests use assertions for expectations while returning Result for fallible setup."
-)]
-mod application_tests;
 
 pub use application::CycleOptions;
 pub use application::DEFAULT_CYCLE_LIMIT;

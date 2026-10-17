@@ -34,7 +34,7 @@ use serde_json::json;
 use tempfile::NamedTempFile;
 use url::Url;
 
-use crate::analyzer_process::VERBOSE_HINT;
+use crate::diagnostics::MESSAGE_VERBOSE_DIAGNOSTICS_HINT;
 use crate::diagnostics::emit;
 
 const INITIALIZATION_TIMEOUT: Duration = Duration::from_mins(10);
@@ -265,7 +265,7 @@ impl AnalyzerProcess {
         const FAILURE_MESSAGE: &str = "Semantic definition lookup failed";
 
         if !self.verbose {
-            return format!("Dependency resolution failed. {VERBOSE_HINT}");
+            return format!("Dependency resolution failed. {MESSAGE_VERBOSE_DIAGNOSTICS_HINT}");
         }
         let details = (|| -> Result<String> {
             let mut file = self.diagnostics.reopen()?;

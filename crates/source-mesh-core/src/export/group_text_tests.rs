@@ -7,9 +7,9 @@ use graphviz_rust::dot_structures::Stmt as Statement;
 use rstest::rstest;
 
 use crate::export::Format;
-use crate::export::dot::dot_membership;
-use crate::export::dot::dot_statements;
-use crate::export::rendering::grouping_fixture::render_grouped;
+use crate::export::rendering::grouping_fixture::dot_membership;
+use crate::export::rendering::grouping_fixture::dot_statements;
+use crate::export::rendering::render_grouped;
 use crate::model::DependencyCount;
 use crate::model::DependencyKind;
 use crate::model::FolderEdge;

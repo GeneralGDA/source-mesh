@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 
-use super::exporter::Exporter;
 use crate::model::DependencyCount;
 use crate::model::DependencyKind;
 use crate::model::FolderEdge;
@@ -34,8 +33,22 @@ pub(in crate::export) fn parallel_dependency_fixture() -> Result<FolderGraph> {
     )
 }
 
-pub(in crate::export) fn render(exporter: &dyn Exporter, graph: &FolderGraph) -> Result<String> {
-    let mut output = Vec::new();
-    exporter.write(graph, &mut output)?;
-    Ok(String::from_utf8(output)?)
+pub(in crate::export) fn cycle_graph_fixture() -> Result<FolderGraph> {
+    FolderGraph::new(
+        ["src/first/a", "src/first/b", "src/isolated", "src/second/a", "src/second/b", "src/third/self"]
+            .map(String::from).map(FolderNode::new).into(),
+        [
+            ("src/first/a", "src/first/b", DependencyKind::Production, 2),
+            ("src/first/a", "src/first/b", DependencyKind::Test, 3),
+            ("src/first/b", "src/first/a", DependencyKind::Production, 4),
+            ("src/first/b", "src/second/a", DependencyKind::Production, 5),
+            ("src/first/b", "src/second/a", DependencyKind::Test, 9),
+            ("src/second/a", "src/second/b", DependencyKind::Production, 6),
+            ("src/second/b", "src/second/a", DependencyKind::Production, 7),
+            ("src/third/self", "src/third/self", DependencyKind::Production, 8),
+        ].into_iter().map(|(source, target, kind, weight)| (
+            FolderEdge::new(FolderNode::new(source.into()), FolderNode::new(target.into()), kind),
+            DependencyCount::new(weight),
+        )).collect(),
+    )
 }
