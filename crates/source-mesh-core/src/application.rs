@@ -53,7 +53,6 @@ pub struct CycleOptions {
     cycle_limit: NonZeroUsize,
 }
 
-/// Boolean options are disabled by default.
 #[derive(Builder)]
 pub struct Request {
     input: Input,
@@ -80,8 +79,8 @@ pub struct Request {
 Analyze and export dependencies, writing the diagram to the supplied writer
 unless the request selects an output file.
 
-Analysis and serialization finish before output files are opened. All destinations
-are checked against the retained input handles before any existing file is truncated.
+Analysis and serialization failures leave existing output files unchanged.
+Output files must be distinct and must not overwrite input files.
 Opening failures can leave new empty files; writing failures can leave partial outputs.
 Cycle gating fails only after outputs have been written.
 */

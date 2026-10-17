@@ -104,7 +104,6 @@ fn test_error_report() {
 #[case::unavailable(0, b"")]
 #[case::partial(3, b"err")]
 fn test_error_report_write_failure(#[case] capacity: usize, #[case] expected: &[u8]) {
-    /* A fixed-capacity slice fails with WriteZero once its buffer is full. */
     let mut fixture = vec![0; capacity];
     let mut standard_error = fixture.as_mut_slice();
 

@@ -105,8 +105,7 @@ impl SymbolCache {
 
     pub(crate) fn intern(&mut self, symbol: Symbol) -> String {
         let formatted = format_symbol(symbol);
-        /* The formatter can canonicalize fields. Cache the emitted identity so semantic
-        consumers agree with offline replay, including any opaque outcome. */
+        /* Formatting can canonicalize fields, so the original structure may not match the emitted symbol. */
         self.symbols.entry(formatted.clone()).or_insert_with(|| ParsedSymbol::parse(&formatted));
         formatted
     }

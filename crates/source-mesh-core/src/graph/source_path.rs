@@ -6,7 +6,7 @@ use anyhow::ensure;
 
 /**
 Validation is lexical only, not a guarantee of existence, file type, or accessibility.
-The supplied path spelling is preserved; format-specific normalization belongs to the input adapter.
+The supplied path spelling is preserved.
 */
 pub struct SourcePath {
     path: PathBuf,

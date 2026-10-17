@@ -53,7 +53,6 @@ pub(crate) struct OutputFiles<'a> {
 
 impl<'a> OutputFiles<'a> {
     /**
-    Call only after analysis and serialization succeed. Existing files are not truncated here.
     Newly created empty files may remain on failure: removing their paths could delete replacement
     files, so no path-based rollback is attempted.
     */
@@ -84,7 +83,6 @@ impl<'a> OutputFiles<'a> {
         Ok(Self { files })
     }
 
-    /// I/O failures can leave partial output.
     pub(crate) fn write(self) -> Result<()> {
         for mut file in self.files {
             let output = file.handle.as_file_mut();

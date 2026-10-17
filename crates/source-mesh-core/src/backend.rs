@@ -31,7 +31,6 @@ pub trait IndexSource {
     fn index(&self) -> Result<Vec<u8>>;
 }
 
-/// A best-effort heuristic for choosing CLI help, not project validation.
 #[must_use]
 pub fn contains_project_file(directory: &Path) -> bool {
     directory.join(CARGO_MANIFEST).is_file() || directory.join(RUST_PROJECT_FILE).is_file()

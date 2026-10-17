@@ -141,7 +141,7 @@ impl<'label> Layout<'label> {
 
 #[must_use]
 fn escaped_label(label: &str) -> String {
-    // Preserve CR as an entity: XML readers normalize literal CR to LF.
+    // XML readers normalize literal CR to LF.
     quick_xml::escape::escape(label).replace('\r', "&#13;")
 }
 
