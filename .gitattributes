@@ -1,3 +1,3 @@
 *.scip binary
 crates/source-mesh/tests/expected/** text eol=lf
-crates/source-mesh-core/src/export/*/template.txt text eol=lf
+crates/source-mesh-core/src/export/*/template.jinja2 text eol=lf

@@ -43,7 +43,7 @@ struct EdgePresentation {
 }
 
 #[derive(Template)]
-#[template(path = "export/mermaid/template.txt", escape = "none")]
+#[template(path = "export/mermaid/template.jinja2", escape = "none")]
 struct MermaidTemplate {
     node_events: Vec<NodeEvent>,
     edges: Vec<EdgePresentation>,

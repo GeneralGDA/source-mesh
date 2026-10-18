@@ -45,7 +45,7 @@ struct EdgePresentation {
 }
 
 #[derive(Template)]
-#[template(path = "export/dot/template.txt", escape = "none")]
+#[template(path = "export/dot/template.jinja2", escape = "none")]
 struct DotTemplate {
     strict: bool,
     node_events: Vec<NodeEvent>,

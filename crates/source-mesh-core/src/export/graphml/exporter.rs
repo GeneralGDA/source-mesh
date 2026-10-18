@@ -216,7 +216,7 @@ struct EdgePresentation {
 }
 
 #[derive(Template)]
-#[template(path = "export/graphml/template.txt", escape = "none")]
+#[template(path = "export/graphml/template.jinja2", escape = "none")]
 struct GraphMlTemplate {
     graphml_namespace: &'static str,
     yworks_namespace: &'static str,
