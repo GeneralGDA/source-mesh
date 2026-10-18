@@ -22,10 +22,34 @@
       </data>
     </node>
     <node id="n1">
+      <data key="label">analyzer</data>
+      <data key="ng">
+        <y:ShapeNode>
+          <y:Geometry x="0" y="80" width="104" height="40"/>
+          <y:Fill color="#E8F0FE" transparent="false"/>
+          <y:BorderStyle color="#47699B" type="line" width="1.0"/>
+          <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">analyzer</y:NodeLabel>
+          <y:Shape type="roundrectangle"/>
+        </y:ShapeNode>
+      </data>
+    </node>
+    <node id="n2">
+      <data key="label">diagnostics</data>
+      <data key="ng">
+        <y:ShapeNode>
+          <y:Geometry x="0" y="160" width="128" height="40"/>
+          <y:Fill color="#E8F0FE" transparent="false"/>
+          <y:BorderStyle color="#47699B" type="line" width="1.0"/>
+          <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">diagnostics</y:NodeLabel>
+          <y:Shape type="roundrectangle"/>
+        </y:ShapeNode>
+      </data>
+    </node>
+    <node id="n3">
       <data key="label">export</data>
       <data key="ng">
         <y:ShapeNode>
-          <y:Geometry x="0" y="80" width="88" height="40"/>
+          <y:Geometry x="0" y="240" width="88" height="40"/>
           <y:Fill color="#E8F0FE" transparent="false"/>
           <y:BorderStyle color="#47699B" type="line" width="1.0"/>
           <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">export</y:NodeLabel>
@@ -33,11 +57,11 @@
         </y:ShapeNode>
       </data>
     </node>
-    <node id="n2">
+    <node id="n4">
       <data key="label">graph</data>
       <data key="ng">
         <y:ShapeNode>
-          <y:Geometry x="0" y="160" width="80" height="40"/>
+          <y:Geometry x="0" y="320" width="80" height="40"/>
           <y:Fill color="#E8F0FE" transparent="false"/>
           <y:BorderStyle color="#47699B" type="line" width="1.0"/>
           <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">graph</y:NodeLabel>
@@ -45,7 +69,43 @@
         </y:ShapeNode>
       </data>
     </node>
+    <node id="n5">
+      <data key="label">scip</data>
+      <data key="ng">
+        <y:ShapeNode>
+          <y:Geometry x="0" y="400" width="72" height="40"/>
+          <y:Fill color="#E8F0FE" transparent="false"/>
+          <y:BorderStyle color="#47699B" type="line" width="1.0"/>
+          <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">scip</y:NodeLabel>
+          <y:Shape type="roundrectangle"/>
+        </y:ShapeNode>
+      </data>
+    </node>
     <edge id="e0" source="n0" target="n1">
+      <data key="weight">7</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>7</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e1" source="n0" target="n2">
+      <data key="weight">1</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>1</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e2" source="n0" target="n3">
       <data key="weight">2</data>
       <data key="kind">production</data>
       <data key="eg">
@@ -57,19 +117,67 @@
         </y:PolyLineEdge>
       </data>
     </edge>
-    <edge id="e1" source="n0" target="n2">
-      <data key="weight">12</data>
+    <edge id="e3" source="n0" target="n4">
+      <data key="weight">4</data>
       <data key="kind">production</data>
       <data key="eg">
         <y:PolyLineEdge>
           <y:LineStyle color="#47699B" type="line" width="1.0"/>
           <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>12</y:EdgeLabel>
+          <y:EdgeLabel>4</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>
     </edge>
-    <edge id="e2" source="n1" target="n2">
+    <edge id="e4" source="n0" target="n5">
+      <data key="weight">4</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>4</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e5" source="n1" target="n2">
+      <data key="weight">4</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>4</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e6" source="n1" target="n4">
+      <data key="weight">2</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>2</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e7" source="n1" target="n5">
+      <data key="weight">2</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>2</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e8" source="n3" target="n4">
       <data key="weight">13</data>
       <data key="kind">production</data>
       <data key="eg">
@@ -77,6 +185,30 @@
           <y:LineStyle color="#47699B" type="line" width="1.0"/>
           <y:Arrows source="none" target="standard"/>
           <y:EdgeLabel>13</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e9" source="n5" target="n2">
+      <data key="weight">1</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>1</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e10" source="n5" target="n4">
+      <data key="weight">6</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>6</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>

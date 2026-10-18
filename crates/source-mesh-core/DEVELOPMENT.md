@@ -2,6 +2,16 @@
 
 For workspace setup, test commands, and CI, see the [repository development guide](../../DEVELOPMENT.md).
 
+## Analysis modules
+
+`src/analyzer/` owns rust-analyzer configuration, processes, prerequisites, semantic definition lookup, and index repair.
+Its parallel execution helper stays with the analysis workflow. `src/scip/` owns index parsing, symbol definitions,
+path normalization, test-reference classification, and file-graph construction. Repair belongs to the analyzer because
+it requires live semantic queries; the SCIP modules do not depend on the analyzer.
+
+Shared diagnostic output lives in `src/diagnostics/`, so analysis modules do not depend back on root-level orchestration.
+The public `analyzer_options` and `scip_backend` module paths remain available through re-exports.
+
 ## Exporters
 
 Each exporter lives in its own directory under `src/export/`: `dot/`, `graphml/`, or `mermaid/`.

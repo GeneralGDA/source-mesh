@@ -20,7 +20,7 @@ use scip::types::Symbol;
 use scip::types::SymbolInformation;
 
 use crate::model::FileNode;
-use crate::scip_path::source_path;
+use crate::scip::path::source_path;
 
 #[derive(Getters, MutGetters)]
 pub(crate) struct ParsedIndex {

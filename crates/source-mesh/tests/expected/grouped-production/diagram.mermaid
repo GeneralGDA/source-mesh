@@ -1,36 +1,49 @@
 flowchart LR
-    subgraph g13["source-mesh"]
-    n8["source-mesh/src"]
-    n9["source-mesh/tests"]
+    subgraph g16["source-mesh"]
+    n11["source-mesh/src"]
+    n12["source-mesh/tests"]
     end
-    subgraph g10["source-mesh-core"]
+    subgraph g13["source-mesh-core"]
     n0["source-mesh-core/examples"]
     subgraph g1["source-mesh-core/src"]
     n1["source-mesh-core/src"]
-    subgraph g2["source-mesh-core/src/export"]
-    n2["source-mesh-core/src/export"]
-    n3["source-mesh-core/src/export/dot"]
-    n4["source-mesh-core/src/export/graphml"]
-    n5["source-mesh-core/src/export/mermaid"]
-    n6["source-mesh-core/src/export/rendering"]
+    n2["source-mesh-core/src/analyzer"]
+    n3["source-mesh-core/src/diagnostics"]
+    subgraph g4["source-mesh-core/src/export"]
+    n4["source-mesh-core/src/export"]
+    n5["source-mesh-core/src/export/dot"]
+    n6["source-mesh-core/src/export/graphml"]
+    n7["source-mesh-core/src/export/mermaid"]
+    n8["source-mesh-core/src/export/rendering"]
     end
-    n7["source-mesh-core/src/graph"]
+    n9["source-mesh-core/src/graph"]
+    n10["source-mesh-core/src/scip"]
     end
     end
-    n0 -->|2| n1
-    n1 -->|1| n2
-    n1 -->|1| n6
-    n1 -->|12| n7
-    n2 -->|2| n3
-    n2 -->|2| n4
-    n2 -->|2| n5
-    n2 -->|2| n6
-    n3 -->|3| n6
-    n3 -->|3| n7
-    n4 -->|3| n6
-    n4 -->|3| n7
-    n5 -->|3| n6
-    n5 -->|2| n7
-    n6 -->|5| n7
-    n8 -->|3| n1
-    n8 -->|1| n2
+    n0 -->|1| n1
+    n0 -->|1| n2
+    n1 -->|7| n2
+    n1 -->|1| n3
+    n1 -->|1| n4
+    n1 -->|1| n8
+    n1 -->|4| n9
+    n1 -->|4| n10
+    n2 -->|4| n3
+    n2 -->|2| n9
+    n2 -->|2| n10
+    n4 -->|2| n5
+    n4 -->|2| n6
+    n4 -->|2| n7
+    n4 -->|2| n8
+    n5 -->|3| n8
+    n5 -->|3| n9
+    n6 -->|3| n8
+    n6 -->|3| n9
+    n7 -->|3| n8
+    n7 -->|2| n9
+    n8 -->|5| n9
+    n10 -->|1| n3
+    n10 -->|6| n9
+    n11 -->|2| n1
+    n11 -->|1| n2
+    n11 -->|1| n4

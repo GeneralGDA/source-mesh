@@ -12,16 +12,16 @@ use protobuf::Message as _;
 use serde_json::Map;
 use serde_json::Value;
 
-use crate::analyzer_config::without_test_cfg;
-use crate::analyzer_options::Options as AnalyzerOptions;
-use crate::analyzer_prerequisites;
-use crate::analyzer_process::Phase;
-use crate::analyzer_process::ScipProcess;
+use crate::analyzer::config::without_test_cfg;
+use crate::analyzer::options::Options as AnalyzerOptions;
+use crate::analyzer::parallel::try_pair;
+use crate::analyzer::prerequisites;
+use crate::analyzer::process::Phase;
+use crate::analyzer::process::ScipProcess;
+use crate::analyzer::repair::IndexRepair;
 use crate::diagnostics::emit;
-use crate::parallel::try_pair;
-use crate::scip_index::ParsedIndex;
-use crate::scip_repair::IndexRepair;
-use crate::test_dependencies::mark_test_references;
+use crate::scip::index::ParsedIndex;
+use crate::scip::test_dependencies::mark_test_references;
 
 const CARGO_MANIFEST: &str = "Cargo.toml";
 const RUST_PROJECT_FILE: &str = "rust-project.json";
@@ -52,7 +52,7 @@ impl IndexSource for RustAnalyzer<'_> {
 impl RustAnalyzer<'_> {
     pub(crate) fn index_parsed(&self) -> Result<ParsedIndex> {
         let project = resolve_project_directory(self.project)?;
-        analyzer_prerequisites::ensure_available(&project)?;
+        prerequisites::ensure_available(&project)?;
         let index_directory = tempfile::tempdir().context("Cannot create temporary index directory")?;
         let index_file_original = index_directory.path().join("original.scip");
         let index_file_without_test = index_directory.path().join("without_test.scip");
@@ -169,13 +169,13 @@ mod tests {
     use super::ScipFile;
     use super::resolve_project_directory;
     use crate::SourcePath;
-    use crate::analyzer_options::Options;
+    use crate::analyzer::options::Options;
     use crate::model::DependencyKind;
     use crate::model::FileEdge;
     use crate::model::FileGraph;
     use crate::model::FileNode;
-    use crate::scip_backend::file_graph;
-    use crate::scip_backend::parse_scip;
+    use crate::scip::backend::file_graph;
+    use crate::scip::backend::parse_scip;
 
     #[rstest]
     #[case::directory(false)]

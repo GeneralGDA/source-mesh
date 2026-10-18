@@ -9,8 +9,8 @@ use scip::types::SymbolRole;
 use scip::types::ToolInfo;
 
 use crate::model::FileNode;
-use crate::scip_index::ParsedDocument;
-use crate::scip_index::ParsedIndex;
+use crate::scip::index::ParsedDocument;
+use crate::scip::index::ParsedIndex;
 
 const CLASSIFICATION_TOOL_NAME: &str = "source-mesh";
 
@@ -152,7 +152,7 @@ mod tests {
     use super::ScipRange;
     use super::has_test_classification;
     use super::mark_test_references;
-    use crate::scip_index::ParsedIndex;
+    use crate::scip::index::ParsedIndex;
 
     const MISSING_REFERENCE: &str = "Reference missing";
     const MISSING_SOURCE_DOCUMENT: &str = "Source document missing";
@@ -312,7 +312,7 @@ mod tests {
 
     #[test]
     fn test_saved_classification_provenance() -> Result<()> {
-        let mut fixture = ParsedIndex::parse(include_bytes!("fixtures/dependency-graph.scip"))?;
+        let mut fixture = ParsedIndex::parse(include_bytes!("../fixtures/dependency-graph.scip"))?;
         fixture.documents_mut().clear();
 
         let system_under_test = has_test_classification(&fixture);

@@ -1,25 +1,16 @@
 #![doc = include_str!("../README.md")]
 
-mod analyzer_config;
-mod analyzer_definitions;
-mod analyzer_diagnostics;
-pub mod analyzer_options;
-mod analyzer_prerequisites;
-mod analyzer_process;
+mod analyzer;
+mod application;
 pub mod backend;
 mod diagnostics;
 pub mod export;
 mod graph;
-pub mod scip_backend;
-mod scip_definitions;
-mod scip_index;
-mod scip_path;
-mod scip_repair;
-mod test_dependencies;
-
-mod application;
 mod output_paths;
-mod parallel;
+mod scip;
+
+pub use analyzer::options as analyzer_options;
+pub use scip::backend as scip_backend;
 
 pub use application::CycleOptions;
 pub use application::DEFAULT_CYCLE_LIMIT;

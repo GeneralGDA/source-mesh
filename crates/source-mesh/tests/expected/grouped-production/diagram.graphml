@@ -9,7 +9,7 @@
   <key id="ng" for="node" yfiles.type="nodegraphics"/>
   <key id="eg" for="edge" yfiles.type="edgegraphics"/>
   <graph id="folders" edgedefault="directed">
-    <node id="n13" yfiles.foldertype="group">
+    <node id="n16" yfiles.foldertype="group">
       <data key="label">crates/source-mesh</data>
       <data key="ng">
         <y:ProxyAutoBoundsNode>
@@ -37,8 +37,8 @@
           </y:Realizers>
         </y:ProxyAutoBoundsNode>
       </data>
-      <graph id="n13:" edgedefault="directed">
-    <node id="n8">
+      <graph id="n16:" edgedefault="directed">
+    <node id="n11">
       <data key="label">crates/source-mesh/src</data>
       <data key="ng">
         <y:ShapeNode>
@@ -50,7 +50,7 @@
         </y:ShapeNode>
       </data>
     </node>
-    <node id="n9">
+    <node id="n12">
       <data key="label">crates/source-mesh/tests</data>
       <data key="ng">
         <y:ShapeNode>
@@ -64,13 +64,13 @@
     </node>
       </graph>
     </node>
-    <node id="n10" yfiles.foldertype="group">
+    <node id="n13" yfiles.foldertype="group">
       <data key="label">crates/source-mesh-core</data>
       <data key="ng">
         <y:ProxyAutoBoundsNode>
           <y:Realizers active="0">
             <y:GroupNode>
-              <y:Geometry x="0" y="200" width="456" height="520"/>
+              <y:Geometry x="0" y="200" width="456" height="700"/>
               <y:Fill color="#F5F7FB" transparent="false"/>
               <y:BorderStyle color="#47699B" type="line" width="1.0"/>
               <y:NodeLabel modelName="internal" modelPosition="t" fontStyle="bold" backgroundColor="#DCE6F5" autoSizePolicy="node_width" xml:space="preserve">source-mesh-core</y:NodeLabel>
@@ -92,7 +92,7 @@
           </y:Realizers>
         </y:ProxyAutoBoundsNode>
       </data>
-      <graph id="n10:" edgedefault="directed">
+      <graph id="n13:" edgedefault="directed">
     <node id="n0">
       <data key="label">crates/source-mesh-core/examples</data>
       <data key="ng">
@@ -111,7 +111,7 @@
         <y:ProxyAutoBoundsNode>
           <y:Realizers active="0">
             <y:GroupNode>
-              <y:Geometry x="20" y="300" width="416" height="400"/>
+              <y:Geometry x="20" y="300" width="416" height="580"/>
               <y:Fill color="#F5F7FB" transparent="false"/>
               <y:BorderStyle color="#47699B" type="line" width="1.0"/>
               <y:NodeLabel modelName="internal" modelPosition="t" fontStyle="bold" backgroundColor="#DCE6F5" autoSizePolicy="node_width" xml:space="preserve">source-mesh-core/src</y:NodeLabel>
@@ -134,13 +134,37 @@
         </y:ProxyAutoBoundsNode>
       </data>
       <graph id="n1:" edgedefault="directed">
-    <node id="n2" yfiles.foldertype="group">
+    <node id="n2">
+      <data key="label">crates/source-mesh-core/src/analyzer</data>
+      <data key="ng">
+        <y:ShapeNode>
+          <y:Geometry x="40" y="340" width="272" height="40"/>
+          <y:Fill color="#E8F0FE" transparent="false"/>
+          <y:BorderStyle color="#47699B" type="line" width="1.0"/>
+          <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">source-mesh-core/src/analyzer</y:NodeLabel>
+          <y:Shape type="roundrectangle"/>
+        </y:ShapeNode>
+      </data>
+    </node>
+    <node id="n3">
+      <data key="label">crates/source-mesh-core/src/diagnostics</data>
+      <data key="ng">
+        <y:ShapeNode>
+          <y:Geometry x="40" y="400" width="296" height="40"/>
+          <y:Fill color="#E8F0FE" transparent="false"/>
+          <y:BorderStyle color="#47699B" type="line" width="1.0"/>
+          <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">source-mesh-core/src/diagnostics</y:NodeLabel>
+          <y:Shape type="roundrectangle"/>
+        </y:ShapeNode>
+      </data>
+    </node>
+    <node id="n4" yfiles.foldertype="group">
       <data key="label">crates/source-mesh-core/src/export</data>
       <data key="ng">
         <y:ProxyAutoBoundsNode>
           <y:Realizers active="0">
             <y:GroupNode>
-              <y:Geometry x="40" y="340" width="376" height="280"/>
+              <y:Geometry x="40" y="460" width="376" height="280"/>
               <y:Fill color="#F5F7FB" transparent="false"/>
               <y:BorderStyle color="#47699B" type="line" width="1.0"/>
               <y:NodeLabel modelName="internal" modelPosition="t" fontStyle="bold" backgroundColor="#DCE6F5" autoSizePolicy="node_width" xml:space="preserve">source-mesh-core/src/export</y:NodeLabel>
@@ -150,7 +174,7 @@
               <y:BorderInsets top="0" bottom="0" left="0" right="0"/>
             </y:GroupNode>
             <y:GroupNode>
-              <y:Geometry x="40" y="340" width="160" height="50"/>
+              <y:Geometry x="40" y="460" width="160" height="50"/>
               <y:Fill color="#F5F7FB" transparent="false"/>
               <y:BorderStyle color="#47699B" type="line" width="1.0"/>
               <y:NodeLabel modelName="internal" modelPosition="t" fontStyle="bold" backgroundColor="#DCE6F5" autoSizePolicy="node_width" xml:space="preserve">source-mesh-core/src/export</y:NodeLabel>
@@ -162,12 +186,12 @@
           </y:Realizers>
         </y:ProxyAutoBoundsNode>
       </data>
-      <graph id="n2:" edgedefault="directed">
-    <node id="n3">
+      <graph id="n4:" edgedefault="directed">
+    <node id="n5">
       <data key="label">crates/source-mesh-core/src/export/dot</data>
       <data key="ng">
         <y:ShapeNode>
-          <y:Geometry x="60" y="380" width="288" height="40"/>
+          <y:Geometry x="60" y="500" width="288" height="40"/>
           <y:Fill color="#E8F0FE" transparent="false"/>
           <y:BorderStyle color="#47699B" type="line" width="1.0"/>
           <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">source-mesh-core/src/export/dot</y:NodeLabel>
@@ -175,11 +199,11 @@
         </y:ShapeNode>
       </data>
     </node>
-    <node id="n4">
+    <node id="n6">
       <data key="label">crates/source-mesh-core/src/export/graphml</data>
       <data key="ng">
         <y:ShapeNode>
-          <y:Geometry x="60" y="440" width="320" height="40"/>
+          <y:Geometry x="60" y="560" width="320" height="40"/>
           <y:Fill color="#E8F0FE" transparent="false"/>
           <y:BorderStyle color="#47699B" type="line" width="1.0"/>
           <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">source-mesh-core/src/export/graphml</y:NodeLabel>
@@ -187,11 +211,11 @@
         </y:ShapeNode>
       </data>
     </node>
-    <node id="n5">
+    <node id="n7">
       <data key="label">crates/source-mesh-core/src/export/mermaid</data>
       <data key="ng">
         <y:ShapeNode>
-          <y:Geometry x="60" y="500" width="320" height="40"/>
+          <y:Geometry x="60" y="620" width="320" height="40"/>
           <y:Fill color="#E8F0FE" transparent="false"/>
           <y:BorderStyle color="#47699B" type="line" width="1.0"/>
           <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">source-mesh-core/src/export/mermaid</y:NodeLabel>
@@ -199,11 +223,11 @@
         </y:ShapeNode>
       </data>
     </node>
-    <node id="n6">
+    <node id="n8">
       <data key="label">crates/source-mesh-core/src/export/rendering</data>
       <data key="ng">
         <y:ShapeNode>
-          <y:Geometry x="60" y="560" width="336" height="40"/>
+          <y:Geometry x="60" y="680" width="336" height="40"/>
           <y:Fill color="#E8F0FE" transparent="false"/>
           <y:BorderStyle color="#47699B" type="line" width="1.0"/>
           <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">source-mesh-core/src/export/rendering</y:NodeLabel>
@@ -213,14 +237,26 @@
     </node>
       </graph>
     </node>
-    <node id="n7">
+    <node id="n9">
       <data key="label">crates/source-mesh-core/src/graph</data>
       <data key="ng">
         <y:ShapeNode>
-          <y:Geometry x="40" y="640" width="248" height="40"/>
+          <y:Geometry x="40" y="760" width="248" height="40"/>
           <y:Fill color="#E8F0FE" transparent="false"/>
           <y:BorderStyle color="#47699B" type="line" width="1.0"/>
           <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">source-mesh-core/src/graph</y:NodeLabel>
+          <y:Shape type="roundrectangle"/>
+        </y:ShapeNode>
+      </data>
+    </node>
+    <node id="n10">
+      <data key="label">crates/source-mesh-core/src/scip</data>
+      <data key="ng">
+        <y:ShapeNode>
+          <y:Geometry x="40" y="820" width="240" height="40"/>
+          <y:Fill color="#E8F0FE" transparent="false"/>
+          <y:BorderStyle color="#47699B" type="line" width="1.0"/>
+          <y:NodeLabel modelName="internal" modelPosition="c" xml:space="preserve">source-mesh-core/src/scip</y:NodeLabel>
           <y:Shape type="roundrectangle"/>
         </y:ShapeNode>
       </data>
@@ -230,18 +266,6 @@
       </graph>
     </node>
     <edge id="e0" source="n0" target="n1">
-      <data key="weight">2</data>
-      <data key="kind">production</data>
-      <data key="eg">
-        <y:PolyLineEdge>
-          <y:LineStyle color="#47699B" type="line" width="1.0"/>
-          <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>2</y:EdgeLabel>
-          <y:BendStyle smoothed="false"/>
-        </y:PolyLineEdge>
-      </data>
-    </edge>
-    <edge id="e1" source="n1" target="n2">
       <data key="weight">1</data>
       <data key="kind">production</data>
       <data key="eg">
@@ -253,7 +277,7 @@
         </y:PolyLineEdge>
       </data>
     </edge>
-    <edge id="e2" source="n1" target="n6">
+    <edge id="e1" source="n0" target="n2">
       <data key="weight">1</data>
       <data key="kind">production</data>
       <data key="eg">
@@ -265,19 +289,91 @@
         </y:PolyLineEdge>
       </data>
     </edge>
-    <edge id="e3" source="n1" target="n7">
-      <data key="weight">12</data>
+    <edge id="e2" source="n1" target="n2">
+      <data key="weight">7</data>
       <data key="kind">production</data>
       <data key="eg">
         <y:PolyLineEdge>
           <y:LineStyle color="#47699B" type="line" width="1.0"/>
           <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>12</y:EdgeLabel>
+          <y:EdgeLabel>7</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>
     </edge>
-    <edge id="e4" source="n2" target="n3">
+    <edge id="e3" source="n1" target="n3">
+      <data key="weight">1</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>1</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e4" source="n1" target="n4">
+      <data key="weight">1</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>1</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e5" source="n1" target="n8">
+      <data key="weight">1</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>1</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e6" source="n1" target="n9">
+      <data key="weight">4</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>4</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e7" source="n1" target="n10">
+      <data key="weight">4</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>4</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e8" source="n2" target="n3">
+      <data key="weight">4</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>4</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e9" source="n2" target="n9">
       <data key="weight">2</data>
       <data key="kind">production</data>
       <data key="eg">
@@ -289,7 +385,7 @@
         </y:PolyLineEdge>
       </data>
     </edge>
-    <edge id="e5" source="n2" target="n4">
+    <edge id="e10" source="n2" target="n10">
       <data key="weight">2</data>
       <data key="kind">production</data>
       <data key="eg">
@@ -301,7 +397,7 @@
         </y:PolyLineEdge>
       </data>
     </edge>
-    <edge id="e6" source="n2" target="n5">
+    <edge id="e11" source="n4" target="n5">
       <data key="weight">2</data>
       <data key="kind">production</data>
       <data key="eg">
@@ -313,7 +409,7 @@
         </y:PolyLineEdge>
       </data>
     </edge>
-    <edge id="e7" source="n2" target="n6">
+    <edge id="e12" source="n4" target="n6">
       <data key="weight">2</data>
       <data key="kind">production</data>
       <data key="eg">
@@ -325,67 +421,7 @@
         </y:PolyLineEdge>
       </data>
     </edge>
-    <edge id="e8" source="n3" target="n6">
-      <data key="weight">3</data>
-      <data key="kind">production</data>
-      <data key="eg">
-        <y:PolyLineEdge>
-          <y:LineStyle color="#47699B" type="line" width="1.0"/>
-          <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>3</y:EdgeLabel>
-          <y:BendStyle smoothed="false"/>
-        </y:PolyLineEdge>
-      </data>
-    </edge>
-    <edge id="e9" source="n3" target="n7">
-      <data key="weight">3</data>
-      <data key="kind">production</data>
-      <data key="eg">
-        <y:PolyLineEdge>
-          <y:LineStyle color="#47699B" type="line" width="1.0"/>
-          <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>3</y:EdgeLabel>
-          <y:BendStyle smoothed="false"/>
-        </y:PolyLineEdge>
-      </data>
-    </edge>
-    <edge id="e10" source="n4" target="n6">
-      <data key="weight">3</data>
-      <data key="kind">production</data>
-      <data key="eg">
-        <y:PolyLineEdge>
-          <y:LineStyle color="#47699B" type="line" width="1.0"/>
-          <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>3</y:EdgeLabel>
-          <y:BendStyle smoothed="false"/>
-        </y:PolyLineEdge>
-      </data>
-    </edge>
-    <edge id="e11" source="n4" target="n7">
-      <data key="weight">3</data>
-      <data key="kind">production</data>
-      <data key="eg">
-        <y:PolyLineEdge>
-          <y:LineStyle color="#47699B" type="line" width="1.0"/>
-          <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>3</y:EdgeLabel>
-          <y:BendStyle smoothed="false"/>
-        </y:PolyLineEdge>
-      </data>
-    </edge>
-    <edge id="e12" source="n5" target="n6">
-      <data key="weight">3</data>
-      <data key="kind">production</data>
-      <data key="eg">
-        <y:PolyLineEdge>
-          <y:LineStyle color="#47699B" type="line" width="1.0"/>
-          <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>3</y:EdgeLabel>
-          <y:BendStyle smoothed="false"/>
-        </y:PolyLineEdge>
-      </data>
-    </edge>
-    <edge id="e13" source="n5" target="n7">
+    <edge id="e13" source="n4" target="n7">
       <data key="weight">2</data>
       <data key="kind">production</data>
       <data key="eg">
@@ -397,7 +433,91 @@
         </y:PolyLineEdge>
       </data>
     </edge>
-    <edge id="e14" source="n6" target="n7">
+    <edge id="e14" source="n4" target="n8">
+      <data key="weight">2</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>2</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e15" source="n5" target="n8">
+      <data key="weight">3</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>3</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e16" source="n5" target="n9">
+      <data key="weight">3</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>3</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e17" source="n6" target="n8">
+      <data key="weight">3</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>3</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e18" source="n6" target="n9">
+      <data key="weight">3</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>3</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e19" source="n7" target="n8">
+      <data key="weight">3</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>3</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e20" source="n7" target="n9">
+      <data key="weight">2</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>2</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e21" source="n8" target="n9">
       <data key="weight">5</data>
       <data key="kind">production</data>
       <data key="eg">
@@ -409,19 +529,55 @@
         </y:PolyLineEdge>
       </data>
     </edge>
-    <edge id="e15" source="n8" target="n1">
-      <data key="weight">3</data>
+    <edge id="e22" source="n10" target="n3">
+      <data key="weight">1</data>
       <data key="kind">production</data>
       <data key="eg">
         <y:PolyLineEdge>
           <y:LineStyle color="#47699B" type="line" width="1.0"/>
           <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>3</y:EdgeLabel>
+          <y:EdgeLabel>1</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>
     </edge>
-    <edge id="e16" source="n8" target="n2">
+    <edge id="e23" source="n10" target="n9">
+      <data key="weight">6</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>6</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e24" source="n11" target="n1">
+      <data key="weight">2</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>2</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e25" source="n11" target="n2">
+      <data key="weight">1</data>
+      <data key="kind">production</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>1</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e26" source="n11" target="n4">
       <data key="weight">1</data>
       <data key="kind">production</data>
       <data key="eg">

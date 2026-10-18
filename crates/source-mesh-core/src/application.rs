@@ -10,7 +10,7 @@ use derive_new::new;
 use protobuf::Message as _;
 use tempfile::NamedTempFile;
 
-use crate::analyzer_options::Options as AnalyzerOptions;
+use crate::analyzer::options::Options as AnalyzerOptions;
 use crate::backend::RustAnalyzer;
 use crate::cycle_report::file_report;
 use crate::cycle_report::folder_report;
@@ -21,8 +21,8 @@ use crate::export::Options as ExportOptions;
 use crate::output_paths::FileOutput;
 use crate::output_paths::InputFile;
 use crate::output_paths::OutputFiles;
-use crate::scip_backend::file_graph;
-use crate::scip_index::ParsedIndex;
+use crate::scip::backend::file_graph;
+use crate::scip::index::ParsedIndex;
 
 /// Applies independently to the file-cycle and folder-cycle reports.
 pub const DEFAULT_CYCLE_LIMIT: NonZeroUsize = match NonZeroUsize::new(10_000) {
@@ -202,7 +202,7 @@ mod tests {
     use super::run;
     use crate::export::Format;
     use crate::export::Options;
-    use crate::scip_backend::parse_scip;
+    use crate::scip::backend::parse_scip;
 
     #[test]
     fn test_saved_analysis_replay() -> Result<()> {

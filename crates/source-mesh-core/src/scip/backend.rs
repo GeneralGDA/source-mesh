@@ -7,10 +7,10 @@ use crate::diagnostics::emit;
 use crate::model::DependencyKind;
 use crate::model::FileEdge;
 use crate::model::FileGraph;
-use crate::scip_definitions::DefinitionFiles;
-use crate::scip_definitions::definitions;
-use crate::scip_index::ParsedIndex;
-use crate::test_dependencies::has_test_classification;
+use crate::scip::definitions::DefinitionFiles;
+use crate::scip::definitions::definitions;
+use crate::scip::index::ParsedIndex;
+use crate::scip::test_dependencies::has_test_classification;
 
 pub fn parse_scip(bytes: &[u8]) -> Result<FileGraph> {
     file_graph(&ParsedIndex::parse(bytes)?)
@@ -93,9 +93,9 @@ mod tests {
     use crate::model::DependencyKind;
     use crate::model::FileEdge;
     use crate::model::FileNode;
-    use crate::scip_definitions::DefinitionFiles;
-    use crate::scip_definitions::definitions;
-    use crate::scip_index::ParsedIndex;
+    use crate::scip::definitions::DefinitionFiles;
+    use crate::scip::definitions::definitions;
+    use crate::scip::index::ParsedIndex;
 
     #[must_use]
     fn occurrence(symbol: &str, roles: i32) -> Occurrence {

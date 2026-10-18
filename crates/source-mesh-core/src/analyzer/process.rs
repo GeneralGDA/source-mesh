@@ -7,10 +7,10 @@ use anyhow::Result;
 use anyhow::bail;
 use derive_new::new;
 
-use crate::analyzer_diagnostics::MESSAGE_DEPENDENCY_GRAPH_FAILURE;
-use crate::analyzer_diagnostics::MESSAGE_PROJECT_LOADING_FAILURE_REASON;
-use crate::analyzer_diagnostics::ScipDiagnostics;
-use crate::analyzer_options::Options as AnalyzerOptions;
+use crate::analyzer::diagnostics::MESSAGE_DEPENDENCY_GRAPH_FAILURE;
+use crate::analyzer::diagnostics::MESSAGE_PROJECT_LOADING_FAILURE_REASON;
+use crate::analyzer::diagnostics::ScipDiagnostics;
+use crate::analyzer::options::Options as AnalyzerOptions;
 use crate::diagnostics::MESSAGE_VERBOSE_DIAGNOSTICS_HINT;
 use crate::diagnostics::emit;
 

@@ -16,16 +16,16 @@ use scip::types::SymbolRole;
 use scip::types::descriptor::Suffix;
 
 use crate::SourcePath;
-use crate::analyzer_definitions::DefinitionResolver;
-use crate::analyzer_options::Options;
+use crate::analyzer::definitions::DefinitionResolver;
+use crate::analyzer::options::Options;
+use crate::analyzer::parallel::try_pair;
 use crate::diagnostics::emit;
 use crate::model::FileNode;
-use crate::parallel::try_pair;
-use crate::scip_definitions::DefinitionFiles;
-use crate::scip_definitions::definitions;
-use crate::scip_definitions::unresolved_symbols;
-use crate::scip_index::ParsedIndex;
-use crate::scip_index::SymbolCache;
+use crate::scip::definitions::DefinitionFiles;
+use crate::scip::definitions::definitions;
+use crate::scip::definitions::unresolved_symbols;
+use crate::scip::index::ParsedIndex;
+use crate::scip::index::SymbolCache;
 
 #[derive(new)]
 pub(crate) struct IndexRepair<'a> {
@@ -243,16 +243,16 @@ mod tests {
     use super::definition_target;
     use super::repair_occurrences;
     use crate::SourcePath;
-    use crate::analyzer_options::Options;
+    use crate::analyzer::options::Options;
     use crate::model::DependencyKind;
     use crate::model::FileEdge;
     use crate::model::FileNode;
-    use crate::scip_backend::file_graph;
-    use crate::scip_backend::parse_scip;
-    use crate::scip_definitions::definitions;
-    use crate::scip_definitions::unresolved_symbols;
-    use crate::scip_index::ParsedIndex;
-    use crate::test_dependencies::mark_test_references;
+    use crate::scip::backend::file_graph;
+    use crate::scip::backend::parse_scip;
+    use crate::scip::definitions::definitions;
+    use crate::scip::definitions::unresolved_symbols;
+    use crate::scip::index::ParsedIndex;
+    use crate::scip::test_dependencies::mark_test_references;
 
     fn index(symbol: &str, files: &[(&str, &[i32])]) -> Result<ParsedIndex> {
         let documents = files.iter().map(|&(path, roles)| {

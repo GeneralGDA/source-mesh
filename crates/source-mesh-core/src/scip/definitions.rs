@@ -11,7 +11,7 @@ use scip::types::descriptor::Suffix;
 use scip::types::symbol_information::Kind;
 
 use crate::model::FileNode;
-use crate::scip_index::ParsedIndex;
+use crate::scip::index::ParsedIndex;
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum DefinitionFiles {
@@ -152,7 +152,7 @@ mod tests {
     use super::unresolved_symbols;
     use crate::SourcePath;
     use crate::model::FileNode;
-    use crate::scip_index::ParsedIndex;
+    use crate::scip::index::ParsedIndex;
 
     fn parsed_index(index: &Index) -> Result<ParsedIndex> {
         ParsedIndex::parse(&index.write_to_bytes()?)
