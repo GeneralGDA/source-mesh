@@ -111,6 +111,29 @@ mod tests {
         Ok(Index { documents, ..Index::default() }.write_to_bytes()?)
     }
 
+    #[rstest]
+    #[case::production(0, DependencyKind::Production)]
+    #[case::read_access(SymbolRole::ReadAccess.value(), DependencyKind::Production)]
+    #[case::test_only(SymbolRole::Test.value(), DependencyKind::Test)]
+    #[case::test_read_access(SymbolRole::Test.value() | SymbolRole::ReadAccess.value(), DependencyKind::Test)]
+    fn test_single_reference_kind_bitmasks(#[case] reference_roles: i32, #[case] expected_kind: DependencyKind) -> Result<()> {
+        let source_path = "source.rs";
+        let target_path = "target.rs";
+        let symbol = "target";
+        let fixture = index_bytes(vec![
+            document(source_path, vec![occurrence(symbol, reference_roles)]),
+            document(target_path, vec![occurrence(symbol, SymbolRole::Definition.value())]),
+        ])?;
+        let source = FileNode::new(SourcePath::new(PathBuf::from(source_path))?);
+        let target = FileNode::new(SourcePath::new(PathBuf::from(target_path))?);
+        let expected = BTreeSet::from([FileEdge::new(source, target, expected_kind)]);
+
+        let system_under_test = parse_scip(&fixture)?;
+
+        assert_eq!(system_under_test.edges(), &expected, "Reference role flags changed its dependency kind");
+        Ok(())
+    }
+
     #[test]
     fn test_reference_kind_bitmasks_and_mixed_file_pairs() -> Result<()> {
         let index = index_bytes(vec![

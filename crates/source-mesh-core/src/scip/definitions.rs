@@ -133,6 +133,7 @@ fn package_identity(symbol: &Symbol) -> String {
 #[cfg(test)]
 #[expect(clippy::panic_in_result_fn, reason = "Tests return Result for fallible setup and use assertions for expectations.")]
 mod tests {
+    use std::collections::BTreeSet;
     use std::path::PathBuf;
 
     use anyhow::Result;
@@ -183,8 +184,39 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_ambiguous_definition_owners() -> Result<()> {
+        let symbol = "rust-analyzer cargo fixture 0.0.0 run().";
+        let last_path = "third.rs";
+        let paths = ["first.rs", "second.rs", last_path];
+        let documents = paths.into_iter().map(|path| Document {
+            relative_path: path.into(),
+            occurrences: vec![Occurrence {
+                symbol: symbol.into(),
+                symbol_roles: SymbolRole::Definition as i32,
+                ..Occurrence::default()
+            }],
+            ..Document::default()
+        }).collect();
+        let fixture = parsed_index(&Index { documents, ..Index::default() })?;
+        let owners = paths.into_iter().map(|path| SourcePath::new(PathBuf::from(path)).map(FileNode::new));
+        let expected = DefinitionFiles::Ambiguous(owners.collect::<Result<BTreeSet<_>>>()?);
+        let last_owner = FileNode::new(SourcePath::new(PathBuf::from(last_path))?);
+
+        let system_under_test = definitions(&fixture);
+
+        assert_eq!(system_under_test.get(symbol), Some(&expected), "Every defining file must remain an ambiguity candidate");
+        assert!(
+            system_under_test.get(symbol).is_some_and(|files| files.contains(&last_owner)),
+            "The last definition owner must remain a candidate"
+        );
+        Ok(())
+    }
+
     #[rstest]
     #[case::missing_method("rust-analyzer cargo fixture 0.0.0 model/impl#[Value]get().", true)]
+    #[case::different_namespace("rust-analyzer cargo fixture 0.0.0 other/missing().", true)]
+    #[case::raw_identifier_method_type_parameter("rust-analyzer cargo fixture 0.0.0 model/impl().[T]", true)]
     #[case::inherent_implementation("rust-analyzer cargo fixture 0.0.0 model/impl#[Value]", false)]
     #[case::known_type("rust-analyzer cargo fixture 0.0.0 model/Value#", false)]
     #[case::external_package("rust-analyzer cargo dependency 0.0.0 Value#", false)]
@@ -216,6 +248,7 @@ mod tests {
     #[case::inherent_implementation("rust-analyzer cargo fixture 0.0.0 model/impl#[Value]", false)]
     #[case::generated_method("rust-analyzer cargo fixture 0.0.0 model/impl#[Value]get().", true)]
     #[case::raw_identifier_method("rust-analyzer cargo fixture 0.0.0 model/impl#get().", true)]
+    #[case::raw_identifier_method_type_parameter("rust-analyzer cargo fixture 0.0.0 model/impl().[T]", true)]
     #[case::trait_implementation("rust-analyzer cargo fixture 0.0.0 model/impl#[Value][Trait]", true)]
     #[case::synthetic_symbol("synthetic-method", true)]
     fn test_inherent_implementation_ownership(#[case] symbol: &str, #[case] dependency_target: bool) -> Result<()> {

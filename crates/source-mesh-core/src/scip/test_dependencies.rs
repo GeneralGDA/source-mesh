@@ -173,11 +173,15 @@ mod tests {
         mark_test_references(index_original, &index_without_test)
     }
 
-    #[test]
-    fn test_reference_identity_and_definition_roles() -> Result<()> {
+    #[rstest]
+    #[case(0)]
+    #[case(SymbolRole::ReadAccess as i32 | SymbolRole::WriteAccess as i32)]
+    fn test_reference_identity_and_definition_roles(#[case] reference_roles: i32) -> Result<()> {
         let shared_reference = reference("service/run().", [0, 0, 3]);
-        let different_range_reference = reference("service/run().", [1, 0, 3]);
-        let different_symbol_reference = reference("mock/run().", [0, 0, 3]);
+        let mut different_range_reference = reference("service/run().", [1, 0, 3]);
+        different_range_reference.symbol_roles = reference_roles;
+        let mut different_symbol_reference = reference("mock/run().", [0, 0, 3]);
+        different_symbol_reference.symbol_roles = reference_roles;
         let mut definition = reference("service/definition().", [2, 0, 3]);
         definition.symbol_roles = SymbolRole::Definition as i32 | SymbolRole::ReadAccess as i32;
         let mut already_classified = reference("service/retained().", [3, 0, 3]);
@@ -202,8 +206,8 @@ mod tests {
             roles,
             vec![
                 0,
-                SymbolRole::Test as i32,
-                SymbolRole::Test as i32,
+                reference_roles | SymbolRole::Test as i32,
+                reference_roles | SymbolRole::Test as i32,
                 definition.symbol_roles,
                 SymbolRole::Test as i32 | SymbolRole::ReadAccess as i32,
             ],
@@ -321,23 +325,39 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_inactive_inline_scope_with_retained_baseline_references() -> Result<()> {
-        let before_scope = reference("shared/run().", [2, 0, 3]);
-        let inside_scope = reference("shared/run().", [7, 0, 3]);
-        let after_scope = reference("shared/run().", [12, 1, 4]);
-        let mut scope_definition = reference("client/tests/", [4, 4, 9]);
-        scope_definition.symbol_roles = SymbolRole::Definition as i32;
-        scope_definition.enclosing_range = vec![3, 0, 12, 1];
-        let occurrences = vec![scope_definition, before_scope.clone(), inside_scope.clone(), after_scope.clone()];
+    #[rstest]
+    #[case(SymbolRole::Definition as i32)]
+    #[case(SymbolRole::Definition as i32 | SymbolRole::ReadAccess as i32)]
+    fn test_inactive_inline_scopes_with_retained_baseline_references(#[case] definition_roles: i32) -> Result<()> {
+        let before_scopes = reference("shared/run().", [2, 0, 3]);
+        let inside_first_scope = reference("shared/run().", [7, 0, 3]);
+        let between_scopes = reference("shared/run().", [12, 1, 4]);
+        let inside_second_scope = reference("shared/run().", [17, 0, 3]);
+        let after_scopes = reference("shared/run().", [22, 1, 4]);
+        let mut first_definition = reference("client/first_tests/", [4, 4, 9]);
+        first_definition.symbol_roles = definition_roles;
+        first_definition.enclosing_range = vec![3, 0, 12, 1];
+        let mut second_definition = reference("client/second_tests/", [14, 4, 9]);
+        second_definition.symbol_roles = definition_roles;
+        second_definition.enclosing_range = vec![13, 0, 22, 1];
+        let occurrences = vec![
+            first_definition,
+            second_definition,
+            before_scopes.clone(),
+            inside_first_scope.clone(),
+            between_scopes.clone(),
+            inside_second_scope.clone(),
+            after_scopes.clone(),
+        ];
         let index_original = index_bytes("caller.rs", occurrences)?;
-        let index_without_test = index_bytes("caller.rs", vec![before_scope, inside_scope, after_scope])?;
+        let retained_references = vec![before_scopes, inside_first_scope, between_scopes, inside_second_scope, after_scopes];
+        let index_without_test = index_bytes("caller.rs", retained_references)?;
 
         let system_under_test = classify(&index_original, &index_without_test)?;
 
         let document = system_under_test.documents().first().context(MISSING_SOURCE_DOCUMENT)?;
         let roles: Vec<_> = document.document().occurrences.iter().map(|occurrence| occurrence.symbol_roles).collect();
-        let expected = vec![SymbolRole::Definition as i32, 0, SymbolRole::Test as i32, 0];
+        let expected = vec![definition_roles, definition_roles, 0, SymbolRole::Test as i32, 0, SymbolRole::Test as i32, 0];
         assert_eq!(roles, expected, "Inactive scope references or adjacent production references were classified incorrectly");
         Ok(())
     }
@@ -462,6 +482,10 @@ mod tests {
     #[case(&[0, 0])]
     #[case(&[0, 0, 1, 0, 1])]
     #[case(&[-1, 0, 3])]
+    #[case(&[3, -1, 4])]
+    #[case(&[3, -2, -1])]
+    #[case(&[3, -1, 4, 0])]
+    #[case(&[3, 0, 4, -1])]
     #[case(&[0, 4, 3])]
     #[case(&[4, 0, 3, 0])]
     fn test_invalid_scope_ranges(#[case] coordinates: &[i32]) {

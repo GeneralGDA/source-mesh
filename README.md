@@ -1,6 +1,6 @@
 # source-mesh
 
-![CI status](https://img.shields.io/github/actions/workflow/status/GeneralGDA/source-mesh/ci.yml.svg?branch=main&event=push&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)
+[![crates.io](https://img.shields.io/crates/v/source-mesh.svg?style=for-the-badge&label=crates.io&color=orange&logo=rust&logoColor=white)](https://crates.io/crates/source-mesh)
 ![Linux CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.svg?nameFilter=ubuntu-latest&style=for-the-badge&label=Linux&logo=linux&logoColor=white)
 ![macOS CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.svg?nameFilter=macos-latest&style=for-the-badge&label=macOS&logo=apple&logoColor=white)
 ![Windows CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.svg?nameFilter=windows-latest&style=for-the-badge&label=Windows)

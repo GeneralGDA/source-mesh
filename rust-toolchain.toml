@@ -3,3 +3,4 @@
 channel = "1.98.0"
 profile = "minimal"
 components = ["clippy", "rust-analyzer", "rust-src"]
+# Cargo subcommands such as cargo-mutants are installed separately by Install-DevTools.ps1.

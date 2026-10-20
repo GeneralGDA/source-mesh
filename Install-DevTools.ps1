@@ -3,9 +3,10 @@ param()
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
 
 if ($null -eq (Get-Command -Name cargo -ErrorAction Ignore)) {
-    throw 'Cargo is required to install agent tools. Install Rust with rustup, then run this script again.'
+    throw 'Cargo is required to install development tools. Install Rust with rustup, then run this script again.'
 }
 
 $commandPackages = [ordered]@{
@@ -13,6 +14,7 @@ $commandPackages = [ordered]@{
     fd         = 'fd-find'
     jaq        = 'jaq'
     'ast-grep' = 'ast-grep'
+    'cargo-mutants' = 'cargo-mutants'
 }
 
 foreach ($commandName in $commandPackages.Keys) {
@@ -37,4 +39,4 @@ foreach ($commandName in $commandPackages.Keys) {
     }
 }
 
-Write-Host 'All agent tools are available.'
+Write-Host 'All development tools are available.'
