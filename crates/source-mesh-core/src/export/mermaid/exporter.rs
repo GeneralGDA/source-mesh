@@ -5,7 +5,7 @@ use askama::Template;
 
 use crate::cycle_presentation::group_color;
 use crate::export::rendering::edge_style::CYCLE_EDGE_WIDTH;
-use crate::export::rendering::edge_style::TEST_EDGE_COLOR;
+use crate::export::rendering::edge_style::COLOR_EDGE_TEST;
 use crate::export::rendering::edge_style::edge_label;
 use crate::export::rendering::exporter::Exporter;
 use crate::export::rendering::exporter::Options;
@@ -75,7 +75,7 @@ impl MermaidTemplate {
                 source: edge.source(),
                 target: edge.target(),
                 label: edge_label(edge.kind(), edge.weight()),
-                color: cycle_color.or_else(|| test.then(|| TEST_EDGE_COLOR.to_owned())),
+                color: cycle_color.or_else(|| test.then(|| COLOR_EDGE_TEST.to_owned())),
                 test,
                 cycle: edge.cycle_group().is_some(),
             }
@@ -118,9 +118,8 @@ fn escaped_label(label: &str) -> String {
 }
 
 #[cfg(test)]
-#[expect(clippy::panic_in_result_fn, reason = "Tests use assertions for expectations while returning Result for fallible setup.")]
 mod tests {
-    use anyhow::Result;
+    use claims::assert_ok;
     use pretty_assertions::assert_eq;
 
     use super::Mermaid;
@@ -131,11 +130,13 @@ mod tests {
     use crate::export::rendering::serialization_fixture::graph_fixture;
 
     #[test]
-    fn test_mermaid_punctuation_escaping() -> Result<()> {
-        let fixture = graph_fixture()?;
+    fn test_mermaid_punctuation_escaping() {
+        let fixture = graph_fixture();
+        let fixture = assert_ok!(fixture, "Punctuation labels must form a valid folder graph");
         let system_under_test = Mermaid;
 
-        let output = render(&system_under_test, &fixture)?;
+        let output = render(&system_under_test, &fixture);
+        let output = assert_ok!(output, "Mermaid must render punctuation labels as UTF-8");
 
         assert_eq!(
             output.as_str(),
@@ -143,18 +144,21 @@ mod tests {
              n1[\"src/b\"]\n    n2[\"src/isolated\"]\n    n0 -->|7| n1\n",
             "Mermaid punctuation escaping or graph structure is incorrect"
         );
-        Ok(())
     }
 
     #[test]
-    fn test_mermaid_nested_subgraphs_and_original_dependency_endpoints() -> Result<()> {
-        let fixture = hierarchy_fixture()?;
+    fn test_mermaid_nested_subgraphs_and_original_dependency_endpoints() {
+        let fixture = hierarchy_fixture();
+        let fixture = assert_ok!(fixture, "Nested-subgraph fixture must form a valid folder graph");
         let system_under_test = Mermaid;
         let mut flat_output = Vec::new();
 
-        system_under_test.write(&fixture, &mut flat_output)?;
-        let grouped_output = render_grouped(&system_under_test, &fixture)?;
-        let flat_output = String::from_utf8(flat_output)?;
+        let result = system_under_test.write(&fixture, &mut flat_output);
+        assert_ok!(result, "Mermaid must serialize the flat hierarchy fixture");
+        let grouped_output = render_grouped(&system_under_test, &fixture);
+        let grouped_output = assert_ok!(grouped_output, "Mermaid must render nested folder subgraphs");
+        let flat_output = String::from_utf8(flat_output);
+        let flat_output = assert_ok!(flat_output, "Flat Mermaid output must be UTF-8");
         let flat_edges: Vec<_> = flat_output.lines().filter(|line| line.contains("-->")).collect();
         let grouped_edges: Vec<_> = grouped_output.lines().filter(|line| line.contains("-->")).collect();
 
@@ -175,6 +179,5 @@ mod tests {
             )),
             "Mermaid folder hierarchy is incorrect: {grouped_output}"
         );
-        Ok(())
     }
 }

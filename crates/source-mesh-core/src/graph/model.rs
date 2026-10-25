@@ -207,7 +207,6 @@ fn relative_directory_root(root: &Path) -> Result<PathBuf> {
 }
 
 #[cfg(test)]
-#[expect(clippy::panic_in_result_fn, reason = "Tests use assertions for expectations while returning Result for fallible setup.")]
 mod tests {
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
@@ -217,6 +216,7 @@ mod tests {
     use std::path::PathBuf;
 
     use anyhow::Result;
+    use claims::assert_ok;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -330,9 +330,11 @@ mod tests {
     }
 
     #[test]
-    fn test_physical_directories_and_isolated_files() -> Result<()> {
-        let (files, dependencies) = file_graph_fixture()?;
-        let system_under_test = FileGraph::new(files, dependencies)?;
+    fn test_physical_directories_and_isolated_files() {
+        let fixture = file_graph_fixture();
+        let (files, dependencies) = assert_ok!(fixture, "Physical-directory fixture paths must be valid");
+        let system_under_test = FileGraph::new(files, dependencies);
+        let system_under_test = assert_ok!(system_under_test, "Physical-directory fixture must form a valid file graph");
         let expected_nodes = folder_nodes(&[".", "api", "api/v1", "body_only", "domain", "isolated", "storage"]);
         let expected_edges = folder_edges(
             &[
@@ -347,7 +349,8 @@ mod tests {
             DependencyKind::Production,
         );
 
-        let graph = system_under_test.folders(Path::new("src"), None, false)?;
+        let graph = system_under_test.folders(Path::new("src"), None, false);
+        let graph = assert_ok!(graph, "Physical directories must aggregate under the source root");
 
         assert_eq!(&expected_nodes, graph.nodes(), "Physical directory nodes differ");
         assert_eq!(&expected_edges, graph.edges(), "Physical directory dependencies differ");
@@ -355,19 +358,22 @@ mod tests {
             !graph.nodes().contains(&FolderNode::new("persistence".into())),
             "A semantic module name was substituted for the physical folder"
         );
-        Ok(())
     }
 
     #[rstest]
     #[case(None)]
     #[case(Some(2))]
     #[case(Some(10))]
-    fn test_depth_beyond_existing_folders(#[case] depth: Option<usize>) -> Result<()> {
-        let (files, dependencies) = file_graph_fixture()?;
-        let system_under_test = FileGraph::new(files, dependencies)?;
-        let complete_graph = system_under_test.folders(Path::new("src"), None, false)?;
+    fn test_depth_beyond_existing_folders(#[case] depth: Option<usize>) {
+        let fixture = file_graph_fixture();
+        let (files, dependencies) = assert_ok!(fixture, "Depth fixture paths must be valid");
+        let system_under_test = FileGraph::new(files, dependencies);
+        let system_under_test = assert_ok!(system_under_test, "Depth fixture must form a valid file graph");
+        let complete_graph = system_under_test.folders(Path::new("src"), None, false);
+        let complete_graph = assert_ok!(complete_graph, "Unbounded folder aggregation must succeed");
 
-        let graph = system_under_test.folders(Path::new("src"), depth, false)?;
+        let graph = system_under_test.folders(Path::new("src"), depth, false);
+        let graph = assert_ok!(graph, "Folder aggregation must succeed at depth {depth:?}");
 
         assert_eq!(
             complete_graph.nodes(),
@@ -379,7 +385,6 @@ mod tests {
             graph.edges(),
             "Depth {depth:?} changed dependencies in a graph shallower than the requested limit"
         );
-        Ok(())
     }
 
     #[rstest]
@@ -392,11 +397,14 @@ mod tests {
         #[case] depth: usize,
         #[case] expected_nodes: &[&str],
         #[case] expected_edges: &[(&str, &str, usize)],
-    ) -> Result<()> {
-        let (files, dependencies) = file_graph_fixture()?;
-        let system_under_test = FileGraph::new(files, dependencies)?;
+    ) {
+        let fixture = file_graph_fixture();
+        let (files, dependencies) = assert_ok!(fixture, "Depth-grouping fixture paths must be valid");
+        let system_under_test = FileGraph::new(files, dependencies);
+        let system_under_test = assert_ok!(system_under_test, "Depth-grouping fixture must form a valid file graph");
 
-        let graph = system_under_test.folders(Path::new("src"), Some(depth), false)?;
+        let graph = system_under_test.folders(Path::new("src"), Some(depth), false);
+        let graph = assert_ok!(graph, "Folder grouping must succeed at depth {depth}");
 
         assert_eq!(&folder_nodes(expected_nodes), graph.nodes(), "Depth {depth} grouped nodes incorrectly");
         assert_eq!(
@@ -404,7 +412,6 @@ mod tests {
             graph.edges(),
             "Depth {depth} grouped dependencies incorrectly"
         );
-        Ok(())
     }
 
     #[rstest]
@@ -421,39 +428,44 @@ mod tests {
         ("api", "storage", 2), ("body_only", "storage", 1),
         ("domain", "domain", 1), ("domain", "storage", 1),
     ])]
-    fn test_self_edges_between_distinct_files(
-        #[case] depth: Option<usize>,
-        #[case] expected_edges: &[(&str, &str, usize)],
-    ) -> Result<()> {
-        let (files, mut dependencies) = file_graph_fixture()?;
-        let request_module = FileNode::new(SourcePath::new(Path::new("src").join("domain").join("request.rs"))?);
+    fn test_self_edges_between_distinct_files(#[case] depth: Option<usize>, #[case] expected_edges: &[(&str, &str, usize)]) {
+        let fixture = file_graph_fixture();
+        let (files, mut dependencies) = assert_ok!(fixture, "Self-edge fixture paths must be valid");
+        let request_path = SourcePath::new(Path::new("src").join("domain").join("request.rs"));
+        let request_path = assert_ok!(request_path, "Self-dependent request module must have a valid source path");
+        let request_module = FileNode::new(request_path);
         dependencies.insert(FileEdge::new(request_module.clone(), request_module, DependencyKind::Production));
-        let system_under_test = FileGraph::new(files, dependencies)?;
+        let system_under_test = FileGraph::new(files, dependencies);
+        let system_under_test = assert_ok!(system_under_test, "Self-edge fixture must form a valid file graph");
 
-        let graph = system_under_test.folders(Path::new("src"), depth, true)?;
+        let graph = system_under_test.folders(Path::new("src"), depth, true);
+        let graph = assert_ok!(graph, "Folder aggregation with self-edges must succeed at depth {depth:?}");
 
         assert_eq!(
             &folder_edges(expected_edges, DependencyKind::Production),
             graph.edges(),
             "Self-edge handling at depth {depth:?} differs"
         );
-        Ok(())
     }
 
     #[test]
-    fn test_scope_boundaries_use_path_components() -> Result<()> {
-        let (mut files, mut dependencies) = file_graph_fixture()?;
-        let outside_module = FileNode::new(SourcePath::new(Path::new("src2").join("outside.rs"))?);
+    fn test_scope_boundaries_use_path_components() {
+        let fixture = file_graph_fixture();
+        let (mut files, mut dependencies) = assert_ok!(fixture, "Scope-boundary fixture paths must be valid");
+        let outside_path = SourcePath::new(Path::new("src2").join("outside.rs"));
+        let outside_path = assert_ok!(outside_path, "Outside module must have a valid project-relative source path");
+        let outside_module = FileNode::new(outside_path);
         files.insert(outside_module.clone());
-        dependencies.insert(FileEdge::new(
-            outside_module,
-            FileNode::new(SourcePath::new(Path::new("src").join("api").join("service.rs"))?),
-            DependencyKind::Production,
-        ));
-        let system_under_test = FileGraph::new(files, dependencies)?;
+        let service_path = SourcePath::new(Path::new("src").join("api").join("service.rs"));
+        let service_path = assert_ok!(service_path, "Service module must have a valid source path");
+        dependencies.insert(FileEdge::new(outside_module, FileNode::new(service_path), DependencyKind::Production));
+        let system_under_test = FileGraph::new(files, dependencies);
+        let system_under_test = assert_ok!(system_under_test, "Cross-scope dependencies must form a valid file graph");
 
-        let api_graph = system_under_test.folders(&Path::new("src").join("api"), None, false)?;
-        let source_graph = system_under_test.folders(Path::new("src"), None, false)?;
+        let api_graph = system_under_test.folders(&Path::new("src").join("api"), None, false);
+        let api_graph = assert_ok!(api_graph, "API folder scope must aggregate successfully");
+        let source_graph = system_under_test.folders(Path::new("src"), None, false);
+        let source_graph = assert_ok!(source_graph, "Source folder scope must aggregate successfully");
 
         assert_eq!(&folder_nodes(&[".", "v1"]), api_graph.nodes(), "API scope contains unexpected folders");
         assert_eq!(
@@ -466,7 +478,6 @@ mod tests {
             "Scope included a directory with a shared prefix outside the source tree"
         );
         assert_eq!(7, source_graph.edges().len(), "Scope changed the seven dependencies internal to the source tree");
-        Ok(())
     }
 
     #[rstest]
@@ -479,11 +490,14 @@ mod tests {
         #[case] depth: usize,
         #[case] expected_nodes: &[&str],
         #[case] expected_edges: &[(&str, &str, usize)],
-    ) -> Result<()> {
-        let (files, dependencies) = file_graph_fixture()?;
-        let system_under_test = FileGraph::new(files, dependencies)?;
+    ) {
+        let fixture = file_graph_fixture();
+        let (files, dependencies) = assert_ok!(fixture, "Default-root fixture paths must be valid");
+        let system_under_test = FileGraph::new(files, dependencies);
+        let system_under_test = assert_ok!(system_under_test, "Default-root fixture must form a valid file graph");
 
-        let graph = system_under_test.folders(Path::new(""), Some(depth), false)?;
+        let graph = system_under_test.folders(Path::new(""), Some(depth), false);
+        let graph = assert_ok!(graph, "Default-root aggregation must succeed at depth {depth}");
 
         assert_eq!(&folder_nodes(expected_nodes), graph.nodes(), "Default root produced incorrect nodes at depth {depth}");
         assert_eq!(
@@ -491,19 +505,20 @@ mod tests {
             graph.edges(),
             "Default root produced incorrect dependencies at depth {depth}"
         );
-        Ok(())
     }
 
     #[test]
-    fn test_isolated_folder_scope() -> Result<()> {
-        let (files, dependencies) = file_graph_fixture()?;
-        let system_under_test = FileGraph::new(files, dependencies)?;
+    fn test_isolated_folder_scope() {
+        let fixture = file_graph_fixture();
+        let (files, dependencies) = assert_ok!(fixture, "Isolated-folder fixture paths must be valid");
+        let system_under_test = FileGraph::new(files, dependencies);
+        let system_under_test = assert_ok!(system_under_test, "Isolated-folder fixture must form a valid file graph");
 
-        let graph = system_under_test.folders(&Path::new("src").join("isolated"), None, true)?;
+        let graph = system_under_test.folders(&Path::new("src").join("isolated"), None, true);
+        let graph = assert_ok!(graph, "An isolated folder must be a valid aggregation scope");
 
         assert_eq!(&folder_nodes(&["."]), graph.nodes(), "Isolated scope contains unexpected folders");
         assert!(graph.edges().is_empty(), "An isolated folder acquired dependencies");
-        Ok(())
     }
 
     #[rstest]
@@ -516,13 +531,16 @@ mod tests {
         #[case] depth: Option<usize>,
         #[case] expected_production: &[(&str, &str, usize)],
         #[case] expected_tests: &[(&str, &str, usize)],
-    ) -> Result<()> {
-        let (files, dependencies) = mixed_dependency_fixture()?;
-        let system_under_test = FileGraph::new(files, dependencies)?;
+    ) {
+        let fixture = mixed_dependency_fixture();
+        let (files, dependencies) = assert_ok!(fixture, "Mixed-dependency fixture paths must be valid");
+        let system_under_test = FileGraph::new(files, dependencies);
+        let system_under_test = assert_ok!(system_under_test, "Mixed dependency kinds must form a valid file graph");
         let mut expected_edges = folder_edges(expected_production, DependencyKind::Production);
         expected_edges.extend(folder_edges(expected_tests, DependencyKind::Test));
 
-        let graph = system_under_test.folders(Path::new("src"), depth, true)?;
+        let graph = system_under_test.folders(Path::new("src"), depth, true);
+        let graph = assert_ok!(graph, "Mixed dependency kinds must aggregate at depth {depth:?}");
 
         assert_eq!(
             6,
@@ -530,18 +548,20 @@ mod tests {
             "Duplicate occurrences were retained or distinct dependency kinds were merged"
         );
         assert_eq!(&expected_edges, graph.edges(), "Depth {depth:?} changed dependency kinds or distinct file-pair counts");
-        Ok(())
     }
 
     #[test]
-    fn test_dependency_kind_filtering() -> Result<()> {
-        let (files, dependencies) = mixed_dependency_fixture()?;
+    fn test_dependency_kind_filtering() {
+        let fixture = mixed_dependency_fixture();
+        let (files, dependencies) = assert_ok!(fixture, "Dependency-filtering fixture paths must be valid");
         let expected_files = files.clone();
-        let system_under_test = FileGraph::new(files, dependencies)?;
+        let system_under_test = FileGraph::new(files, dependencies);
+        let system_under_test = assert_ok!(system_under_test, "Dependency-filtering fixture must form a valid file graph");
         let expected_edges = folder_edges(&[("api", "domain", 1), ("api/v1", "domain", 1)], DependencyKind::Production);
 
         let graph = system_under_test.without_test_dependencies();
-        let folders = graph.folders(Path::new("src"), None, false)?;
+        let folders = graph.folders(Path::new("src"), None, false);
+        let folders = assert_ok!(folders, "Production-only dependencies must support folder aggregation");
 
         assert_eq!(&expected_files, graph.files(), "Excluding test dependencies removed source files");
         assert_eq!(2, graph.edges().len(), "Excluding test dependencies lost production edges or retained test edges");
@@ -551,7 +571,6 @@ mod tests {
             folders.nodes(),
             "Excluding test dependencies removed isolated or test-only source folders"
         );
-        Ok(())
     }
 
     #[rstest]
@@ -559,14 +578,14 @@ mod tests {
     #[case(Path::new("src").join("source.rs"), PathBuf::from("src"))]
     #[case(PathBuf::from("src//source.rs/"), PathBuf::from("src"))]
     #[case(PathBuf::from("src/./source.rs"), PathBuf::from("src"))]
-    fn test_file_node_source_path(#[case] path: PathBuf, #[case] directory: PathBuf) -> Result<()> {
-        let source_path = SourcePath::new(path.clone())?;
+    fn test_file_node_source_path(#[case] path: PathBuf, #[case] directory: PathBuf) {
+        let source_path = SourcePath::new(path.clone());
+        let source_path = assert_ok!(source_path, "File-node fixture path must be lexically valid: {path:?}");
 
         let system_under_test = FileNode::new(source_path);
 
         assert_eq!(path.as_os_str(), system_under_test.path().as_os_str(), "File node changed its source path");
         assert_eq!(directory, system_under_test.directory(), "File node has the wrong parent directory");
-        Ok(())
     }
 
     #[rstest]
@@ -574,60 +593,70 @@ mod tests {
     #[case(".", true)]
     #[case("source.rs", false)]
     #[case("src", false)]
-    fn test_project_root_file_scope(#[case] root: &str, #[case] included: bool) -> Result<()> {
-        let file = FileNode::new(SourcePath::new(PathBuf::from("source.rs"))?);
-        let system_under_test = FileGraph::new(BTreeSet::from([file.clone()]), BTreeSet::new())?;
+    fn test_project_root_file_scope(#[case] root: &str, #[case] included: bool) {
+        let source_path = SourcePath::new(PathBuf::from("source.rs"));
+        let source_path = assert_ok!(source_path, "Root-level file must have a valid source path");
+        let file = FileNode::new(source_path);
+        let system_under_test = FileGraph::new(BTreeSet::from([file.clone()]), BTreeSet::new());
+        let system_under_test = assert_ok!(system_under_test, "A root-level file must form a valid graph");
         let expected_folders = if included { folder_nodes(&["."]) } else { BTreeSet::new() };
 
-        let folders = system_under_test.folders(Path::new(root), None, false)?;
-        let scoped_files = system_under_test.within_root(Path::new(root))?;
+        let folders = system_under_test.folders(Path::new(root), None, false);
+        let folders = assert_ok!(folders, "Root-level folder aggregation must accept scope {root:?}");
+        let scoped_files = system_under_test.within_root(Path::new(root));
+        let scoped_files = assert_ok!(scoped_files, "File scoping must accept root {root:?}");
 
         assert_eq!(included, scoped_files.files().contains(&file), "Root filtering changed root-level file membership");
         assert_eq!(&expected_folders, folders.nodes(), "Folder aggregation changed root-level file membership");
-        Ok(())
     }
 
     #[rstest]
     #[case("..")]
     #[case("../src")]
     #[case("/src")]
-    fn test_folder_scope_preconditions(#[case] root: &str) -> Result<()> {
-        let (files, dependencies) = file_graph_fixture()?;
-        let system_under_test = FileGraph::new(files, dependencies)?;
+    fn test_folder_scope_preconditions(#[case] root: &str) {
+        let fixture = file_graph_fixture();
+        let (files, dependencies) = assert_ok!(fixture, "Scope-precondition fixture paths must be valid");
+        let system_under_test = FileGraph::new(files, dependencies);
+        let system_under_test = assert_ok!(system_under_test, "Scope-precondition fixture must form a valid file graph");
 
         let graph = system_under_test.folders(Path::new(root), None, false);
 
         assert!(graph.is_err(), "Invalid folder scope was accepted: {root}");
-        Ok(())
     }
 
     #[rstest]
     #[case("known.rs", "missing.rs")]
     #[case("missing.rs", "known.rs")]
-    fn test_file_graph_endpoint_membership(#[case] source: &str, #[case] destination: &str) -> Result<()> {
-        let files = BTreeSet::from([FileNode::new(SourcePath::new(PathBuf::from("known.rs"))?)]);
+    fn test_file_graph_endpoint_membership(#[case] source: &str, #[case] destination: &str) {
+        let known_path = SourcePath::new(PathBuf::from("known.rs"));
+        let known_path = assert_ok!(known_path, "Known graph file must have a valid source path");
+        let files = BTreeSet::from([FileNode::new(known_path)]);
+        let source_path = SourcePath::new(PathBuf::from(source));
+        let source_path = assert_ok!(source_path, "Dependency source path must be valid: {source}");
+        let destination_path = SourcePath::new(PathBuf::from(destination));
+        let destination_path = assert_ok!(destination_path, "Dependency destination path must be valid: {destination}");
         let dependencies = BTreeSet::from([FileEdge::new(
-            FileNode::new(SourcePath::new(PathBuf::from(source))?),
-            FileNode::new(SourcePath::new(PathBuf::from(destination))?),
-            DependencyKind::Production,
+            FileNode::new(source_path), FileNode::new(destination_path), DependencyKind::Production,
         )]);
 
         let system_under_test = FileGraph::new(files, dependencies);
 
         assert!(system_under_test.is_err(), "File graph accepted an unknown dependency endpoint");
-        Ok(())
     }
 
     #[rstest]
     #[case("known.rs", "missing.rs")]
     #[case("missing.rs", "known.rs")]
-    fn test_file_dependency_insertion_membership(#[case] source: &str, #[case] target: &str) -> Result<()> {
-        let files = BTreeSet::from([FileNode::new(SourcePath::new(PathBuf::from("known.rs"))?)]);
-        let dependency = FileEdge::new(
-            FileNode::new(SourcePath::new(PathBuf::from(source))?),
-            FileNode::new(SourcePath::new(PathBuf::from(target))?),
-            DependencyKind::Production,
-        );
+    fn test_file_dependency_insertion_membership(#[case] source: &str, #[case] target: &str) {
+        let known_path = SourcePath::new(PathBuf::from("known.rs"));
+        let known_path = assert_ok!(known_path, "Known insertion-fixture file must have a valid source path");
+        let files = BTreeSet::from([FileNode::new(known_path)]);
+        let source_path = SourcePath::new(PathBuf::from(source));
+        let source_path = assert_ok!(source_path, "Inserted dependency source path must be valid: {source}");
+        let target_path = SourcePath::new(PathBuf::from(target));
+        let target_path = assert_ok!(target_path, "Inserted dependency target path must be valid: {target}");
+        let dependency = FileEdge::new(FileNode::new(source_path), FileNode::new(target_path), DependencyKind::Production);
         let mut system_under_test = FileGraph::from_files(files.clone());
 
         let result = catch_unwind(AssertUnwindSafe(|| system_under_test.insert_dependency(dependency)));
@@ -635,7 +664,6 @@ mod tests {
         assert!(result.is_err(), "Inserting an unknown dependency endpoint must violate the graph invariant");
         assert_eq!(&files, system_under_test.files(), "Invalid dependency insertion changed graph files");
         assert!(system_under_test.edges().is_empty(), "Invalid dependency insertion changed graph edges");
-        Ok(())
     }
 
     #[rstest]

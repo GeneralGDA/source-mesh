@@ -36,6 +36,7 @@ mod tests {
 
     use anyhow::Result;
     use anyhow::anyhow;
+    use claims::assert_ok;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -49,7 +50,8 @@ mod tests {
 
         let system_under_test = try_pair(|| Ok(first.as_str()), || Ok(second.as_slice()));
 
-        assert_eq!(system_under_test.as_ref().ok(), Some(&(FIRST, second.as_slice())));
+        let values = assert_ok!(system_under_test, "Both scoped workers must complete with their borrowed values");
+        assert_eq!(values, (FIRST, second.as_slice()));
     }
 
     #[rstest]
@@ -57,19 +59,19 @@ mod tests {
     #[case::second_error(false, true)]
     #[case::both_errors(true, true)]
     fn test_operation_errors(#[case] first_fails: bool, #[case] second_fails: bool) {
-        const FIRST_ERROR: &str = "First operation failed";
-        const SECOND_ERROR: &str = "Second operation failed";
+        const MESSAGE_ERROR_FIRST: &str = "First operation failed";
+        const MESSAGE_ERROR_SECOND: &str = "Second operation failed";
         let first_finished = AtomicBool::new(false);
         let second_finished = AtomicBool::new(false);
 
         let system_under_test = try_pair(
             || {
                 first_finished.store(true, Ordering::SeqCst);
-                if first_fails { Err(anyhow!(FIRST_ERROR)) } else { Ok(()) }
+                if first_fails { Err(anyhow!(MESSAGE_ERROR_FIRST)) } else { Ok(()) }
             },
             || {
                 second_finished.store(true, Ordering::SeqCst);
-                if second_fails { Err(anyhow!(SECOND_ERROR)) } else { Ok(()) }
+                if second_fails { Err(anyhow!(MESSAGE_ERROR_SECOND)) } else { Ok(()) }
             },
         );
 
@@ -77,7 +79,7 @@ mod tests {
         assert!(second_finished.load(Ordering::SeqCst), "Second worker was not collected");
         assert_eq!(
             system_under_test.err().map(|error| error.to_string()).as_deref(),
-            Some(if first_fails { FIRST_ERROR } else { SECOND_ERROR })
+            Some(if first_fails { MESSAGE_ERROR_FIRST } else { MESSAGE_ERROR_SECOND })
         );
     }
 
@@ -85,7 +87,7 @@ mod tests {
     #[case::first_panics(true)]
     #[case::second_panics(false)]
     fn test_panic_precedes_operation_error(#[case] first_panics: bool) {
-        const OPERATION_ERROR: &str = "The other operation failed";
+        const MESSAGE_ERROR_OPERATION: &str = "The other operation failed";
         let payload = Arc::new(());
         let operation_finished = AtomicBool::new(false);
 
@@ -96,14 +98,14 @@ mod tests {
                         resume_unwind(Box::new(Arc::clone(&payload)));
                     }
                     operation_finished.store(true, Ordering::SeqCst);
-                    Err(anyhow!(OPERATION_ERROR))
+                    Err(anyhow!(MESSAGE_ERROR_OPERATION))
                 },
                 || -> Result<()> {
                     if !first_panics {
                         resume_unwind(Box::new(Arc::clone(&payload)));
                     }
                     operation_finished.store(true, Ordering::SeqCst);
-                    Err(anyhow!(OPERATION_ERROR))
+                    Err(anyhow!(MESSAGE_ERROR_OPERATION))
                 },
             )
         });

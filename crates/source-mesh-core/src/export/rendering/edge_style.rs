@@ -1,7 +1,7 @@
 use crate::model::DependencyCount;
 use crate::model::DependencyKind;
 
-pub(in crate::export) const TEST_EDGE_COLOR: &str = "#D97706";
+pub(in crate::export) const COLOR_EDGE_TEST: &str = "#D97706";
 pub(in crate::export) const CYCLE_EDGE_WIDTH: &str = "3.0";
 
 #[must_use]

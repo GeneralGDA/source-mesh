@@ -157,16 +157,12 @@ fn main() -> ExitCode {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Tests use assertions for expectations while returning Result for fallible setup."
-)]
 mod cli_tests {
     use std::iter;
     use std::process::ExitCode;
 
     use anyhow::Error;
-    use anyhow::Result;
+    use claims::assert_ok;
     use clap::Parser as _;
     use clap::error::ErrorKind;
     use pretty_assertions::assert_eq;
@@ -223,11 +219,11 @@ mod cli_tests {
     }
 
     #[test]
-    fn test_cycle_failure_argument() -> Result<()> {
-        let system_under_test = Cli::try_parse_from([env!("CARGO_PKG_NAME"), "--fail-on-cycles"])?;
+    fn test_cycle_failure_argument() {
+        let system_under_test = Cli::try_parse_from([env!("CARGO_PKG_NAME"), "--fail-on-cycles"]);
+        let system_under_test = assert_ok!(system_under_test, "CLI must accept the cycle-failure flag");
 
         assert!(system_under_test.cycles.fail_on_cycles, "CLI did not enable cycle failure");
-        Ok(())
     }
 
     #[rstest]
@@ -238,20 +234,20 @@ mod cli_tests {
 
         assert!(system_under_test.is_err(), "CLI accepted a removed analyzer option");
         if let Err(error) = system_under_test {
-            assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+            assert_eq!(error.kind(), ErrorKind::UnknownArgument, "Removed analyzer options must be unknown arguments");
         }
     }
 
     #[rstest]
     fn test_error_detail_visibility(#[values(false, true)] verbose: bool) {
-        const FAILURE: &str = "Cannot resolve dependency definitions";
-        const DIAGNOSTIC: &str = "Internal analyzer diagnostic";
-        let fixture = Error::msg(DIAGNOSTIC).context(FAILURE);
+        const MESSAGE_FAILURE: &str = "Cannot resolve dependency definitions";
+        const MESSAGE_DIAGNOSTIC: &str = "Internal analyzer diagnostic";
+        let fixture = Error::msg(MESSAGE_DIAGNOSTIC).context(MESSAGE_FAILURE);
 
         let system_under_test = error_message(&fixture, verbose);
 
-        assert!(system_under_test.starts_with(FAILURE), "The failure reason is missing");
-        assert_eq!(system_under_test.contains(DIAGNOSTIC), verbose, "Diagnostic details must require verbose output");
+        assert!(system_under_test.starts_with(MESSAGE_FAILURE), "The failure reason is missing");
+        assert_eq!(system_under_test.contains(MESSAGE_DIAGNOSTIC), verbose, "Diagnostic details must require verbose output");
     }
 
     #[test]
@@ -260,8 +256,8 @@ mod cli_tests {
 
         let system_under_test = report_error("Cannot analyze project", &mut fixture);
 
-        assert_eq!(system_under_test, ExitCode::FAILURE);
-        assert_eq!(fixture, b"error: Cannot analyze project\n");
+        assert_eq!(system_under_test, ExitCode::FAILURE, "Reporting an error must return the failure exit code");
+        assert_eq!(fixture, b"error: Cannot analyze project\n", "Error reporting must write the complete diagnostic");
     }
 
     #[rstest]
@@ -274,32 +270,29 @@ mod cli_tests {
         let system_under_test = report_error("Cannot analyze project", &mut standard_error);
 
         assert_eq!(system_under_test, ExitCode::FAILURE, "Unavailable stderr must preserve the failure exit code");
-        assert_eq!(fixture, expected);
+        assert_eq!(fixture, expected, "Error reporting must retain the bytes written before stderr became unavailable");
     }
 
     #[rstest]
     #[case::default(&[], false)]
     #[case::verbose(&["--verbose"], true)]
     #[case::short(&["-v"], true)]
-    fn test_verbose_argument(#[case] arguments: &[&str], #[case] enabled: bool) -> Result<()> {
-        let system_under_test = Cli::try_parse_from(iter::once(env!("CARGO_PKG_NAME")).chain(arguments.iter().copied()))?;
+    fn test_verbose_argument(#[case] arguments: &[&str], #[case] enabled: bool) {
+        let system_under_test = Cli::try_parse_from(iter::once(env!("CARGO_PKG_NAME")).chain(arguments.iter().copied()));
+        let system_under_test = assert_ok!(system_under_test, "CLI must accept supported verbosity arguments: {arguments:?}");
 
-        assert_eq!(system_under_test.analyzer.verbose, enabled);
-        Ok(())
+        assert_eq!(system_under_test.analyzer.verbose, enabled, "CLI verbosity must follow the supplied arguments");
     }
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Tests use assertions for expectations while returning Result for fallible setup."
-)]
 mod command_tests {
     use std::ffi::OsStr;
     use std::fs;
     use std::path::Path;
 
     use anyhow::Result;
+    use claims::assert_ok;
     use clap::Parser as _;
     use pretty_assertions::assert_eq;
     use protobuf::Enum as _;
@@ -317,44 +310,46 @@ mod command_tests {
     #[rstest]
     #[case::malformed_index(true, Path::new("."))]
     #[case::outside_root(false, Path::new(".."))]
-    fn test_invalid_input_output_preservation(#[case] malformed_index: bool, #[case] root: &Path) -> Result<()> {
-        const EXISTING_OUTPUT: &str = "previous diagram";
-        let fixture = tempdir()?;
+    fn test_invalid_input_output_preservation(#[case] malformed_index: bool, #[case] root: &Path) {
+        const CONTENTS_OUTPUT_EXISTING: &str = "previous diagram";
+        let fixture = tempdir();
+        let fixture = assert_ok!(fixture, "Invalid-input fixture must have a temporary directory");
         let index_path = fixture.path().join("input.scip");
         let diagram_path = fixture.path().join("diagram.dot");
         let index = if malformed_index {
             b"this is not protobuf".to_vec()
         } else {
-            acyclic_index_fixture()?
+            let index = acyclic_index_fixture();
+            assert_ok!(index, "Outside-root scenario must start with a valid serialized acyclic index")
         };
-        fs::write(&index_path, index)?;
-        fs::write(&diagram_path, EXISTING_OUTPUT)?;
+        let index_write_result = fs::write(&index_path, index);
+        assert_ok!(index_write_result, "Invalid-input scenario must write its SCIP fixture");
+        let diagram_write_result = fs::write(&diagram_path, CONTENTS_OUTPUT_EXISTING);
+        assert_ok!(diagram_write_result, "Invalid-input scenario must create the existing diagram before running the command");
         let system_under_test = Cli::try_parse_from([
             OsStr::new(env!("CARGO_PKG_NAME")),
             OsStr::new("--from-scip"), index_path.as_os_str(),
             OsStr::new("--root"), root.as_os_str(),
             OsStr::new("--output"), diagram_path.as_os_str(),
-        ])?;
+        ]);
+        let system_under_test = assert_ok!(system_under_test, "Invalid-input fixture arguments must parse before execution");
         let mut output = Vec::new();
 
-        let result = run(system_under_test, &mut output);
-        let preserved = fs::read_to_string(&diagram_path)?;
+        let command_result = run(system_under_test, &mut output);
+        let preserved = fs::read_to_string(&diagram_path);
+        let preserved = assert_ok!(preserved, "Existing diagram must remain readable after invalid input");
 
-        assert!(result.is_err(), "Command accepted an invalid index or subtree");
-        if let Err(error) = result {
+        assert!(command_result.is_err(), "Command accepted an invalid index or subtree");
+        if let Err(error) = command_result {
             assert!(!error.to_string().is_empty(), "Command omitted invalid-input diagnostics");
         }
         assert!(output.is_empty(), "Command wrote to stdout for invalid input");
-        assert_eq!(preserved, EXISTING_OUTPUT, "Command overwrote the existing diagram");
-        Ok(())
+        assert_eq!(preserved, CONTENTS_OUTPUT_EXISTING, "Command overwrote the existing diagram");
     }
 
     fn acyclic_index_fixture() -> Result<Vec<u8>> {
         Ok(Index {
-            documents: vec![Document {
-                relative_path: "src/item.rs".into(),
-                ..Document::default()
-            }],
+            documents: vec![Document { relative_path: "src/item.rs".into(), ..Document::default() }],
             ..Index::default()
         }.write_to_bytes()?)
     }
@@ -370,10 +365,7 @@ mod command_tests {
                 symbol_roles: SymbolRole::Definition.value(),
                 ..Occurrence::default()
             }];
-            occurrences.extend(references.iter().map(|&target| Occurrence {
-                symbol: target.into(),
-                ..Occurrence::default()
-            }));
+            occurrences.extend(references.iter().map(|&target| Occurrence { symbol: target.into(), ..Occurrence::default() }));
             Document { relative_path: path.into(), occurrences, ..Document::default() }
         }).collect();
         Ok(Index { documents, ..Index::default() }.write_to_bytes()?)
@@ -382,35 +374,38 @@ mod command_tests {
     #[rstest]
     #[case::folder_report(None)]
     #[case::file_report(Some(0))]
-    fn test_cycle_limit_output_preservation(
-        #[case] depth: Option<usize>,
-        #[values(false, true)] diagram_to_file: bool,
-    ) -> Result<()> {
-        const EXISTING_OUTPUT: &str = "previous result";
-        let fixture = tempdir()?;
+    fn test_cycle_limit_output_preservation(#[case] depth: Option<usize>, #[values(false, true)] diagram_to_file: bool) {
+        const CONTENTS_OUTPUT_EXISTING: &str = "previous result";
+        let fixture = tempdir();
+        let fixture = assert_ok!(fixture, "Cycle-limit fixture must have a temporary directory");
         let index_path = fixture.path().join("input.scip");
         let diagram_path = fixture.path().join("diagram.dot");
         let folder_report_path = fixture.path().join("folders.md");
         let file_report_path = fixture.path().join("files.md");
-        fs::write(&index_path, cyclic_index_fixture()?)?;
+        let index = cyclic_index_fixture();
+        let index = assert_ok!(index, "Cycle-limit scenario must have a valid serialized cyclic index");
+        let index_write_result = fs::write(&index_path, index);
+        assert_ok!(index_write_result, "Cycle-limit scenario must write its SCIP fixture");
         for path in [&diagram_path, &folder_report_path, &file_report_path] {
-            fs::write(path, EXISTING_OUTPUT)?;
+            let output_write_result = fs::write(path, CONTENTS_OUTPUT_EXISTING);
+            assert_ok!(output_write_result, "Cycle-limit scenario must create existing output at {}", path.display());
         }
-        let mut system_under_test = Cli::try_parse_from([
+        let system_under_test = Cli::try_parse_from([
             OsStr::new(env!("CARGO_PKG_NAME")),
             OsStr::new("--from-scip"), index_path.as_os_str(),
             OsStr::new("--cycle-limit"), OsStr::new("1"),
             OsStr::new("--cycles-output"), folder_report_path.as_os_str(),
             OsStr::new("--file-cycles-output"), file_report_path.as_os_str(),
-        ])?;
+        ]);
+        let mut system_under_test = assert_ok!(system_under_test, "CLI must accept cycle-limit and report-output arguments");
         system_under_test.depth = depth;
         system_under_test.output = diagram_to_file.then(|| diagram_path.clone());
         let mut output = Vec::new();
 
-        let result = run(system_under_test, &mut output);
+        let command_result = run(system_under_test, &mut output);
 
-        assert!(result.is_err(), "Command accepted more cycles than the limit");
-        if let Err(error) = result {
+        assert!(command_result.is_err(), "Command accepted more cycles than the limit");
+        if let Err(error) = command_result {
             assert!(
                 error.to_string().contains("Cycle count exceeds"),
                 "Command failed before checking the cycle limit: {error:#}"
@@ -418,42 +413,58 @@ mod command_tests {
         }
         assert!(output.is_empty(), "Command wrote to stdout before checking the cycle limit");
         for path in [&diagram_path, &folder_report_path, &file_report_path] {
-            let preserved = fs::read_to_string(path)?;
-            assert_eq!(preserved, EXISTING_OUTPUT, "Cycle limit error overwrote {}", path.display());
+            let preserved = fs::read_to_string(path);
+            let preserved = assert_ok!(preserved, "Cycle-limit failure must leave {} readable", path.display());
+            assert_eq!(preserved, CONTENTS_OUTPUT_EXISTING, "Cycle limit error overwrote {}", path.display());
         }
-        Ok(())
     }
 
     #[rstest]
     #[case::report_cycles(false)]
     #[case::cycle_gate(true)]
-    fn test_cyclic_graph_outputs(#[case] fail_on_cycles: bool, #[values(false, true)] diagram_to_file: bool) -> Result<()> {
-        let fixture = tempdir()?;
+    fn test_cyclic_graph_outputs(#[case] fail_on_cycles: bool, #[values(false, true)] diagram_to_file: bool) {
+        let fixture = tempdir();
+        let fixture = assert_ok!(fixture, "Cyclic-output fixture must have a temporary directory");
         let index_path = fixture.path().join("input.scip");
         let diagram_path = fixture.path().join("diagram.graphml");
         let folder_report_path = fixture.path().join("folders.md");
         let file_report_path = fixture.path().join("files.md");
-        fs::write(&index_path, cyclic_index_fixture()?)?;
-        let mut system_under_test = Cli::try_parse_from([
+        let index = cyclic_index_fixture();
+        let index = assert_ok!(index, "Cyclic-output scenario must have a valid serialized index");
+        let index_write_result = fs::write(&index_path, index);
+        assert_ok!(index_write_result, "Cyclic-output scenario must write its SCIP fixture");
+        let system_under_test = Cli::try_parse_from([
             OsStr::new(env!("CARGO_PKG_NAME")),
             OsStr::new("--from-scip"), index_path.as_os_str(),
             OsStr::new("--format"), OsStr::new("graphml"),
             OsStr::new("--highlight-cycles"),
             OsStr::new("--cycles-output"), folder_report_path.as_os_str(),
             OsStr::new("--file-cycles-output"), file_report_path.as_os_str(),
-        ])?;
+        ]);
+        let mut system_under_test = assert_ok!(system_under_test, "CLI must accept highlighted GraphML and cycle-report outputs");
         system_under_test.cycles.fail_on_cycles = fail_on_cycles;
         system_under_test.output = diagram_to_file.then(|| diagram_path.clone());
         let mut output = Vec::new();
 
-        let result = run(system_under_test, &mut output);
+        let command_result = run(system_under_test, &mut output);
         let standard_output_is_empty = output.is_empty();
-        let diagram = if diagram_to_file { fs::read_to_string(&diagram_path)? } else { String::from_utf8(output)? };
-        let folder_report = fs::read_to_string(&folder_report_path)?;
-        let file_report = fs::read_to_string(&file_report_path)?;
+        let diagram = if diagram_to_file {
+            let diagram = fs::read_to_string(&diagram_path);
+            assert_ok!(diagram, "Cyclic graph command must produce a readable diagram file")
+        } else {
+            let diagram = String::from_utf8(output);
+            assert_ok!(diagram, "Cyclic graph command must emit a UTF-8 diagram on stdout")
+        };
+        let folder_report = fs::read_to_string(&folder_report_path);
+        let folder_report = assert_ok!(folder_report, "Cyclic graph command must produce a readable folder report");
+        let file_report = fs::read_to_string(&file_report_path);
+        let file_report = assert_ok!(file_report, "Cyclic graph command must produce a readable file report");
 
-        assert_eq!(result.is_err(), fail_on_cycles, "Cycles must fail only when explicitly requested: {result:?}");
-        if let Err(error) = result {
+        assert_eq!(
+            command_result.is_err(), fail_on_cycles,
+            "Cycles must fail only when explicitly requested: {command_result:?}"
+        );
+        if let Err(error) = command_result {
             assert!(
                 error.to_string().contains("Dependency cycles found:"),
                 "Cycle gate failed for an unrelated reason: {error:#}"
@@ -463,26 +474,29 @@ mod command_tests {
         assert!(diagram.contains("cycle_group"), "Cyclic graph did not produce a highlighted diagram");
         assert!(folder_report.contains("## C1 ("), "Cyclic graph did not produce a folder cycle report");
         assert!(file_report.contains("## C1 ("), "Cyclic graph did not produce a file cycle report");
-        Ok(())
     }
 
     #[test]
-    fn test_acyclic_graph_cycle_gate() -> Result<()> {
-        let fixture = tempdir()?;
+    fn test_acyclic_graph_cycle_gate() {
+        let fixture = tempdir();
+        let fixture = assert_ok!(fixture, "Acyclic cycle-gate fixture must have a temporary directory");
         let index_path = fixture.path().join("input.scip");
-        fs::write(&index_path, acyclic_index_fixture()?)?;
+        let index = acyclic_index_fixture();
+        let index = assert_ok!(index, "Cycle-gate scenario must have a valid serialized acyclic index");
+        let index_write_result = fs::write(&index_path, index);
+        assert_ok!(index_write_result, "Acyclic cycle-gate scenario must write its SCIP fixture");
         let system_under_test = Cli::try_parse_from([
             OsStr::new(env!("CARGO_PKG_NAME")),
             OsStr::new("--from-scip"), index_path.as_os_str(),
             OsStr::new("--root"), OsStr::new("src"),
             OsStr::new("--fail-on-cycles"),
-        ])?;
+        ]);
+        let system_under_test = assert_ok!(system_under_test, "CLI must accept the acyclic replay and cycle-gate arguments");
         let mut output = Vec::new();
 
-        let result = run(system_under_test, &mut output);
+        let command_result = run(system_under_test, &mut output);
 
-        assert!(result.is_ok(), "Cycle gate rejected an acyclic graph: {result:?}");
+        assert_ok!(command_result, "Cycle gate must accept an acyclic graph");
         assert!(!output.is_empty(), "Cycle gate did not export the acyclic graph");
-        Ok(())
     }
 }

@@ -83,7 +83,6 @@ fn inline_code(label: &str) -> String {
 }
 
 #[cfg(test)]
-#[expect(clippy::panic_in_result_fn, reason = "Tests use assertions for expectations while returning Result for fallible setup.")]
 mod tests {
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
@@ -92,6 +91,8 @@ mod tests {
 
     use anyhow::Context as _;
     use anyhow::Result;
+    use claims::assert_ok;
+    use claims::assert_some;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -113,26 +114,30 @@ mod tests {
     use crate::model::FolderNode;
 
     #[test]
-    fn test_cycle_group_diagram_colors() -> Result<()> {
+    fn test_cycle_group_diagram_colors() {
         let nodes = BTreeSet::from([FolderNode::new("api".into()), FolderNode::new("storage".into())]);
         let dependencies: BTreeMap<_, _> = nodes.iter().map(|node| {
             let edge = FolderEdge::new(node.clone(), node.clone(), DependencyKind::Production);
             (edge, DependencyCount::new(1))
         }).collect();
-        let fixture = FolderGraph::new(nodes, dependencies)?;
-        let analysis = analyze_folders(&fixture)?;
+        let fixture = FolderGraph::new(nodes, dependencies);
+        let fixture = assert_ok!(fixture, "Independent self-loop folders must form a valid graph");
+        let analysis = analyze_folders(&fixture);
+        let analysis = assert_ok!(analysis, "Independent self-loop folders must support cycle analysis");
         let system_under_test = folder_report;
 
-        let output = system_under_test(&analysis, NonZeroUsize::MAX)?;
+        let output = system_under_test(&analysis, NonZeroUsize::MAX);
+        let output = assert_ok!(output, "Cycle report must render independent self-loop groups");
 
-        for cycle in analysis.cycles(NonZeroUsize::MAX)? {
+        let cycles = analysis.cycles(NonZeroUsize::MAX);
+        let cycles = assert_ok!(cycles, "Both independent self-loop cycles must be enumerable");
+        for cycle in cycles {
             let group = cycle.group();
             let color = group_color(group, analysis.group_count());
             let heading = format!("## C{} ({color})", group.number());
             assert!(output.contains(&heading), "Cycle report color differs from the diagram palette");
             assert!(color.starts_with('#') && color.len() == 7, "Cycle report color must use six-digit hexadecimal RGB");
         }
-        Ok(())
     }
 
     enum ReportKind {
@@ -174,14 +179,39 @@ mod tests {
         }).collect()
     }
 
-    #[test]
-    fn test_folder_closed_chains_on_separate_lines() -> Result<()> {
-        let fixture = overlapping_folder_fixture()?;
-        let analysis = analyze_folders(&fixture)?;
+    #[rstest]
+    #[case::self_loop(&[("api", "api")], "- <code>api</code> -> <code>api</code>")]
+    #[case::two_nodes(&[("api", "domain"), ("domain", "api")], "- <code>api</code> -> <code>domain</code> -> <code>api</code>")]
+    #[case::three_nodes(
+        &[("api", "domain"), ("domain", "storage"), ("storage", "api")],
+        "- <code>api</code> -> <code>domain</code> -> <code>storage</code> -> <code>api</code>"
+    )]
+    fn test_cycle_chain_separators(#[case] dependencies: &[(&str, &str)], #[case] expected: &str) {
+        let fixture = folder_fixture(dependencies);
+        let fixture = assert_ok!(fixture, "Cycle-chain dependencies must form a valid folder graph");
+        let analysis = analyze_folders(&fixture);
+        let analysis = assert_ok!(analysis, "Cycle-chain graph must support analysis");
         let system_under_test = folder_report;
 
-        let output = system_under_test(&analysis, NonZeroUsize::MAX)?;
-        let chains = report_chains(&output)?;
+        let output = system_under_test(&analysis, NonZeroUsize::MAX);
+        let output = assert_ok!(output, "Cycle-chain report must render every node and separator");
+        let chains: Vec<_> = output.lines().filter(|line| line.starts_with("- ")).collect();
+
+        assert_eq!(chains, vec![expected], "Arrows must separate every adjacent node, including the cycle closure");
+    }
+
+    #[test]
+    fn test_folder_closed_chains_on_separate_lines() {
+        let fixture = overlapping_folder_fixture();
+        let fixture = assert_ok!(fixture, "Overlapping folder cycles must form a valid graph");
+        let analysis = analyze_folders(&fixture);
+        let analysis = assert_ok!(analysis, "Overlapping folder cycles must support analysis");
+        let system_under_test = folder_report;
+
+        let output = system_under_test(&analysis, NonZeroUsize::MAX);
+        let output = assert_ok!(output, "Report must render every overlapping folder cycle");
+        let chains = report_chains(&output);
+        let chains = assert_ok!(chains, "Overlapping-cycle report must contain parseable node labels");
 
         assert_eq!(
             vec![
@@ -192,26 +222,30 @@ mod tests {
             "Report did not preserve both complete closed chains: {chains:?}"
         );
         assert_eq!(1, output.lines().filter(|line| line.starts_with("## ")).count(), "Connected cycles must share one group");
-        Ok(())
     }
 
     #[test]
-    fn test_cycle_group_sections() -> Result<()> {
-        let fixture = folder_fixture(&[("api", "domain"), ("domain", "api"), ("queue", "storage"), ("storage", "queue")])?;
-        let analysis = analyze_folders(&fixture)?;
+    fn test_cycle_group_sections() {
+        let fixture = folder_fixture(&[("api", "domain"), ("domain", "api"), ("queue", "storage"), ("storage", "queue")]);
+        let fixture = assert_ok!(fixture, "Two independent cycle groups must form a valid folder graph");
+        let analysis = analyze_folders(&fixture);
+        let analysis = assert_ok!(analysis, "Independent folder cycles must support analysis");
         let system_under_test = folder_report;
 
-        let output = system_under_test(&analysis, NonZeroUsize::MAX)?;
-        let (first_section, last_section) = output.split_once("## C2 (").context("Second cycle group is missing")?;
-        let first_chains = report_chains(first_section)?;
-        let last_chains = report_chains(last_section)?;
+        let output = system_under_test(&analysis, NonZeroUsize::MAX);
+        let output = assert_ok!(output, "Report must render both independent cycle groups");
+        let sections = output.split_once("## C2 (");
+        let (first_section, last_section) = assert_some!(sections, "Report must contain a second cycle group");
+        let first_chains = report_chains(first_section);
+        let first_chains = assert_ok!(first_chains, "First cycle-group section must contain parseable labels");
+        let last_chains = report_chains(last_section);
+        let last_chains = assert_ok!(last_chains, "Second cycle-group section must contain parseable labels");
 
         assert!(first_section.contains("## C1 ("), "First cycle group is missing");
         let first_expected = vec![vec![String::from("api"), String::from("domain"), String::from("api")]];
         assert_eq!(first_expected, first_chains, "First group contains incorrect chains");
         let last_expected = vec![vec![String::from("queue"), String::from("storage"), String::from("queue")]];
         assert_eq!(last_expected, last_chains, "Second group contains incorrect chains");
-        Ok(())
     }
 
     #[rstest]
@@ -235,96 +269,130 @@ mod tests {
         "unsafe\n## injected\n<script>alert(1)</script>",
         "unsafe&#92;n## injected&#92;n&lt;script&gt;alert(1)&lt;/script&gt;"
     )]
-    fn test_folder_label_markdown_escaping(#[case] label: &str, #[case] escaped: &str) -> Result<()> {
-        let fixture = folder_fixture(&[(label, "safe"), ("safe", label)])?;
-        let analysis = analyze_folders(&fixture)?;
+    fn test_folder_label_markdown_escaping(#[case] label: &str, #[case] escaped: &str) {
+        let fixture = folder_fixture(&[(label, "safe"), ("safe", label)]);
+        let fixture = assert_ok!(fixture, "Folder labels containing Markdown must be valid graph labels");
+        let analysis = analyze_folders(&fixture);
+        let analysis = assert_ok!(analysis, "Markdown in folder labels must not prevent cycle analysis");
         let system_under_test = folder_report;
 
-        let output = system_under_test(&analysis, NonZeroUsize::MAX)?;
-        let chains = report_chains(&output)?;
+        let output = system_under_test(&analysis, NonZeroUsize::MAX);
+        let output = assert_ok!(output, "Report must render escaped folder labels");
+        let chains = report_chains(&output);
+        let chains = assert_ok!(chains, "Escaped folder labels must remain parseable report markup");
 
         assert!(output.contains(&format!("<code>{escaped}</code>")), "Folder label escaped incorrectly: {output}");
         assert_eq!(1, chains.len(), "A label changed the number of cycle lines");
         assert_eq!(1, output.lines().filter(|line| line.starts_with("## ")).count(), "A label injected a group heading");
         assert!(!output.contains("<script>"), "A label injected HTML markup");
-        Ok(())
     }
 
     #[rstest]
     #[case(ReportKind::Folder)]
     #[case(ReportKind::File)]
-    fn test_empty_cycle_report(#[case] kind: ReportKind) -> Result<()> {
-        let folder_analysis = analyze_folders(&FolderGraph::default())?;
-        let file_analysis = analyze_files(&FileGraph::new(BTreeSet::new(), BTreeSet::new())?)?;
+    fn test_empty_cycle_report(#[case] kind: ReportKind) {
+        let folder_analysis = analyze_folders(&FolderGraph::default());
+        let folder_analysis = assert_ok!(folder_analysis, "Empty folder graph must support cycle analysis");
+        let file_graph = FileGraph::new(BTreeSet::new(), BTreeSet::new());
+        let file_graph = assert_ok!(file_graph, "Empty file graph must be valid");
+        let file_analysis = analyze_files(&file_graph);
+        let file_analysis = assert_ok!(file_analysis, "Empty file graph must support cycle analysis");
 
         let output = match kind {
-            ReportKind::Folder => folder_report(&folder_analysis, NonZeroUsize::MAX)?,
-            ReportKind::File => file_report(&file_analysis, NonZeroUsize::MAX)?,
+            ReportKind::Folder => folder_report(&folder_analysis, NonZeroUsize::MAX),
+            ReportKind::File => file_report(&file_analysis, NonZeroUsize::MAX),
         };
-        let chains = report_chains(&output)?;
+        let output = assert_ok!(output, "An empty graph must produce a cycle report");
+        let chains = report_chains(&output);
+        let chains = assert_ok!(chains, "Empty cycle report must be parseable");
 
         assert_eq!(Some(NO_CYCLES_FOUND), output.lines().last(), "Empty report must explicitly describe the absence of cycles");
         assert!(chains.is_empty(), "Empty report contains a cycle chain");
         assert!(!output.lines().any(|line| line.starts_with("## ")), "Empty report contains a cycle group");
-        Ok(())
     }
 
     #[test]
-    fn test_file_cycle_complete_project_paths() -> Result<()> {
-        let service = FileNode::new(SourcePath::new(Path::new("src").join("api").join("deep").join("service.rs"))?);
-        let database = FileNode::new(SourcePath::new(Path::new("src").join("storage").join("database.rs"))?);
-        let fixture = file_fixture(&[(&service, &database), (&database, &service)])?;
-        let analysis = analyze_files(&fixture)?;
-        let service_path = service.path().to_str().context("Service fixture path is not UTF-8")?;
-        let expected_chain = vec![
-            service_path.to_owned(),
-            database.path().to_str().context("Database fixture path is not UTF-8")?.to_owned(),
-            service_path.to_owned(),
-        ];
+    fn test_file_cycle_complete_project_paths() {
+        let service_path = SourcePath::new(Path::new("src").join("api").join("deep").join("service.rs"));
+        let service_path = assert_ok!(service_path, "Nested service path must be a valid source path");
+        let service = FileNode::new(service_path);
+        let database_path = SourcePath::new(Path::new("src").join("storage").join("database.rs"));
+        let database_path = assert_ok!(database_path, "Database path must be a valid source path");
+        let database = FileNode::new(database_path);
+        let fixture = file_fixture(&[(&service, &database), (&database, &service)]);
+        let fixture = assert_ok!(fixture, "Service/database cycle must form a valid file graph");
+        let analysis = analyze_files(&fixture);
+        let analysis = assert_ok!(analysis, "Service/database graph must support cycle analysis");
+        let service_path_text = service.path().to_str();
+        let service_path_text = assert_some!(service_path_text, "Service fixture path must be UTF-8");
+        let database_path_text = database.path().to_str();
+        let database_path_text = assert_some!(database_path_text, "Database fixture path must be UTF-8");
+        let expected_chain = vec![service_path_text.to_owned(), database_path_text.to_owned(), service_path_text.to_owned()];
         let system_under_test = file_report;
 
-        let output = system_under_test(&analysis, NonZeroUsize::MAX)?;
-        let chains = report_chains(&output)?;
+        let output = system_under_test(&analysis, NonZeroUsize::MAX);
+        let output = assert_ok!(output, "File cycle report must render complete project-relative paths");
+        let chains = report_chains(&output);
+        let chains = assert_ok!(chains, "File cycle report must contain parseable paths");
 
         assert_eq!(vec![expected_chain], chains, "File report changed project-relative source paths or omitted cycle closure");
-        Ok(())
     }
 
     #[test]
-    fn test_file_path_markdown_escaping() -> Result<()> {
-        let service = FileNode::new(SourcePath::new(Path::new("src").join("unsafe`<>&\n.rs"))?);
-        let database = FileNode::new(SourcePath::new(Path::new("src").join("database.rs"))?);
-        let fixture = file_fixture(&[(&service, &database), (&database, &service)])?;
-        let analysis = analyze_files(&fixture)?;
+    fn test_file_path_markdown_escaping() {
+        let service_path = SourcePath::new(Path::new("src").join("unsafe`<>&\n.rs"));
+        let service_path = assert_ok!(service_path, "Markdown characters must be allowed in a lexical source path");
+        let service = FileNode::new(service_path);
+        let database_path = SourcePath::new(Path::new("src").join("database.rs"));
+        let database_path = assert_ok!(database_path, "Database fixture path must be valid");
+        let database = FileNode::new(database_path);
+        let fixture = file_fixture(&[(&service, &database), (&database, &service)]);
+        let fixture = assert_ok!(fixture, "Files with Markdown characters must form a valid graph");
+        let analysis = analyze_files(&fixture);
+        let analysis = assert_ok!(analysis, "Markdown in file paths must not prevent cycle analysis");
         let system_under_test = file_report;
 
-        let output = system_under_test(&analysis, NonZeroUsize::MAX)?;
-        let chains = report_chains(&output)?;
+        let output = system_under_test(&analysis, NonZeroUsize::MAX);
+        let output = assert_ok!(output, "File report must render escaped Markdown characters");
+        let chains = report_chains(&output);
+        let chains = assert_ok!(chains, "Escaped file paths must remain parseable report markup");
 
         assert!(output.contains("unsafe&#96;&lt;&gt;&amp;&#92;n.rs</code>"), "File path markup or newline was not escaped");
         assert_eq!(1, chains.len(), "File path introduced another report line");
-        Ok(())
     }
 
     #[rstest]
     #[case(None, vec![])]
     #[case(Some(1), vec![vec!["api", "domain", "api"]])]
-    fn test_folder_aggregation_cycle_without_file_cycle(
-        #[case] depth: Option<usize>,
-        #[case] expected_chains: Vec<Vec<&str>>,
-    ) -> Result<()> {
-        let service = FileNode::new(SourcePath::new(Path::new("src").join("api").join("service.rs"))?);
-        let request = FileNode::new(SourcePath::new(Path::new("src").join("domain").join("deep").join("request.rs"))?);
-        let rules = FileNode::new(SourcePath::new(Path::new("src").join("domain").join("rules.rs"))?);
-        let response = FileNode::new(SourcePath::new(Path::new("src").join("api").join("response.rs"))?);
-        let fixture = file_fixture(&[(&service, &request), (&rules, &response)])?;
-        let folder_analysis = analyze_folders(&fixture.folders(Path::new("src"), depth, false)?)?;
-        let file_analysis = analyze_files(&fixture)?;
+    fn test_folder_aggregation_cycle_without_file_cycle(#[case] depth: Option<usize>, #[case] expected_chains: Vec<Vec<&str>>) {
+        let service_path = SourcePath::new(Path::new("src").join("api").join("service.rs"));
+        let service_path = assert_ok!(service_path, "Service fixture path must be valid");
+        let service = FileNode::new(service_path);
+        let request_path = SourcePath::new(Path::new("src").join("domain").join("deep").join("request.rs"));
+        let request_path = assert_ok!(request_path, "Nested request fixture path must be valid");
+        let request = FileNode::new(request_path);
+        let rules_path = SourcePath::new(Path::new("src").join("domain").join("rules.rs"));
+        let rules_path = assert_ok!(rules_path, "Rules fixture path must be valid");
+        let rules = FileNode::new(rules_path);
+        let response_path = SourcePath::new(Path::new("src").join("api").join("response.rs"));
+        let response_path = assert_ok!(response_path, "Response fixture path must be valid");
+        let response = FileNode::new(response_path);
+        let fixture = file_fixture(&[(&service, &request), (&rules, &response)]);
+        let fixture = assert_ok!(fixture, "Acyclic file dependencies must form a valid graph");
+        let folders = fixture.folders(Path::new("src"), depth, false);
+        let folders = assert_ok!(folders, "Folder aggregation must succeed at depth {depth:?}");
+        let folder_analysis = analyze_folders(&folders);
+        let folder_analysis = assert_ok!(folder_analysis, "Aggregated folders must support cycle analysis");
+        let file_analysis = analyze_files(&fixture);
+        let file_analysis = assert_ok!(file_analysis, "Original file graph must support cycle analysis");
         let system_under_test = folder_report;
 
-        let folder_output = system_under_test(&folder_analysis, NonZeroUsize::MAX)?;
-        let file_output = file_report(&file_analysis, NonZeroUsize::MAX)?;
-        let folder_chains = report_chains(&folder_output)?;
+        let folder_output = system_under_test(&folder_analysis, NonZeroUsize::MAX);
+        let folder_output = assert_ok!(folder_output, "Aggregated folder cycle report must render");
+        let file_output = file_report(&file_analysis, NonZeroUsize::MAX);
+        let file_output = assert_ok!(file_output, "Original file cycle report must render");
+        let folder_chains = report_chains(&folder_output);
+        let folder_chains = assert_ok!(folder_chains, "Aggregated folder report must contain parseable labels");
         let expected_chains = expected_chains.into_iter().map(|chain| chain.into_iter().map(str::to_owned).collect());
         let expected_chains: Vec<Vec<String>> = expected_chains.collect();
 
@@ -334,19 +402,26 @@ mod tests {
             file_output.lines().last(),
             "File report inherited a cycle created by folder aggregation"
         );
-        Ok(())
     }
 
     #[rstest]
     #[case(ReportKind::Folder)]
     #[case(ReportKind::File)]
-    fn test_cycle_limit_error_propagation(#[case] kind: ReportKind) -> Result<()> {
-        let folder_fixture = overlapping_folder_fixture()?;
-        let folder_analysis = analyze_folders(&folder_fixture)?;
-        let first_file = FileNode::new(SourcePath::new("first.rs".into())?);
-        let second_file = FileNode::new(SourcePath::new("second.rs".into())?);
-        let file_fixture = file_fixture(&[(&first_file, &first_file), (&second_file, &second_file)])?;
-        let file_analysis = analyze_files(&file_fixture)?;
+    fn test_cycle_limit_error_propagation(#[case] kind: ReportKind) {
+        let folder_fixture = overlapping_folder_fixture();
+        let folder_fixture = assert_ok!(folder_fixture, "Overlapping folder cycles must form a valid graph");
+        let folder_analysis = analyze_folders(&folder_fixture);
+        let folder_analysis = assert_ok!(folder_analysis, "Overlapping folder cycles must support analysis");
+        let first_path = SourcePath::new("first.rs".into());
+        let first_path = assert_ok!(first_path, "First self-loop file path must be valid");
+        let first_file = FileNode::new(first_path);
+        let second_path = SourcePath::new("second.rs".into());
+        let second_path = assert_ok!(second_path, "Second self-loop file path must be valid");
+        let second_file = FileNode::new(second_path);
+        let file_fixture = file_fixture(&[(&first_file, &first_file), (&second_file, &second_file)]);
+        let file_fixture = assert_ok!(file_fixture, "Two file self-loops must form a valid graph");
+        let file_analysis = analyze_files(&file_fixture);
+        let file_analysis = assert_ok!(file_analysis, "Two file self-loops must support cycle analysis");
 
         let result = match kind {
             ReportKind::Folder => folder_report(&folder_analysis, NonZeroUsize::MIN),
@@ -354,12 +429,11 @@ mod tests {
         };
 
         assert!(result.is_err(), "Report silently truncated cycles above the requested limit");
-        Ok(())
     }
 
     #[cfg(any(unix, windows))]
     #[test]
-    fn test_file_path_encoding_error() -> Result<()> {
+    fn test_file_path_encoding_error() {
         use std::ffi::OsString;
 
         #[cfg(unix)]
@@ -372,14 +446,17 @@ mod tests {
             use std::os::windows::ffi::OsStringExt as _;
             OsString::from_wide(&[0xd800])
         };
-        let file = FileNode::new(SourcePath::new(file_name.into())?);
-        let fixture = file_fixture(&[(&file, &file)])?;
-        let analysis = analyze_files(&fixture)?;
+        let source_path = SourcePath::new(file_name.into());
+        let source_path = assert_ok!(source_path, "A non-UTF-8 filename must still be a valid lexical source path");
+        let file = FileNode::new(source_path);
+        let fixture = file_fixture(&[(&file, &file)]);
+        let fixture = assert_ok!(fixture, "A non-UTF-8 file self-loop must form a valid graph");
+        let analysis = analyze_files(&fixture);
+        let analysis = assert_ok!(analysis, "A non-UTF-8 file path must not prevent cycle analysis");
         let system_under_test = file_report;
 
         let result = system_under_test(&analysis, NonZeroUsize::MIN);
 
         assert!(result.is_err(), "A non-UTF-8 cycle path must remain a report encoding error");
-        Ok(())
     }
 }

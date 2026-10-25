@@ -6,7 +6,7 @@ use askama::Template;
 
 use crate::cycle_presentation::group_color;
 use crate::export::rendering::edge_style::CYCLE_EDGE_WIDTH;
-use crate::export::rendering::edge_style::TEST_EDGE_COLOR;
+use crate::export::rendering::edge_style::COLOR_EDGE_TEST;
 use crate::export::rendering::edge_style::edge_label;
 use crate::export::rendering::exporter::Exporter;
 use crate::export::rendering::exporter::Options;
@@ -86,16 +86,12 @@ impl DotTemplate {
                 source: edge.source(),
                 target: edge.target(),
                 label: edge_label(edge.kind(), edge.weight()),
-                color: cycle_color.or_else(|| test.then(|| TEST_EDGE_COLOR.to_owned())),
+                color: cycle_color.or_else(|| test.then(|| COLOR_EDGE_TEST.to_owned())),
                 test,
                 cycle_group: edge.cycle_group().map(|group| group.number()),
             }
         }).collect();
-        Self {
-            strict: graph.edges().iter().all(|edge| edge.kind() == DependencyKind::Production),
-            node_events,
-            edges,
-        }
+        Self { strict: graph.edges().iter().all(|edge| edge.kind() == DependencyKind::Production), node_events, edges }
     }
 }
 
@@ -123,14 +119,11 @@ fn escaped_label(label: &str) -> String {
 }
 
 #[cfg(test)]
-#[expect(clippy::panic_in_result_fn, reason = "Tests use assertions for expectations while returning Result for fallible setup.")]
 mod tests {
     use std::collections::BTreeMap;
 
-    use anyhow::Context as _;
-    use anyhow::Error;
-    use anyhow::Result;
-    use anyhow::bail;
+    use claims::assert_ok;
+    use claims::assert_some;
     use graphviz_rust::dot_structures::EdgeTy;
     use graphviz_rust::dot_structures::Graph;
     use graphviz_rust::dot_structures::Id;
@@ -148,65 +141,78 @@ mod tests {
     use crate::export::rendering::serialization_fixture::graph_fixture;
 
     #[test]
-    fn test_dot_labels_direction_weights_and_isolated_nodes() -> Result<()> {
-        let fixture = graph_fixture()?;
+    fn test_dot_labels_direction_weights_and_isolated_nodes() {
+        let fixture = graph_fixture();
+        let fixture = assert_ok!(fixture, "DOT label fixture must form a valid folder graph");
         let system_under_test = Dot;
 
-        let output = render(&system_under_test, &fixture)?;
-        let Graph::DiGraph { strict, stmts: statements, .. } = graphviz_rust::parse(&output).map_err(Error::msg)? else {
-            bail!("expected directed graph");
-        };
+        let output = render(&system_under_test, &fixture);
+        let output = assert_ok!(output, "DOT must render punctuation labels and isolated nodes");
+        let graph = graphviz_rust::parse(&output);
+        let graph = assert_ok!(graph, "DOT output must parse as a graph");
+        let directed = if let Graph::DiGraph { strict, stmts: statements, .. } = graph {
+            Some((strict, statements))
+        } else { None };
+        let (strict, statements) = assert_some!(directed, "DOT output must be a directed graph");
         let nodes: Vec<_> = statements.iter().filter_map(|statement| {
             if let Statement::Node(ref node) = *statement { Some(node) } else { None }
         }).collect();
         let edges: Vec<_> = statements.iter().filter_map(|statement| {
             if let Statement::Edge(ref edge) = *statement { Some(edge) } else { None }
         }).collect();
-        let first_node = nodes.first().context("first DOT node is missing")?;
-        let isolated_node = nodes.last().context("isolated DOT node is missing")?;
-        let edge = edges.first().context("DOT edge is missing")?;
-        let EdgeTy::Pair(Vertex::N(ref source), Vertex::N(ref target)) = edge.ty else {
-            bail!("expected a simple directed edge");
-        };
+        let first_node = nodes.first();
+        let first_node = assert_some!(first_node, "DOT output must contain the first dependency node");
+        let isolated_node = nodes.last();
+        let isolated_node = assert_some!(isolated_node, "DOT output must contain the isolated node");
+        let edge = edges.first();
+        let edge = assert_some!(edge, "DOT output must contain the dependency edge");
+        let endpoints = if let EdgeTy::Pair(Vertex::N(ref source), Vertex::N(ref target)) = edge.ty {
+            Some((source, target))
+        } else { None };
+        let (source, target) = assert_some!(endpoints, "DOT dependency must be a simple directed edge");
 
         assert!(strict, "DOT graph must be strict");
         assert_eq!(nodes.len(), 3, "Expected three DOT nodes");
+        let label = first_node.attributes.first();
+        let label = assert_some!(label, "First DOT node must have a label attribute");
         assert_eq!(
-            &first_node.attributes.first().context("DOT label is missing")?.1,
+            &label.1,
             &Id::Escaped("\"src/a\\\"<&\\\\#`\\n\\r\u{43f}\u{430}\u{43f}\u{43a}\u{430}\"".into()),
             "DOT punctuation label was not preserved or escaped correctly"
         );
-        assert_eq!(
-            &isolated_node.attributes.first().context("isolated DOT label is missing")?.1,
-            &Id::Escaped("\"src/isolated\"".into()),
-            "DOT isolated node label was not preserved"
-        );
+        let isolated_label = isolated_node.attributes.first();
+        let isolated_label = assert_some!(isolated_label, "Isolated DOT node must have a label attribute");
+        assert_eq!(&isolated_label.1, &Id::Escaped("\"src/isolated\"".into()), "DOT isolated node label was not preserved");
         assert_eq!(edges.len(), 1, "Expected one DOT edge");
         assert_eq!(&source.0, &Id::Plain("n0".into()), "DOT edge source is incorrect");
         assert_eq!(&target.0, &Id::Plain("n1".into()), "DOT edge target is incorrect");
-        assert_eq!(
-            &edge.attributes.first().context("DOT edge weight is missing")?.1,
-            &Id::Escaped("\"7\"".into()),
-            "DOT edge weight is incorrect"
-        );
-        Ok(())
+        let weight = edge.attributes.first();
+        let weight = assert_some!(weight, "DOT edge must have a weight label");
+        assert_eq!(&weight.1, &Id::Escaped("\"7\"".into()), "DOT edge weight is incorrect");
     }
 
     #[test]
-    fn test_dot_nested_clusters_and_original_dependency_endpoints() -> Result<()> {
-        let fixture = hierarchy_fixture()?;
+    fn test_dot_nested_clusters_and_original_dependency_endpoints() {
+        let fixture = hierarchy_fixture();
+        let fixture = assert_ok!(fixture, "Nested-cluster fixture must form a valid folder graph");
         let system_under_test = Dot;
         let mut flat_output = Vec::new();
 
-        system_under_test.write(&fixture, &mut flat_output)?;
-        let grouped_output = render_grouped(&system_under_test, &fixture)?;
-        let flat_statements = dot_statements(&String::from_utf8(flat_output)?)?;
-        let grouped_statements = dot_statements(&grouped_output)?;
+        let result = system_under_test.write(&fixture, &mut flat_output);
+        assert_ok!(result, "DOT must serialize the flat hierarchy fixture");
+        let grouped_output = render_grouped(&system_under_test, &fixture);
+        let grouped_output = assert_ok!(grouped_output, "DOT must render nested folder clusters");
+        let flat_output = String::from_utf8(flat_output);
+        let flat_output = assert_ok!(flat_output, "Flat DOT output must be UTF-8");
+        let flat_statements = dot_statements(&flat_output);
+        let flat_statements = assert_ok!(flat_statements, "Flat DOT output must parse as a directed graph");
+        let grouped_statements = dot_statements(&grouped_output);
+        let grouped_statements = assert_ok!(grouped_statements, "Grouped DOT output must parse as a directed graph");
         let flat_edges: Vec<_> = flat_statements.iter().filter(|statement| matches!(**statement, Statement::Edge(_))).collect();
         let grouped_edges = grouped_statements.iter().filter(|statement| matches!(**statement, Statement::Edge(_)));
         let grouped_edges: Vec<_> = grouped_edges.collect();
         let mut membership = BTreeMap::new();
-        dot_membership(&grouped_statements, &[], &mut membership)?;
+        dot_membership(&grouped_statements, &[], &mut membership);
         let expected = BTreeMap::from([
             ("n0".into(), vec![]),
             ("n1".into(), vec!["cluster_n1".into()]),
@@ -218,6 +224,5 @@ mod tests {
 
         assert_eq!(flat_edges, grouped_edges, "grouping changed DOT dependency endpoints or weights");
         assert_eq!(membership, expected, "DOT hierarchy or parent dependency nodes are incorrect");
-        Ok(())
     }
 }

@@ -131,12 +131,12 @@ fn package_identity(symbol: &Symbol) -> String {
 }
 
 #[cfg(test)]
-#[expect(clippy::panic_in_result_fn, reason = "Tests return Result for fallible setup and use assertions for expectations.")]
 mod tests {
     use std::collections::BTreeSet;
     use std::path::PathBuf;
 
     use anyhow::Result;
+    use claims::assert_ok;
     use pretty_assertions::assert_eq;
     use protobuf::EnumOrUnknown;
     use protobuf::Message as _;
@@ -164,7 +164,7 @@ mod tests {
     #[case::module(Kind::Module, false)]
     #[case::namespace(Kind::Namespace, false)]
     #[case::package(Kind::Package, false)]
-    fn test_document_symbol_ownership(#[case] kind: Kind, #[case] dependency_target: bool) -> Result<()> {
+    fn test_document_symbol_ownership(#[case] kind: Kind, #[case] dependency_target: bool) {
         let symbol = "rust-analyzer cargo fixture 0.0.0 model/impl#[Value]get().";
         let fixture = Index {
             documents: vec![Document {
@@ -174,18 +174,22 @@ mod tests {
             }],
             ..Index::default()
         };
-        let expected_owner = DefinitionFiles::Unique(FileNode::new(SourcePath::new(PathBuf::from("model.rs"))?));
+        let expected_owner = SourcePath::new(PathBuf::from("model.rs")).map(FileNode::new).map(DefinitionFiles::Unique);
+        let expected_owner = assert_ok!(expected_owner, "The model path must identify a valid definition owner");
 
-        let fixture = parsed_index(&fixture)?;
+        let fixture = parsed_index(&fixture);
+        let fixture = assert_ok!(fixture, "The document symbol fixture must serialize and parse");
 
         let system_under_test = definitions(&fixture);
 
-        assert_eq!(system_under_test.get(symbol), dependency_target.then_some(&expected_owner));
-        Ok(())
+        assert_eq!(
+            system_under_test.get(symbol), dependency_target.then_some(&expected_owner),
+            "Only dependency-target symbol kinds must assign file ownership"
+        );
     }
 
     #[test]
-    fn test_ambiguous_definition_owners() -> Result<()> {
+    fn test_ambiguous_definition_owners() {
         let symbol = "rust-analyzer cargo fixture 0.0.0 run().";
         let last_path = "third.rs";
         let paths = ["first.rs", "second.rs", last_path];
@@ -198,10 +202,14 @@ mod tests {
             }],
             ..Document::default()
         }).collect();
-        let fixture = parsed_index(&Index { documents, ..Index::default() })?;
+        let fixture = parsed_index(&Index { documents, ..Index::default() });
+        let fixture = assert_ok!(fixture, "The ambiguous definition fixture must serialize and parse");
         let owners = paths.into_iter().map(|path| SourcePath::new(PathBuf::from(path)).map(FileNode::new));
-        let expected = DefinitionFiles::Ambiguous(owners.collect::<Result<BTreeSet<_>>>()?);
-        let last_owner = FileNode::new(SourcePath::new(PathBuf::from(last_path))?);
+        let owners = owners.collect::<Result<BTreeSet<_>>>();
+        let owners = assert_ok!(owners, "Every definition owner path must be valid");
+        let expected = DefinitionFiles::Ambiguous(owners);
+        let last_owner = SourcePath::new(PathBuf::from(last_path)).map(FileNode::new);
+        let last_owner = assert_ok!(last_owner, "The last definition owner path must be valid");
 
         let system_under_test = definitions(&fixture);
 
@@ -210,7 +218,6 @@ mod tests {
             system_under_test.get(symbol).is_some_and(|files| files.contains(&last_owner)),
             "The last definition owner must remain a candidate"
         );
-        Ok(())
     }
 
     #[rstest]
@@ -223,7 +230,7 @@ mod tests {
     #[case::external_version("rust-analyzer cargo fixture 1.0.0 Value#", false)]
     #[case::module("rust-analyzer cargo fixture 0.0.0 model/", false)]
     #[case::local("local 0", false)]
-    fn test_missing_project_symbol_selection(#[case] reference: &str, #[case] needs_resolution: bool) -> Result<()> {
+    fn test_missing_project_symbol_selection(#[case] reference: &str, #[case] needs_resolution: bool) {
         let fixture = Index {
             documents: vec![Document {
                 relative_path: "model.rs".into(),
@@ -237,12 +244,13 @@ mod tests {
             ..Index::default()
         };
 
-        let fixture = parsed_index(&fixture)?;
+        let fixture = parsed_index(&fixture);
+        let fixture = assert_ok!(fixture, "The project symbol selection fixture must serialize and parse");
 
-        let system_under_test = unresolved_symbols(&fixture)?;
+        let system_under_test = unresolved_symbols(&fixture);
+        let system_under_test = assert_ok!(system_under_test, "Valid project symbols must support unresolved-symbol analysis");
 
-        assert_eq!(system_under_test.contains(reference), needs_resolution);
-        Ok(())
+        assert_eq!(system_under_test.contains(reference), needs_resolution, "Project symbol selection differs for {reference}");
     }
     #[rstest]
     #[case::inherent_implementation("rust-analyzer cargo fixture 0.0.0 model/impl#[Value]", false)]
@@ -251,7 +259,7 @@ mod tests {
     #[case::raw_identifier_method_type_parameter("rust-analyzer cargo fixture 0.0.0 model/impl().[T]", true)]
     #[case::trait_implementation("rust-analyzer cargo fixture 0.0.0 model/impl#[Value][Trait]", true)]
     #[case::synthetic_symbol("synthetic-method", true)]
-    fn test_inherent_implementation_ownership(#[case] symbol: &str, #[case] dependency_target: bool) -> Result<()> {
+    fn test_inherent_implementation_ownership(#[case] symbol: &str, #[case] dependency_target: bool) {
         let fixture = Index {
             documents: vec![
                 Document {
@@ -273,18 +281,18 @@ mod tests {
             ..Index::default()
         };
 
-        let fixture = parsed_index(&fixture)?;
+        let fixture = parsed_index(&fixture);
+        let fixture = assert_ok!(fixture, "The implementation ownership fixture must serialize and parse");
 
         let system_under_test = definitions(&fixture);
 
-        assert_eq!(system_under_test.contains_key(symbol), dependency_target);
-        Ok(())
+        assert_eq!(system_under_test.contains_key(symbol), dependency_target, "Implementation ownership differs for {symbol}");
     }
 
     #[rstest]
     #[case::structured("rust-analyzer cargo dependency 0.0.0 model/Value#")]
     #[case::opaque("synthetic-external")]
-    fn test_external_symbol_ownership(#[case] symbol: &str) -> Result<()> {
+    fn test_external_symbol_ownership(#[case] symbol: &str) {
         let fixture = Index {
             documents: vec![Document {
                 relative_path: "caller.rs".into(),
@@ -295,20 +303,21 @@ mod tests {
             ..Index::default()
         };
 
-        let fixture = parsed_index(&fixture)?;
+        let fixture = parsed_index(&fixture);
+        let fixture = assert_ok!(fixture, "The external symbol fixture must serialize and parse");
 
         let system_under_test = definitions(&fixture);
-        let unresolved = unresolved_symbols(&fixture)?;
+        let unresolved = unresolved_symbols(&fixture);
+        let unresolved = assert_ok!(unresolved, "Known external symbols must support unresolved-symbol analysis");
 
         assert!(system_under_test.is_empty(), "External metadata must not assign ownership to the caller");
         assert!(unresolved.is_empty(), "External metadata must not require local definition recovery");
-        Ok(())
     }
 
     #[rstest]
     #[case(Kind::Method as i32)]
     #[case(i32::MAX)]
-    fn test_symbol_kind_fallback(#[case] kind: i32) -> Result<()> {
+    fn test_symbol_kind_fallback(#[case] kind: i32) {
         let symbol = "synthetic-method";
         let fixture = parsed_index(&Index {
             documents: vec![Document {
@@ -321,17 +330,18 @@ mod tests {
                 ..Document::default()
             }],
             ..Index::default()
-        })?;
-        let expected = DefinitionFiles::Unique(FileNode::new(SourcePath::new(PathBuf::from("model.rs"))?));
+        });
+        let fixture = assert_ok!(fixture, "The symbol kind fallback fixture must serialize and parse");
+        let expected = SourcePath::new(PathBuf::from("model.rs")).map(FileNode::new).map(DefinitionFiles::Unique);
+        let expected = assert_ok!(expected, "The model path must identify a valid definition owner");
 
         let system_under_test = definitions(&fixture);
 
-        assert_eq!(system_under_test.get(symbol), Some(&expected));
-        Ok(())
+        assert_eq!(system_under_test.get(symbol), Some(&expected), "Non-namespace symbol kinds must retain definition ownership");
     }
 
     #[test]
-    fn test_unresolved_symbol_decoding() -> Result<()> {
+    fn test_unresolved_symbol_decoding() {
         let fixture = parsed_index(&Index {
             documents: vec![Document {
                 relative_path: "model.rs".into(),
@@ -343,16 +353,16 @@ mod tests {
                 ..Document::default()
             }],
             ..Index::default()
-        })?;
+        });
+        let fixture = assert_ok!(fixture, "The malformed symbol fixture must parse before structure is required");
 
         let system_under_test = unresolved_symbols(&fixture);
 
         assert!(system_under_test.is_err(), "Resolving an unknown symbol still requires valid SCIP encoding");
-        Ok(())
     }
 
     #[test]
-    fn test_opaque_symbol_structure_requirements() -> Result<()> {
+    fn test_opaque_symbol_structure_requirements() {
         let symbol = "synthetic-method";
         let fixture = parsed_index(&Index {
             documents: vec![Document {
@@ -361,7 +371,8 @@ mod tests {
                 ..Document::default()
             }],
             ..Index::default()
-        })?;
+        });
+        let fixture = assert_ok!(fixture, "The opaque symbol fixture must parse before structure is required");
         let retained_error = fixture.symbol_cache().get(symbol).require_structure().err().map(|error| error.to_string());
 
         let ownership = definitions(&fixture);
@@ -369,7 +380,7 @@ mod tests {
 
         assert!(ownership.contains_key(symbol), "Opaque identifiers must retain definition ownership");
         assert!(system_under_test.is_err(), "Package analysis requires structured SCIP symbols");
-        assert_eq!(system_under_test.err().map(|error| error.to_string()), retained_error);
-        Ok(())
+        let diagnostic = system_under_test.err().map(|error| error.to_string());
+        assert_eq!(diagnostic, retained_error, "Package analysis must preserve the cached symbol decoding error");
     }
 }

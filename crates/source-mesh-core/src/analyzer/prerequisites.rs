@@ -11,7 +11,7 @@ use anyhow::ensure;
 
 const INSTALL_HINT: &str =
     "Install the required components for the active project toolchain with `rustup component add rust-analyzer rust-src`.";
-const RUST_SOURCE_PATH_VARIABLE: &str = "RUST_SRC_PATH";
+const ENV_RUST_SOURCE_PATH: &str = "RUST_SRC_PATH";
 
 pub(crate) fn ensure_available(project: &Path) -> Result<()> {
     let analyzer_probe = {
@@ -21,7 +21,7 @@ pub(crate) fn ensure_available(project: &Path) -> Result<()> {
     };
     validate_analyzer_probe(project, analyzer_probe)?;
 
-    let configured_source_directory = env::var_os(RUST_SOURCE_PATH_VARIABLE).map(PathBuf::from);
+    let configured_source_directory = env::var_os(ENV_RUST_SOURCE_PATH).map(PathBuf::from);
     validate_rust_sources(configured_source_directory.as_deref(), || active_rust_toolchain_directory(project))
 }
 
@@ -52,7 +52,7 @@ fn validate_rust_sources(
     let source_file = source_directory.join("core").join("src").join("lib.rs");
     fs::read(&source_file).with_context(|| {
         if configured_source_directory.is_some() {
-            format!("Cannot read Rust sources configured by {RUST_SOURCE_PATH_VARIABLE} at {}", source_file.display())
+            format!("Cannot read Rust sources configured by {ENV_RUST_SOURCE_PATH} at {}", source_file.display())
         } else {
             format!(
                 "rust-src is required for the active project toolchain; cannot read {}. {INSTALL_HINT}",
@@ -88,19 +88,22 @@ fn active_rust_toolchain_directory(project: &Path) -> Result<PathBuf> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Tests use assertions for expectations while returning Result for fallible setup."
-)]
 mod tests {
     use std::fs;
     use std::io;
+    use std::panic::catch_unwind;
     use std::path::Path;
+    use std::path::PathBuf;
 
     use anyhow::Result;
+    use claims::assert_ok;
+    use pretty_assertions::assert_eq;
     use rstest::rstest;
     use tempfile::tempdir;
 
+    use super::INSTALL_HINT;
+    use super::active_rust_toolchain_directory;
+    use super::ensure_available;
     use super::standard_library_source_directory;
     use super::validate_analyzer_probe;
     use super::validate_rust_sources;
@@ -113,10 +116,81 @@ mod tests {
     }
 
     #[test]
+    fn test_prerequisite_probe_project_error() {
+        let fixture_creation = tempdir();
+        let fixture = assert_ok!(fixture_creation, "The prerequisite probe fixture directory must be created");
+        let project = fixture.path().join("missing project");
+
+        let system_under_test = ensure_available(&project);
+
+        assert!(
+            system_under_test.as_ref().is_err_and(|error| {
+                let message = error.to_string();
+                message.contains(&project.display().to_string()) && message.contains(INSTALL_HINT)
+            }),
+            "Prerequisite orchestration must report the failed probe with its project and installation advice"
+        );
+        assert!(
+            system_under_test.is_err_and(|error| {
+                error.downcast_ref::<io::Error>().is_some_and(|cause| cause.raw_os_error().is_some())
+            }),
+            "Prerequisite orchestration must preserve the native launch error"
+        );
+    }
+
+    #[test]
+    fn test_standard_library_source_layout() {
+        let expected = PathBuf::from_iter(["toolchain", "lib", "rustlib", "src", "rust", "library"]);
+
+        let system_under_test = standard_library_source_directory(Path::new("toolchain"));
+
+        assert_eq!(system_under_test, expected);
+    }
+
+    #[test]
+    fn test_standard_library_source_toolchain_precondition() {
+        let system_under_test = catch_unwind(|| standard_library_source_directory(Path::new("")));
+
+        assert!(system_under_test.is_err(), "An empty toolchain directory violates the source-layout precondition");
+    }
+
+    #[test]
+    fn test_active_toolchain_directory() {
+        let project = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        let toolchain_query = active_rust_toolchain_directory(project);
+        let system_under_test = assert_ok!(toolchain_query, "The compiler must report its active toolchain directory");
+
+        assert!(system_under_test.is_absolute(), "The active Rust toolchain must have a nonempty absolute sysroot");
+        let directory_read = fs::read_dir(&system_under_test);
+        let _directory_entries = assert_ok!(directory_read, "The reported Rust sysroot must be a readable directory");
+    }
+
+    #[test]
+    fn test_active_toolchain_project_error() {
+        let fixture_creation = tempdir();
+        let fixture = assert_ok!(fixture_creation, "The toolchain query fixture directory must be created");
+        let project = fixture.path().join("missing project");
+
+        let system_under_test = active_rust_toolchain_directory(&project);
+
+        assert!(
+            system_under_test.as_ref().is_err_and(|error| error.to_string().contains(&project.display().to_string())),
+            "The toolchain query must identify the project whose compiler could not be launched"
+        );
+        assert!(
+            system_under_test.is_err_and(|error| {
+                error.downcast_ref::<io::Error>().is_some_and(|cause| cause.raw_os_error().is_some())
+            }),
+            "The toolchain query lost its native launch error"
+        );
+    }
+
+    #[test]
     fn test_available_analyzer() {
         let system_under_test = validate_analyzer_probe(Path::new("project"), Ok(true));
 
-        assert!(system_under_test.is_ok(), "Available rust-analyzer was rejected");
+        assert_ok!(system_under_test, "Available rust-analyzer must be accepted");
     }
 
     #[rstest]
@@ -148,13 +222,15 @@ mod tests {
 
     #[test]
     fn test_rust_source_read_error() {
-        let system_under_test = (|| -> Result<()> {
-            let fixture = tempdir()?;
-            fs::create_dir_all(fixture.path().join("core").join("src").join("lib.rs"))?;
+        let system_under_test = {
+            let fixture_creation = tempdir();
+            let fixture = assert_ok!(fixture_creation, "The unreadable Rust source fixture directory must be created");
+            let source_directory_creation = fs::create_dir_all(fixture.path().join("core").join("src").join("lib.rs"));
+            assert_ok!(source_directory_creation, "The source-file path must contain a directory to provoke a read error");
             validate_rust_sources(Some(fixture.path()), || {
                 unreachable!("Configured sources must bypass Rust toolchain directory lookup")
             })
-        })();
+        };
 
         assert!(
             system_under_test.is_err_and(|error| {
@@ -165,38 +241,42 @@ mod tests {
     }
 
     #[test]
-    fn test_installed_rust_sources() -> Result<()> {
-        let rust_toolchain_directory = tempdir()?;
-        let source_directory = standard_library_source_directory(rust_toolchain_directory.path());
-        fs::create_dir_all(&source_directory)?;
-        write_rust_source_fixture(&source_directory)?;
+    fn test_installed_rust_sources() {
+        let toolchain_creation = tempdir();
+        let rust_toolchain_directory = assert_ok!(toolchain_creation, "The installed toolchain fixture must be created");
+        let relative_source_directory = PathBuf::from_iter(["lib", "rustlib", "src", "rust", "library"]);
+        let source_directory = rust_toolchain_directory.path().join(relative_source_directory);
+        let source_directory_creation = fs::create_dir_all(&source_directory);
+        assert_ok!(source_directory_creation, "The standard library source directory must be created");
+        let source_write = write_rust_source_fixture(&source_directory);
+        assert_ok!(source_write, "The installed rust-src fixture must be written");
         let system_under_test = validate_rust_sources(None, || Ok(rust_toolchain_directory.path().to_path_buf()));
 
-        assert!(system_under_test.is_ok(), "Installed rust-src was rejected");
-        Ok(())
+        assert_ok!(system_under_test, "Installed rust-src must be accepted");
     }
 
     #[test]
-    fn test_missing_rust_sources() -> Result<()> {
-        let rust_toolchain_directory = tempdir()?;
+    fn test_missing_rust_sources() {
+        let toolchain_creation = tempdir();
+        let rust_toolchain_directory = assert_ok!(toolchain_creation, "The toolchain fixture without rust-src must be created");
         let system_under_test = validate_rust_sources(None, || Ok(rust_toolchain_directory.path().to_path_buf()));
 
         assert!(
             system_under_test.as_ref().is_err_and(|error| error.to_string().contains("rust-src is required")),
             "Missing rust-src did not produce an actionable error"
         );
-        Ok(())
     }
 
     #[test]
-    fn test_configured_rust_sources() -> Result<()> {
-        let source_directory = tempdir()?;
-        write_rust_source_fixture(source_directory.path())?;
+    fn test_configured_rust_sources() {
+        let source_directory_creation = tempdir();
+        let source_directory = assert_ok!(source_directory_creation, "The configured Rust source fixture must be created");
+        let source_write = write_rust_source_fixture(source_directory.path());
+        assert_ok!(source_write, "The configured Rust sources must be written");
         let system_under_test = validate_rust_sources(Some(source_directory.path()), || {
             unreachable!("Configured sources must bypass Rust toolchain directory lookup")
         });
 
-        assert!(system_under_test.is_ok(), "Configured Rust sources were rejected");
-        Ok(())
+        assert_ok!(system_under_test, "Configured Rust sources must be accepted");
     }
 }

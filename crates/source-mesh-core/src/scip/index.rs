@@ -143,6 +143,8 @@ impl ParsedSymbol {
 
 #[cfg(test)]
 mod tests {
+    use claims::assert_ok;
+    use claims::assert_some;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -160,8 +162,13 @@ mod tests {
         let repeated_structure = system_under_test.get(symbol).require_structure();
 
         assert_eq!(system_under_test.symbols.len(), 1, "Repeated raw symbols must share one cached outcome");
-        assert_eq!(optional_structure.is_some(), structured);
-        assert_eq!(required_structure.is_ok(), structured);
+        assert_eq!(optional_structure.is_some(), structured, "Optional symbol structure must match the SCIP encoding");
+        if structured {
+            let required_structure = required_structure.as_ref();
+            assert_ok!(required_structure, "A structured SCIP symbol must provide its required structure");
+        } else {
+            assert!(required_structure.is_err(), "An opaque SCIP symbol must fail when its structure is required");
+        }
         let required_error = required_structure.err().map(|error| error.to_string());
         let repeated_error = repeated_structure.err().map(|error| error.to_string());
         assert_eq!(required_error, repeated_error, "Decoding failures must retain their diagnostic");
@@ -172,9 +179,8 @@ mod tests {
     #[case::escaped_package("rust-analyzer cargo fixture  name 0.0.0 run().")]
     fn test_emitted_symbol_outcome(#[case] symbol: &str) {
         let mut system_under_test = SymbolCache::parse([symbol].into_iter());
-        let Some(structure) = system_under_test.get(symbol).structure() else {
-            unreachable!("The emitted-symbol fixture must have SCIP structure");
-        };
+        let structure = system_under_test.get(symbol).structure();
+        let structure = assert_some!(structure, "The emitted-symbol fixture must have SCIP structure");
         let structure = structure.clone();
 
         let emitted = system_under_test.intern(structure);
@@ -182,10 +188,16 @@ mod tests {
         let cached_structure = system_under_test.get(&emitted).require_structure();
         let replayed_structure = replayed.get(&emitted).require_structure();
 
-        assert_eq!(system_under_test.symbols.len(), if emitted == symbol { 1 } else { 2 });
-        assert_eq!(cached_structure.as_ref().ok(), replayed_structure.as_ref().ok());
+        assert_eq!(
+            system_under_test.symbols.len(), if emitted == symbol { 1 } else { 2 },
+            "Interning must add an entry only when the emitted symbol differs"
+        );
+        assert_eq!(
+            cached_structure.as_ref().ok(), replayed_structure.as_ref().ok(),
+            "Cached and replayed symbols must have identical structure outcomes"
+        );
         let cached_error = cached_structure.err().map(|error| error.to_string());
         let replayed_error = replayed_structure.err().map(|error| error.to_string());
-        assert_eq!(cached_error, replayed_error);
+        assert_eq!(cached_error, replayed_error, "Cached and replayed symbols must retain identical decoding errors");
     }
 }

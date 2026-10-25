@@ -9,14 +9,14 @@ const MESSAGE_EMPTY_DIAGNOSTIC_SUMMARY: &str = "The analyzer exited without a sp
 const MAXIMUM_DIAGNOSTIC_EXAMPLES_PER_GROUP: usize = 3;
 const MAXIMUM_DIAGNOSTIC_EXAMPLE_CHARACTERS: usize = 240;
 const MESSAGE_RUST_ANALYZER_SCIP_STARTED: &str = "Generating SCIP start...";
-const MESSAGE_RUST_ANALYZER_SCIP_FINISHED_PREFIX: &str = "Generating SCIP finished ";
-const MESSAGE_RUST_ANALYZER_LOADING_PREFIX: &str = "rust-analyzer: Loading ";
+const MESSAGE_PREFIX_RUST_ANALYZER_SCIP_FINISHED: &str = "Generating SCIP finished ";
+const MESSAGE_PREFIX_RUST_ANALYZER_LOADING: &str = "rust-analyzer: Loading ";
 const MESSAGE_RUST_ANALYZER_EMPTY_CONFIGURATION_ERRORS: &str = "ERROR Config Error(s) error_sink=ConfigErrors([])";
-const MESSAGE_RUST_ANALYZER_DUPLICATE_SYMBOL_PREFIX: &str = "Duplicate symbol: ";
-const MESSAGE_RUST_ANALYZER_CONFIGURATION_ERRORS_PREFIX: &str = "ERROR Config Error(s) error_sink=ConfigErrors([";
-const MESSAGE_RUST_ANALYZER_MISSING_SCIP_DEFINITION_PREFIX: &str = "ERROR Bug: definition at ";
-const MESSAGE_RUST_ANALYZER_MISSING_SCIP_DEFINITION_SUFFIX: &str = " should have been in an SCIP document but was not.";
-const MESSAGE_RUST_ANALYZER_UNNAMED_DEFINITION_PREFIX: &str = "ERROR Encountered enclosing definition with no name ";
+const MESSAGE_PREFIX_RUST_ANALYZER_DUPLICATE_SYMBOL: &str = "Duplicate symbol: ";
+const MESSAGE_PREFIX_RUST_ANALYZER_CONFIGURATION_ERRORS: &str = "ERROR Config Error(s) error_sink=ConfigErrors([";
+const MESSAGE_PREFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION: &str = "ERROR Bug: definition at ";
+const MESSAGE_SUFFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION: &str = " should have been in an SCIP document but was not.";
+const MESSAGE_PREFIX_RUST_ANALYZER_UNNAMED_DEFINITION: &str = "ERROR Encountered enclosing definition with no name ";
 const MESSAGE_RUST_ANALYZER_DUPLICATE_SYMBOL_NOTICE_LINES: &[&str] = &[
     "Encountered duplicate scip symbols, indicating an internal rust-analyzer bug. These duplicates are",
     "included in the output, but this causes information lookup to be ambiguous and so information about",
@@ -72,21 +72,21 @@ impl ScipDiagnostics {
                 let line = without_timestamp(line);
                 if line.is_empty()
                     || line == MESSAGE_RUST_ANALYZER_SCIP_STARTED
-                    || line.starts_with(MESSAGE_RUST_ANALYZER_SCIP_FINISHED_PREFIX)
-                    || (line.starts_with(MESSAGE_RUST_ANALYZER_LOADING_PREFIX)
+                    || line.starts_with(MESSAGE_PREFIX_RUST_ANALYZER_SCIP_FINISHED)
+                    || (line.starts_with(MESSAGE_PREFIX_RUST_ANALYZER_LOADING)
                         && !contains_failure(line)
                         && !line.split_whitespace().any(|word| {
                             let word = word.trim_end_matches(':');
                             word.eq_ignore_ascii_case("warning") || word.eq_ignore_ascii_case("warn")
                         }))
                     || line == MESSAGE_RUST_ANALYZER_EMPTY_CONFIGURATION_ERRORS
-                    || (line.starts_with(MESSAGE_RUST_ANALYZER_MISSING_SCIP_DEFINITION_PREFIX)
-                        && line.ends_with(MESSAGE_RUST_ANALYZER_MISSING_SCIP_DEFINITION_SUFFIX))
-                    || line.starts_with(MESSAGE_RUST_ANALYZER_UNNAMED_DEFINITION_PREFIX)
-                    || line.starts_with(MESSAGE_RUST_ANALYZER_DUPLICATE_SYMBOL_PREFIX)
+                    || (line.starts_with(MESSAGE_PREFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION)
+                        && line.ends_with(MESSAGE_SUFFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION))
+                    || line.starts_with(MESSAGE_PREFIX_RUST_ANALYZER_UNNAMED_DEFINITION)
+                    || line.starts_with(MESSAGE_PREFIX_RUST_ANALYZER_DUPLICATE_SYMBOL)
                     || MESSAGE_RUST_ANALYZER_DUPLICATE_SYMBOL_NOTICE_LINES.contains(&line)
                     || (line.contains(".rs:")
-                        && lines.peek().is_some_and(|next| next.starts_with(MESSAGE_RUST_ANALYZER_DUPLICATE_SYMBOL_PREFIX)))
+                        && lines.peek().is_some_and(|next| next.starts_with(MESSAGE_PREFIX_RUST_ANALYZER_DUPLICATE_SYMBOL)))
                 {
                     continue;
                 }
@@ -136,7 +136,7 @@ impl ScipDiagnostics {
 #[must_use]
 fn blocks_analysis(line: &str) -> bool {
     line.starts_with("error:") || line.starts_with("error[") || {
-        let errors = line.strip_prefix(MESSAGE_RUST_ANALYZER_CONFIGURATION_ERRORS_PREFIX);
+        let errors = line.strip_prefix(MESSAGE_PREFIX_RUST_ANALYZER_CONFIGURATION_ERRORS);
         let errors = errors.and_then(|errors| errors.strip_suffix("])"));
         errors.is_some_and(|errors| !errors.trim().is_empty())
     }
@@ -184,34 +184,35 @@ mod tests {
     use super::MESSAGE_DEPENDENCY_GRAPH_FAILURE;
     use super::MESSAGE_EMPTY_DIAGNOSTIC_SUMMARY;
     use super::MESSAGE_PROJECT_LOADING_FAILURE_REASON;
-    use super::MESSAGE_RUST_ANALYZER_CONFIGURATION_ERRORS_PREFIX;
+    use super::MESSAGE_PREFIX_RUST_ANALYZER_CONFIGURATION_ERRORS;
     use super::MESSAGE_RUST_ANALYZER_DUPLICATE_SYMBOL_NOTICE_LINES;
-    use super::MESSAGE_RUST_ANALYZER_DUPLICATE_SYMBOL_PREFIX;
+    use super::MESSAGE_PREFIX_RUST_ANALYZER_DUPLICATE_SYMBOL;
     use super::MESSAGE_RUST_ANALYZER_EMPTY_CONFIGURATION_ERRORS;
-    use super::MESSAGE_RUST_ANALYZER_LOADING_PREFIX;
-    use super::MESSAGE_RUST_ANALYZER_MISSING_SCIP_DEFINITION_PREFIX;
-    use super::MESSAGE_RUST_ANALYZER_MISSING_SCIP_DEFINITION_SUFFIX;
-    use super::MESSAGE_RUST_ANALYZER_SCIP_FINISHED_PREFIX;
+    use super::MESSAGE_PREFIX_RUST_ANALYZER_LOADING;
+    use super::MESSAGE_PREFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION;
+    use super::MESSAGE_SUFFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION;
+    use super::MESSAGE_PREFIX_RUST_ANALYZER_SCIP_FINISHED;
     use super::MESSAGE_RUST_ANALYZER_SCIP_STARTED;
-    use super::MESSAGE_RUST_ANALYZER_UNNAMED_DEFINITION_PREFIX;
+    use super::MESSAGE_PREFIX_RUST_ANALYZER_UNNAMED_DEFINITION;
     use super::ScipDiagnostics;
     use super::diagnostic_line_preview;
+    use super::without_timestamp;
     use crate::diagnostics::MESSAGE_VERBOSE_DIAGNOSTICS_HINT;
 
     #[must_use]
     fn internal_diagnostics() -> String {
         format!(
-            "{MESSAGE_RUST_ANALYZER_MISSING_SCIP_DEFINITION_PREFIX}source.rs:1:0-1:3\
-             {MESSAGE_RUST_ANALYZER_MISSING_SCIP_DEFINITION_SUFFIX}\n\
-             {MESSAGE_RUST_ANALYZER_UNNAMED_DEFINITION_PREFIX}def=Module\n"
+            "{MESSAGE_PREFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION}source.rs:1:0-1:3\
+             {MESSAGE_SUFFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION}\n\
+             {MESSAGE_PREFIX_RUST_ANALYZER_UNNAMED_DEFINITION}def=Module\n"
         )
     }
     #[test]
     fn test_progress_and_empty_configuration_diagnostics() {
         let fixture = format!(
-            "{MESSAGE_RUST_ANALYZER_SCIP_STARTED}\n{MESSAGE_RUST_ANALYZER_LOADING_PREFIX}cargo metadata: ?\n\
+            "{MESSAGE_RUST_ANALYZER_SCIP_STARTED}\n{MESSAGE_PREFIX_RUST_ANALYZER_LOADING}cargo metadata: ?\n\
              2026-09-26T00:06:16+06:00 {MESSAGE_RUST_ANALYZER_EMPTY_CONFIGURATION_ERRORS}\n\
-             {MESSAGE_RUST_ANALYZER_SCIP_FINISHED_PREFIX}12s\n"
+             {MESSAGE_PREFIX_RUST_ANALYZER_SCIP_FINISHED}12s\n"
         );
         let system_under_test = ScipDiagnostics::from_streams(&[], fixture.as_bytes());
 
@@ -222,7 +223,7 @@ mod tests {
     #[rstest]
     #[case::cargo("error: failed to run custom build command")]
     #[case::compiler("error[E0432]: unresolved import")]
-    #[case::configuration(&format!("{MESSAGE_RUST_ANALYZER_CONFIGURATION_ERRORS_PREFIX}invalid field])"))]
+    #[case::configuration(&format!("{MESSAGE_PREFIX_RUST_ANALYZER_CONFIGURATION_ERRORS}invalid field])"))]
     fn test_actionable_errors_block_successful_analysis(#[case] diagnostic: &str) {
         let system_under_test = ScipDiagnostics::from_streams(&[], diagnostic.as_bytes());
 
@@ -241,9 +242,9 @@ mod tests {
         assert!(!system_under_test.has_blocking_errors());
     }
     #[rstest]
-    #[case::metadata_error(&format!("{MESSAGE_RUST_ANALYZER_LOADING_PREFIX}cargo metadata: error: invalid workspace"))]
-    #[case::build_failure(&format!("{MESSAGE_RUST_ANALYZER_LOADING_PREFIX}build script engine failed"))]
-    #[case::loading_warning(&format!("{MESSAGE_RUST_ANALYZER_LOADING_PREFIX}cargo metadata: warning: incomplete metadata"))]
+    #[case::metadata_error(&format!("{MESSAGE_PREFIX_RUST_ANALYZER_LOADING}cargo metadata: error: invalid workspace"))]
+    #[case::build_failure(&format!("{MESSAGE_PREFIX_RUST_ANALYZER_LOADING}build script engine failed"))]
+    #[case::loading_warning(&format!("{MESSAGE_PREFIX_RUST_ANALYZER_LOADING}cargo metadata: warning: incomplete metadata"))]
     fn test_loading_diagnostics_remain_visible(#[case] diagnostic: &str) {
         let system_under_test = ScipDiagnostics::from_streams(&[], diagnostic.as_bytes());
 
@@ -255,7 +256,7 @@ mod tests {
     #[case::error_stack("error-stack")]
     #[case::failure("failure")]
     fn test_error_crate_names_are_progress(#[case] crate_name: &str) {
-        let fixture = format!("{MESSAGE_RUST_ANALYZER_LOADING_PREFIX}build script {crate_name} run\n");
+        let fixture = format!("{MESSAGE_PREFIX_RUST_ANALYZER_LOADING}build script {crate_name} run\n");
         let system_under_test = ScipDiagnostics::from_streams(&[], fixture.as_bytes());
 
         assert_eq!(system_under_test.summary(), "");
@@ -264,15 +265,46 @@ mod tests {
     #[test]
     fn test_duplicate_notices_leave_unknown_diagnostics_visible() {
         let fixture = format!(
-            "{}\nsource.rs:1:0-1:3\n  {MESSAGE_RUST_ANALYZER_DUPLICATE_SYMBOL_PREFIX}example main().\n\
+            "{}\nsource.rs:1:0-1:3\n  {MESSAGE_PREFIX_RUST_ANALYZER_DUPLICATE_SYMBOL}example main().\n\
              warning: failed to load build script\n",
             MESSAGE_RUST_ANALYZER_DUPLICATE_SYMBOL_NOTICE_LINES.join("\n")
         );
         let system_under_test = ScipDiagnostics::from_streams(&[], fixture.as_bytes());
 
         assert_eq!(system_under_test.nonblocking_errors.occurrences, 1);
-        assert!(system_under_test.summary().contains("failed to load build script"));
-        assert!(!system_under_test.summary().contains(MESSAGE_RUST_ANALYZER_DUPLICATE_SYMBOL_PREFIX));
+        assert_eq!(system_under_test.other_messages.occurrences, 0, "Known duplicate notices must not leak into the summary");
+        assert_eq!(system_under_test.summary(), "1 error diagnostic lines. Examples:\n  warning: failed to load build script");
+    }
+
+    #[rstest]
+    #[case::prefix_only(&format!("{MESSAGE_PREFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION}source.rs:1:0 has an unknown problem"))]
+    #[case::suffix_only(&format!("warning: index entry{MESSAGE_SUFFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION}"))]
+    fn test_partial_internal_diagnostic_matches(#[case] diagnostic: &str) {
+        let system_under_test = ScipDiagnostics::from_streams(&[], diagnostic.as_bytes());
+
+        assert!(system_under_test.summary().contains(diagnostic), "Only a complete known diagnostic may be suppressed");
+    }
+
+    #[rstest]
+    #[case::standalone_location("source.rs:1:0-1:3", "")]
+    #[case::location_before_warning("source.rs:1:0-1:3", "warning: unknown analyzer diagnostic")]
+    #[case::warning_before_duplicate("warning: unknown analyzer diagnostic", MESSAGE_PREFIX_RUST_ANALYZER_DUPLICATE_SYMBOL)]
+    fn test_duplicate_notice_context(#[case] diagnostic: &str, #[case] following: &str) {
+        let fixture = format!("{diagnostic}\n{following}");
+        let system_under_test = ScipDiagnostics::from_streams(&[], fixture.as_bytes());
+
+        assert!(system_under_test.summary().contains(diagnostic), "Location and duplicate context must both match to suppress");
+    }
+
+    #[rstest]
+    #[case::timestamp("2026-09-26T00:06:16+06:00   warning: fixture", "warning: fixture")]
+    #[case::numeric_prefix("2026 warnings remain", "2026 warnings remain")]
+    #[case::text_prefix("TRACE warnings remain", "TRACE warnings remain")]
+    #[case::no_separator("2026-09-26T00:06:16+06:00", "2026-09-26T00:06:16+06:00")]
+    fn test_diagnostic_timestamp(#[case] diagnostic: &str, #[case] expected: &str) {
+        let system_under_test = without_timestamp(diagnostic);
+
+        assert_eq!(system_under_test, expected);
     }
 
     #[test]
@@ -286,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_configuration_errors_remain_visible() {
-        let fixture = format!("2026-09-26T00:06:16+06:00 {MESSAGE_RUST_ANALYZER_CONFIGURATION_ERRORS_PREFIX}invalid field])\n");
+        let fixture = format!("2026-09-26T00:06:16+06:00 {MESSAGE_PREFIX_RUST_ANALYZER_CONFIGURATION_ERRORS}invalid field])\n");
         let system_under_test = ScipDiagnostics::from_streams(&[], fixture.as_bytes());
 
         assert!(system_under_test.summary().contains("invalid field"));
@@ -310,8 +342,8 @@ mod tests {
 
         assert!(summary.contains("custom diagnostic"));
         assert!(summary.contains("failed to read Cargo.toml"));
-        assert!(!summary.contains(MESSAGE_RUST_ANALYZER_MISSING_SCIP_DEFINITION_PREFIX));
-        assert!(!summary.contains(MESSAGE_RUST_ANALYZER_UNNAMED_DEFINITION_PREFIX));
+        assert!(!summary.contains(MESSAGE_PREFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION));
+        assert!(!summary.contains(MESSAGE_PREFIX_RUST_ANALYZER_UNNAMED_DEFINITION));
     }
     #[rstest]
     #[case::normal(false)]
@@ -325,15 +357,13 @@ mod tests {
         assert!(message.contains(MESSAGE_DEPENDENCY_GRAPH_FAILURE));
         assert!(message.contains("exit code 1"));
         assert!(message.contains(MESSAGE_VERBOSE_DIAGNOSTICS_HINT));
-        assert!(!message.contains(MESSAGE_RUST_ANALYZER_MISSING_SCIP_DEFINITION_PREFIX));
-        assert!(!message.contains(MESSAGE_RUST_ANALYZER_UNNAMED_DEFINITION_PREFIX));
+        assert!(!message.contains(MESSAGE_PREFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION));
+        assert!(!message.contains(MESSAGE_PREFIX_RUST_ANALYZER_UNNAMED_DEFINITION));
     }
     #[rstest]
     #[case::first_analysis("first analysis")]
     #[case::second_analysis("second analysis")]
-    fn test_process_failure_without_actionable_diagnostics(
-        #[case] analysis_label: &str, #[values(false, true)] verbose: bool,
-    ) {
+    fn test_process_failure_without_actionable_diagnostics(#[case] analysis_label: &str, #[values(false, true)] verbose: bool) {
         let system_under_test = ScipDiagnostics::from_streams(&[], MESSAGE_RUST_ANALYZER_SCIP_STARTED.as_bytes());
 
         let message = system_under_test.failure_message(analysis_label, &"exit code 1", verbose);

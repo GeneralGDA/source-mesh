@@ -18,7 +18,7 @@ strict digraph folders {
   n0 -> n9 [label="4"]
   n1 -> n2 [label="4"]
   n1 -> n8 [label="2"]
-  n1 -> n9 [label="2"]
+  n1 -> n9 [label="3"]
   n3 -> n4 [label="2"]
   n3 -> n5 [label="2"]
   n3 -> n6 [label="2"]

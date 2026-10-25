@@ -24,10 +24,14 @@
   This also applies to parameter names in implementations of external traits. Keep `clippy::renamed_function_params`
   disabled so external trait parameter names cannot force local abbreviations. For other lint conflicts, ask the user
   rather than shortening identifiers.
+- Name related constants from general to specific: put the shared semantic family first and the variant last, so names
+  group by prefix (e.g. `PHASE_LABEL_ORIGINAL`, `PHASE_LABEL_WITHOUT_TEST`, not `ORIGINAL_PHASE_LABEL`). Apply the same order
+  in production code and tests. Preserve external names and values; do not mechanically reverse unrelated standalone names.
 - Name values by the domain entity and semantic kind they represent, not just their temporary role in an operation.
   Preserve meaningful type vocabulary without mechanically repeating type names (e.g. `cargo_build_output_directory`,
   not `output_directory`). Use terms that match what the code actually does: a downloaded and extracted directory is
-  not an unexplained `installation_root` that implies a separate installation process.
+  not an unexplained `installation_root` that implies a separate installation process. Do not invent a domain concept
+  merely to group test steps or helper code; name that code after its existing owner and the behavior it supports.
 - Judge whether a name has enough context from its enclosing function or type, not from the file's current sole task.
   General-purpose entry points such as `main` and build scripts do not provide dependency-specific context. Give cohesive
   domain-specific tasks a named scope and still keep the values within it clear.
@@ -108,13 +112,20 @@
 ## Tests
 
 - Keep unit and component tests under `src`, near the implementation they exercise, including synthetic graphs,
-  SCIP fixtures, argument validation, and application pipeline checks. Keep their fixture projects under `src/fixtures`.
+  SCIP fixtures, argument validation, and application pipeline checks. Co-locate feature-specific fixtures, test doubles,
+  helper programs, and their setup code with the owning feature. Reserve `src/fixtures` for shared fixture projects and data.
 - By default, place tests for a single type or module in an inline `#[cfg(test)]` test module in the same ordinary `.rs`
   file as the implementation. Do not create sibling `*_tests.rs` files solely to separate test code from production code.
-  Temporary files, fixtures, or application pipeline calls alone do not justify a separate test file.
-- Keep separate test files for large, complex suites or checks spanning multiple implementations. Attach them to the
-  owning feature module, and keep shared suites and fixtures at their closest common owner. Keep `mod.rs` and `lib.rs`
-  organizational-only; do not move inline test bodies into them.
+  File length, complex fixture setup, subprocesses, message exchanges, or application pipeline calls alone do not justify
+  splitting a single owner's tests into another file.
+- Use separate test suites only for checks genuinely spanning multiple implementations or when the user explicitly approves
+  a split. Attach them to the owning feature, and keep shared suites and fixtures at their closest common owner.
+  Keep `mod.rs` and `lib.rs` organizational-only; do not move inline test bodies into them.
+- A standalone test helper executable may have its own source under the owner's `test_fixtures` directory; this is not a
+  reason to move the owning tests out of their implementation file. Gate both its Rust source and its build/launch helpers
+  with `#[cfg(test)]`. Enable that configuration explicitly when compiling a standalone test executable; do not add a libtest
+  harness when the double must accept the external program's command-line arguments. Reference helper sources relative to
+  their owner, preferably through `include_str!`, rather than searching a repository-wide fixtures directory at runtime.
 - Reserve `tests` for repository-level checks that launch the compiled application on this repository and compare
   its output with expected output files under `tests/expected` or enforce repository architecture constraints.
   Do not call production library APIs from these tests. A fresh temporary index may be shared between executable runs
@@ -122,15 +133,25 @@
 - Keep successful CLI export combinations in repository integration tests. Keep argument validation and
   output preservation on errors as focused command tests; exercise graph algorithms, exporters, and analyzer
   semantics directly in their owning component tests instead of repeating the full command pipeline.
-- Express test expectations with `assert!`, `assert_eq!`, or `assert_ne!`; use `pretty_assertions::assert_eq!`
-  for text or structured values where a diff helps diagnosis. Reserve `Result` and `?` for fallible fixture setup
-  and test operations; do not use `anyhow::ensure!` for expectations.
+- Test functions (`#[test]` and `#[rstest]`, including ignored test entry points) return `()`, never `Result` or `Option`.
+  Check fallible setup, operations, and cleanup with explicit assertions and messages that explain the expected behavior.
+  Use `claims::assert_ok!` and `claims::assert_some!` to obtain successful values without `unwrap()` or `expect()`; retain
+  the actual failure details. Use `assert!`, `assert_eq!`, or `assert_ne!` for other expectations, preferring
+  `pretty_assertions::assert_eq!` where a diff helps diagnosis. Do not use `anyhow::ensure!` for expectations.
+- Cohesive fallible fixture helpers may return `Result`; assert their outcome at the test boundary. Helpers that perform
+  test assertions must not return `Result`. Do not move a test body into a fallible closure or wrapper just to preserve `?`.
+- Assert the observable contract at its actual boundary: capture the output stream when testing diagnostic emission,
+  inspect the complete exchange when checking message counts, and distinguish the intended failure from setup or transport
+  errors. Do not derive expected results with the same algorithm or fixture helper that the test is meant to validate.
 - Name test functions after the behaviour or property under test, not the expected result
   (e.g. `selection_key`, not `source_returns_original_format`).
 - Prefix all test function names with `test_` (e.g. `test_selection_key`).
 - Name the instance of the type under test `system_under_test` (e.g. `let system_under_test = MyStruct::new();`).
-- Prefer `Fixture` terminology for shared test resources/environment types and variables
-  (e.g. `TestFixture`, `let fixture = ...`).
+- Prefer `Fixture` terminology for shared test resources and environments, qualified by the dependency or behavior involved
+  (e.g. `AnalyzerTestFixture`, `create_analyzer_test_fixture()`). Test-support names must identify both their purpose and
+  their test-only role; generic labels such as `process_fixture` are insufficient. Apply this to source files, executables,
+  build/launch helpers, environment variables, and their diagnostics. A local `fixture` variable is fine when the enclosing
+  test and its construction make the role clear.
 - Structure test bodies as clear phases: fixture setup, system-under-test exercise, assertions, and cleanup when needed.
   Separate these phases with blank lines where it improves readability.
 - Keep side effects and result assertions in separate statements. Assign an operation's `Result` first, then pass that
@@ -219,18 +240,22 @@
   available consumer.
 - After implementation, perform a reviewer pass rather than only a compiler pass. Check specifically for duplicated
   knowledge, misplaced responsibilities, unnecessary dependencies, speculative behavior, excessive API changes, and error
-  messages based on false assumptions.
+  messages based on false assumptions. Also check test-support naming, locality, and exclusion from production builds.
 - Inspect the complete targeted diff before reporting completion. Remove incidental formatting and unrelated edits, then
   verify that dependency manifests and lock files changed only when required.
 - When the user corrects a design assumption, discard the previous mental model and restate the contract before making
   another patch. Do not incrementally repair an implementation built on the rejected assumption.
+- Before addressing a mutation, inspect its exact diff against current code and trace the affected observable behavior.
+  Do not infer the target from a filename, stale line number, or neighboring condition. After decomposition, verify the
+  corresponding mutation at its new owner; moving or deleting the original mutation site is not evidence of a closed gap.
+- Split expensive mutation runs into checkpointed batches, defaulting to at most five mutants when each needs a rebuild.
+  State the scope and time budget before starting and report results between batches. After interruption, resume from verified
+  completed outcomes; interrupted builds and incomplete attempts must not be counted as caught or silently skipped.
 - After a refactoring, run `cargo test -p <crate>`.
 - Never run `rustfmt`, `cargo fmt`, editor formatting actions, or any other formatting command.
   Leave automatic formatting to the user or their editor; make requested style changes through explicit code edits.
 - Never suppress Clippy lints with `#[allow]`, `#[expect]`, crate- or module-level lint overrides, or command-line flags.
-  The only exception is `#[expect(clippy::panic_in_result_fn, reason = "...")]` on a test-only module: tests may return
-  `Result` for fallible fixture setup while using direct assertions. Rewrite production code to satisfy every lint using
-  safe or checked operations and explicit error handling. If no compliant solution is available, stop and ask the user
-  instead of suppressing the lint.
+  Rewrite code to satisfy every lint using safe or checked operations and explicit error handling or test assertions.
+  If no compliant solution is available, stop and ask the user instead of suppressing the lint.
 - If `cargo clippy --all-targets` is already failing before the change, report that as a pre-existing state instead of
   mixing it into the results of the refactoring.

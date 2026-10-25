@@ -224,13 +224,12 @@ fn parent_label(label: &str) -> &str {
 }
 
 #[cfg(test)]
-#[expect(clippy::panic_in_result_fn, reason = "Tests use assertions for expectations while returning Result for fallible setup.")]
 mod tests {
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
 
-    use anyhow::Context as _;
-    use anyhow::Result;
+    use claims::assert_ok;
+    use claims::assert_some;
     use rstest::rstest;
 
     use super::FolderEvent;
@@ -244,7 +243,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn test_hierarchy_ancestors_and_original_node_identifiers() -> Result<()> {
+    fn test_hierarchy_ancestors_and_original_node_identifiers() {
         let fixture = FolderGraph::new(
             BTreeSet::from([FolderNode::new("src/api/v1".into()), FolderNode::new("src/store".into())]),
             BTreeMap::from([(
@@ -255,14 +254,21 @@ mod tests {
                 ),
                 DependencyCount::new(7),
             )]),
-        )?;
+        );
+        let fixture = assert_ok!(fixture, "Ancestor fixture must form a valid folder graph");
         let indexed_graph = IndexedGraph::new(&fixture);
 
-        let system_under_test = Hierarchy::new(&indexed_graph)?;
-        let api = system_under_test.roots().next().context("api is missing")?;
-        let version = system_under_test.folder(*api.children.first().context("v1 is missing")?);
-        let storage = system_under_test.roots().next_back().context("store is missing")?;
-        let edge = indexed_graph.edges.first().context("Dependency is missing")?;
+        let system_under_test = Hierarchy::new(&indexed_graph);
+        let system_under_test = assert_ok!(system_under_test, "Valid folder labels must form a hierarchy");
+        let api = system_under_test.roots().next();
+        let api = assert_some!(api, "Hierarchy must contain the API ancestor");
+        let version = api.children.first();
+        let version = assert_some!(version, "API ancestor must contain its v1 child");
+        let version = system_under_test.folder(*version);
+        let storage = system_under_test.roots().next_back();
+        let storage = assert_some!(storage, "Hierarchy must contain the storage folder");
+        let edge = indexed_graph.edges.first();
+        let edge = assert_some!(edge, "Indexed graph must retain the original dependency");
 
         assert_eq!(system_under_test.roots.len(), 2, "Common root containers must be omitted");
         assert_eq!(
@@ -282,11 +288,10 @@ mod tests {
         );
         assert_eq!(indexed_graph.edges.len(), 1, "Hierarchy changed the edge count");
         assert_eq!((edge.source, edge.target, edge.weight), (0, 1, DependencyCount::new(7)), "Hierarchy changed the dependency");
-        Ok(())
     }
 
     #[test]
-    fn test_hierarchy_common_ancestor_dependencies() -> Result<()> {
+    fn test_hierarchy_common_ancestor_dependencies() {
         let fixture = FolderGraph::new(
             [".", "src", "src/api", "src/api/v1", "src/api/v2"].map(String::from).map(FolderNode::new).into(),
             BTreeMap::from([
@@ -311,10 +316,12 @@ mod tests {
                     DependencyCount::new(5),
                 ),
             ]),
-        )?;
+        );
+        let fixture = assert_ok!(fixture, "Common-ancestor dependencies must form a valid folder graph");
         let indexed_graph = IndexedGraph::new(&fixture);
 
-        let system_under_test = Hierarchy::new(&indexed_graph)?;
+        let system_under_test = Hierarchy::new(&indexed_graph);
+        let system_under_test = assert_ok!(system_under_test, "Common-ancestor dependencies must support hierarchy creation");
 
         assert_eq!(system_under_test.roots.len(), 5, "All original folders, including isolated ancestors, must remain");
         assert!(
@@ -344,26 +351,29 @@ mod tests {
                 "Dependency endpoint or weight changed"
             );
         }
-        Ok(())
     }
 
     #[rstest]
     #[case(".", ".")]
     #[case("src", "src")]
     #[case("src/api/v1", "v1")]
-    fn test_hierarchy_single_folder(#[case] label: &str, #[case] display_label: &str) -> Result<()> {
+    fn test_hierarchy_single_folder(#[case] label: &str, #[case] display_label: &str) {
         let fixture = FolderGraph::new(
             BTreeSet::from([FolderNode::new(label.into())]),
             BTreeMap::from([(
                 FolderEdge::new(FolderNode::new(label.into()), FolderNode::new(label.into()), DependencyKind::Production),
                 DependencyCount::new(4),
             )]),
-        )?;
+        );
+        let fixture = assert_ok!(fixture, "Single self-dependent folder must form a valid graph");
         let indexed_graph = IndexedGraph::new(&fixture);
 
-        let system_under_test = Hierarchy::new(&indexed_graph)?;
-        let folder = system_under_test.roots().next().context("Only folder is missing")?;
-        let edge = indexed_graph.edges.first().context("Self-dependency is missing")?;
+        let system_under_test = Hierarchy::new(&indexed_graph);
+        let system_under_test = assert_ok!(system_under_test, "Single folder must form a hierarchy: {label}");
+        let folder = system_under_test.roots().next();
+        let folder = assert_some!(folder, "Hierarchy must retain the only folder");
+        let edge = indexed_graph.edges.first();
+        let edge = assert_some!(edge, "Indexed graph must retain the self-dependency");
 
         assert_eq!(system_under_test.roots.len(), 1, "The only source folder must remain visible");
         assert_eq!(
@@ -373,18 +383,19 @@ mod tests {
         );
         assert!(folder.children.is_empty(), "The only source folder retained redundant containers");
         assert_eq!((edge.source, edge.target, edge.weight), (0, 0, DependencyCount::new(4)), "Self-dependency changed");
-        Ok(())
     }
 
     #[test]
-    fn test_hierarchy_multiple_top_level_folders() -> Result<()> {
+    fn test_hierarchy_multiple_top_level_folders() {
         let fixture = FolderGraph::new(
             BTreeSet::from([FolderNode::new("src/api".into()), FolderNode::new("tests/api".into())]),
             BTreeMap::new(),
-        )?;
+        );
+        let fixture = assert_ok!(fixture, "Independent top-level folders must form a valid graph");
         let indexed_graph = IndexedGraph::new(&fixture);
 
-        let system_under_test = Hierarchy::new(&indexed_graph)?;
+        let system_under_test = Hierarchy::new(&indexed_graph);
+        let system_under_test = assert_ok!(system_under_test, "Independent top-level folders must form a hierarchy");
 
         assert_eq!(system_under_test.roots.len(), 2, "Independent top-level folders must remain separate");
         for (folder, expected_label) in system_under_test.roots().zip(["src", "tests"]) {
@@ -392,40 +403,42 @@ mod tests {
                 folder.label == expected_label && folder.display_label == expected_label && !folder.dependency,
                 "A top-level folder was removed or relabeled"
             );
-            let child = system_under_test.folder(*folder.children.first().context("Top-level descendant is missing")?);
+            let child = folder.children.first();
+            let child = assert_some!(child, "Top-level folder {expected_label} must have a descendant");
+            let child = system_under_test.folder(*child);
             assert!(
                 child.label == child.display_label && child.dependency,
                 "A descendant without a shared path prefix was relabeled"
             );
         }
-        Ok(())
     }
 
     #[test]
-    fn test_hierarchy_common_prefix_components() -> Result<()> {
+    fn test_hierarchy_common_prefix_components() {
         let fixture = FolderGraph::new(
             BTreeSet::from([FolderNode::new("src/api".into()), FolderNode::new("src/api_extra".into())]),
             BTreeMap::new(),
-        )?;
+        );
+        let fixture = assert_ok!(fixture, "Folders with a shared textual prefix must form a valid graph");
         let indexed_graph = IndexedGraph::new(&fixture);
 
-        let system_under_test = Hierarchy::new(&indexed_graph)?;
+        let system_under_test = Hierarchy::new(&indexed_graph);
+        let system_under_test = assert_ok!(system_under_test, "Shared textual prefixes must support hierarchy creation");
 
         let display_labels: Vec<_> = system_under_test.roots().map(|folder| folder.display_label).collect();
 
         assert_eq!(display_labels, ["api", "api_extra"], "A textual prefix inside a folder component was removed");
-        Ok(())
     }
 
     #[test]
-    fn test_hierarchy_empty_graph() -> Result<()> {
+    fn test_hierarchy_empty_graph() {
         let fixture = FolderGraph::default();
         let indexed_graph = IndexedGraph::new(&fixture);
 
-        let system_under_test = Hierarchy::new(&indexed_graph)?;
+        let system_under_test = Hierarchy::new(&indexed_graph);
+        let system_under_test = assert_ok!(system_under_test, "An empty graph must support hierarchy creation");
 
         assert!(system_under_test.roots.is_empty(), "An empty graph must have no hierarchy roots");
-        Ok(())
     }
 
     #[rstest]
@@ -435,31 +448,33 @@ mod tests {
     #[case("src//api")]
     #[case("src/./api")]
     #[case("src/../api")]
-    fn test_hierarchy_path_preconditions(#[case] label: &str) -> Result<()> {
-        let fixture = FolderGraph::new(BTreeSet::from([FolderNode::new(label.into())]), BTreeMap::new())?;
+    fn test_hierarchy_path_preconditions(#[case] label: &str) {
+        let fixture = FolderGraph::new(BTreeSet::from([FolderNode::new(label.into())]), BTreeMap::new());
+        let fixture = assert_ok!(fixture, "Folder graph must accept labels before hierarchy path validation: {label:?}");
         let indexed_graph = IndexedGraph::new(&fixture);
 
         let system_under_test = Hierarchy::new(&indexed_graph);
 
         assert!(system_under_test.is_err(), "Invalid hierarchy path was accepted: {label}");
-        Ok(())
     }
 
     #[rstest]
     #[case(false)]
     #[case(true)]
-    fn test_deep_hierarchy_traversal_and_destruction(#[case] common_prefix: bool) -> Result<()> {
+    fn test_deep_hierarchy_traversal_and_destruction(#[case] common_prefix: bool) {
         const DEPTH: usize = 4096;
         const COMMON_PREFIX: &str = "common/";
         let prefix = if common_prefix { COMMON_PREFIX } else { "" };
         let fixture = FolderGraph::new(
             [format!("{prefix}{}leaf", "a/".repeat(DEPTH)), format!("{prefix}z")].map(FolderNode::new).into(),
             BTreeMap::new(),
-        )?;
+        );
+        let fixture = assert_ok!(fixture, "Deep folder paths must form a valid graph");
         let indexed_graph = IndexedGraph::new(&fixture);
 
         {
-            let system_under_test = Hierarchy::new(&indexed_graph)?;
+            let system_under_test = Hierarchy::new(&indexed_graph);
+            let system_under_test = assert_ok!(system_under_test, "Deep hierarchy creation must not exhaust the stack");
             let mut depth: usize = 0;
             let mut maximum_depth = 0;
             let mut leaves = Vec::new();
@@ -487,6 +502,5 @@ mod tests {
                 "Deep relative-label traversal retained the common root"
             );
         }
-        Ok(())
     }
 }

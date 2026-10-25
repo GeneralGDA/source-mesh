@@ -36,6 +36,11 @@ The `dependency-graph` test compares the complete parsed file graph with the sav
 loaded through `ScipFile`. Export and command-line behavior are covered by the repository
 integration tests.
 
+Resolver component tests exercise finite message exchanges with a subprocess of the test executable, without requiring
+rust-analyzer. Their ignored peer entry point is launched explicitly by the ordinary component tests; it is not an additional
+live-analyzer test. Each peer has its own deadline and isolated files and environment.
+Diagnostic-output tests similarly launch ignored helper entry points explicitly to check actual stderr.
+
 The adjacent `test-dependencies` project covers inline and file-based `#[cfg(test)]` modules,
 including dependencies shared by production and test code.
 

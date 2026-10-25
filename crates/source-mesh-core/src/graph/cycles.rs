@@ -51,10 +51,7 @@ pub struct CycleAnalysis<Node> {
 }
 
 impl<Node: Clone + Ord> CycleAnalysis<Node> {
-    fn new<'a>(nodes: &BTreeSet<Node>, edges: impl Iterator<Item = &'a Edge<Node>>) -> Result<Self>
-    where
-        Node: 'a,
-    {
+    fn new<'a>(nodes: &BTreeSet<Node>, edges: impl Iterator<Item = &'a Edge<Node>>) -> Result<Self> where Node: 'a {
         let edges: Vec<_> = edges.collect();
         let mut topology = DiGraph::new();
         let node_indices = nodes.iter().map(|node| topology.try_add_node(node.clone()).map(|index| (node, index)));
@@ -173,7 +170,6 @@ pub(crate) fn validate_folder_analysis(analysis: &CycleAnalysis<FolderNode>, gra
 }
 
 #[cfg(test)]
-#[expect(clippy::panic_in_result_fn, reason = "Tests use assertions for expectations while returning Result for fallible setup.")]
 mod tests {
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
@@ -183,8 +179,9 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
-    use anyhow::Context as _;
     use anyhow::Result;
+    use claims::assert_ok;
+    use claims::assert_some;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -266,19 +263,20 @@ mod tests {
             vec!["alpha", "gamma", "alpha"], vec!["alpha", "gamma", "beta", "alpha"], vec!["beta", "gamma", "beta"],
         ]
     )]
-    fn test_directed_cycle_routes(
-        #[case] dependencies: &[(&str, &str, DependencyKind)],
-        #[case] expected_paths: Vec<Vec<&str>>,
-    ) -> Result<()> {
-        let fixture = folder_fixture(dependencies)?;
-        let system_under_test = analyze_folders(&fixture)?;
+    fn test_directed_cycle_routes(#[case] dependencies: &[(&str, &str, DependencyKind)], #[case] expected_paths: Vec<Vec<&str>>) {
+        let fixture = folder_fixture(dependencies);
+        let fixture = assert_ok!(fixture, "Cycle-route dependencies must form a valid folder graph");
+        let system_under_test = analyze_folders(&fixture);
+        let system_under_test = assert_ok!(system_under_test, "Folder cycle analysis must succeed");
         let expected: Vec<_> = expected_paths.into_iter().map(|labels| folder_path(&labels)).collect();
 
-        let cycles = system_under_test.cycles(NonZeroUsize::new(10).context("Invalid test cycle limit")?)?;
+        let limit = NonZeroUsize::new(10);
+        let limit = assert_some!(limit, "Cycle-route enumeration limit must be nonzero");
+        let cycles = system_under_test.cycles(limit);
+        let cycles = assert_ok!(cycles, "All fixture cycles must fit within the enumeration limit");
         let paths: Vec<_> = cycles.into_iter().map(|cycle| cycle.nodes).collect();
 
         assert_eq!(expected, paths, "Directed cycle routes or their canonical order differ");
-        Ok(())
     }
 
     #[rstest]
@@ -298,7 +296,7 @@ mod tests {
         #[case] target: &str,
         #[case] kind: DependencyKind,
         #[case] expected_group: Option<usize>,
-    ) -> Result<()> {
+    ) {
         let fixture = folder_fixture(&[
             ("omega", "gamma", Production),
             ("gamma", "omega", Production),
@@ -308,72 +306,83 @@ mod tests {
             ("entry", "alpha", Production),
             ("omega", "exit", Production),
             ("leaf", "sink", Production),
-        ])?;
-        let system_under_test = analyze_folders(&fixture)?;
+        ]);
+        let fixture = assert_ok!(fixture, "Component-membership dependencies must form a valid folder graph");
+        let system_under_test = analyze_folders(&fixture);
+        let system_under_test = assert_ok!(system_under_test, "Component-membership analysis must succeed");
         let edge = FolderEdge::new(FolderNode::new(source.into()), FolderNode::new(target.into()), kind);
 
         let group = system_under_test.edge_group(&edge);
 
         assert_eq!(2, system_under_test.group_count(), "Independent cyclic components were merged");
         assert_eq!(expected_group, group.map(|identifier| identifier.number().get()), "Incorrect cycle edge group");
-        Ok(())
     }
 
     #[test]
-    fn test_cycle_group_assignment() -> Result<()> {
+    fn test_cycle_group_assignment() {
         let fixture = folder_fixture(&[
             ("gamma", "omega", Production),
             ("omega", "gamma", Production),
             ("alpha", "beta", Production),
             ("beta", "alpha", Production),
             ("beta", "gamma", Production),
-        ])?;
-        let system_under_test = analyze_folders(&fixture)?;
+        ]);
+        let fixture = assert_ok!(fixture, "Independent cycle groups and their bridge must form a valid graph");
+        let system_under_test = analyze_folders(&fixture);
+        let system_under_test = assert_ok!(system_under_test, "Independent cycle-group analysis must succeed");
         let expected = [folder_path(&["alpha", "beta", "alpha"]), folder_path(&["gamma", "omega", "gamma"])];
 
-        let cycles = system_under_test.cycles(NonZeroUsize::new(2).context("Invalid test cycle limit")?)?;
+        let limit = NonZeroUsize::new(2);
+        let limit = assert_some!(limit, "Two-cycle enumeration limit must be nonzero");
+        let cycles = system_under_test.cycles(limit);
+        let cycles = assert_ok!(cycles, "Both independent cycles must fit within the limit");
         let groups: Vec<_> = cycles.iter().map(|cycle| cycle.group().number().get()).collect();
         let paths: Vec<_> = cycles.into_iter().map(|cycle| cycle.nodes).collect();
 
         assert_eq!(groups, [1, 2], "Cycle group numbers differ");
         assert_eq!(paths, expected, "Independent cycle routes or their order differ");
-        Ok(())
     }
 
     #[rstest]
     #[case(1, true)]
     #[case(2, false)]
     #[case(3, false)]
-    fn test_cycle_enumeration_limit(#[case] limit: usize, #[case] exceeds_limit: bool) -> Result<()> {
+    fn test_cycle_enumeration_limit(#[case] limit: usize, #[case] exceeds_limit: bool) {
         let fixture = folder_fixture(&[
             ("alpha", "beta", Production),
             ("beta", "alpha", Production),
             ("beta", "gamma", Production),
             ("gamma", "beta", Production),
-        ])?;
-        let system_under_test = analyze_folders(&fixture)?;
+        ]);
+        let fixture = assert_ok!(fixture, "Overlapping-cycle dependencies must form a valid graph");
+        let system_under_test = analyze_folders(&fixture);
+        let system_under_test = assert_ok!(system_under_test, "Overlapping-cycle analysis must succeed");
 
-        let result = system_under_test.cycles(NonZeroUsize::new(limit).context("Invalid test cycle limit")?);
+        let limit = NonZeroUsize::new(limit);
+        let limit = assert_some!(limit, "Parameterized cycle limit must be nonzero");
+        let result = system_under_test.cycles(limit);
 
         assert_eq!(1, system_under_test.group_count(), "Overlapping cycles have separate groups");
         if exceeds_limit {
             assert!(result.is_err(), "Excess cycles were silently truncated");
         } else {
-            assert_eq!(2, result?.len(), "Enumeration did not retain every cycle within the limit");
+            let cycles = assert_ok!(result, "Both overlapping cycles must fit within limit {limit}");
+            assert_eq!(2, cycles.len(), "Enumeration did not retain every cycle within the limit");
         }
-        Ok(())
     }
 
     #[test]
-    fn test_isolated_nodes() -> Result<()> {
-        let fixture = FolderGraph::new(BTreeSet::from([FolderNode::new("isolated".into())]), BTreeMap::new())?;
-        let system_under_test = analyze_folders(&fixture)?;
+    fn test_isolated_nodes() {
+        let fixture = FolderGraph::new(BTreeSet::from([FolderNode::new("isolated".into())]), BTreeMap::new());
+        let fixture = assert_ok!(fixture, "An isolated folder must form a valid graph");
+        let system_under_test = analyze_folders(&fixture);
+        let system_under_test = assert_ok!(system_under_test, "An isolated folder must support cycle analysis");
 
-        let cycles = system_under_test.cycles(NonZeroUsize::MIN)?;
+        let cycles = system_under_test.cycles(NonZeroUsize::MIN);
+        let cycles = assert_ok!(cycles, "An isolated folder must enumerate without exceeding the cycle limit");
 
         assert_eq!(0, system_under_test.group_count(), "Isolated node became a cyclic component");
         assert!(cycles.is_empty(), "Isolated node produced a phantom cycle");
-        Ok(())
     }
 
     #[rstest]
@@ -381,21 +390,29 @@ mod tests {
     #[case(Path::new("."), true, 0)]
     #[case(Path::new("alpha"), false, 0)]
     #[case(Path::new("beta"), false, 0)]
-    fn test_file_cycle_routes(#[case] root: &Path, #[case] exclude_tests: bool, #[case] expected_cycles: usize) -> Result<()> {
-        let first_file = FileNode::new(SourcePath::new(PathBuf::from_iter(["alpha", "source.rs"]))?);
-        let second_file = FileNode::new(SourcePath::new(PathBuf::from_iter(["beta", "source.rs"]))?);
+    fn test_file_cycle_routes(#[case] root: &Path, #[case] exclude_tests: bool, #[case] expected_cycles: usize) {
+        let first_path = SourcePath::new(PathBuf::from_iter(["alpha", "source.rs"]));
+        let first_path = assert_ok!(first_path, "First cycle file must have a valid source path");
+        let first_file = FileNode::new(first_path);
+        let second_path = SourcePath::new(PathBuf::from_iter(["beta", "source.rs"]));
+        let second_path = assert_ok!(second_path, "Second cycle file must have a valid source path");
+        let second_file = FileNode::new(second_path);
         let fixture = FileGraph::new(
             BTreeSet::from([first_file.clone(), second_file.clone()]),
             BTreeSet::from([
                 FileEdge::new(first_file.clone(), second_file.clone(), Production),
                 FileEdge::new(second_file.clone(), first_file.clone(), Test),
             ]),
-        )?;
-        let fixture = if exclude_tests { fixture.without_test_dependencies() } else { fixture }.within_root(root)?;
-        let system_under_test = analyze_files(&fixture)?;
+        );
+        let fixture = assert_ok!(fixture, "Production and test cycle edges must form a valid file graph");
+        let fixture = if exclude_tests { fixture.without_test_dependencies() } else { fixture }.within_root(root);
+        let fixture = assert_ok!(fixture, "File cycle fixture must support the requested root: {root:?}");
+        let system_under_test = analyze_files(&fixture);
+        let system_under_test = assert_ok!(system_under_test, "Filtered file graph must support cycle analysis");
         let expected = vec![first_file.clone(), second_file, first_file];
 
-        let cycles = system_under_test.cycles(NonZeroUsize::MIN)?;
+        let cycles = system_under_test.cycles(NonZeroUsize::MIN);
+        let cycles = assert_ok!(cycles, "Filtered file graph must have at most one cycle");
 
         assert_eq!(expected_cycles, system_under_test.group_count(), "File cycle components ignored root or test filtering");
         assert_eq!(expected_cycles, cycles.len(), "File cycle count differs");
@@ -406,7 +423,6 @@ mod tests {
                 "File cycle edge was not grouped"
             );
         }
-        Ok(())
     }
 
     #[rstest]
@@ -430,53 +446,63 @@ mod tests {
     ])]
     #[case(&[("alpha", "beta", Test), ("beta", "alpha", Production), ("beta", "gamma", Production)])]
     #[case(&[("alpha", "beta", Production), ("beta", "alpha", Production)])]
-    fn test_folder_analysis_dependencies(#[case] dependencies: &[(&str, &str, DependencyKind)]) -> Result<()> {
+    fn test_folder_analysis_dependencies(#[case] dependencies: &[(&str, &str, DependencyKind)]) {
         let fixture_dependencies = [("alpha", "beta", Production), ("beta", "alpha", Production), ("beta", "gamma", Production)];
-        let fixture = folder_fixture(&fixture_dependencies)?;
-        let system_under_test = analyze_folders(&fixture)?;
-        let changed_graph = FolderGraph::new(fixture.nodes().clone(), folder_dependencies(dependencies))?;
+        let fixture = folder_fixture(&fixture_dependencies);
+        let fixture = assert_ok!(fixture, "Original analysis dependencies must form a valid graph");
+        let system_under_test = analyze_folders(&fixture);
+        let system_under_test = assert_ok!(system_under_test, "Original topology must support cycle analysis");
+        let changed_graph = FolderGraph::new(fixture.nodes().clone(), folder_dependencies(dependencies));
+        let changed_graph = assert_ok!(changed_graph, "Changed dependencies must still form a valid graph");
 
         let result = validate_folder_analysis(&system_under_test, &changed_graph);
 
         assert!(result.is_err(), "Changed dependency topology or kind accepted an outdated cycle analysis");
-        Ok(())
     }
 
     #[rstest]
     #[case(&["alpha", "beta"], false)]
     #[case(&["alpha", "beta", "isolated", "other"], false)]
     #[case(&["isolated", "beta", "alpha"], true)]
-    fn test_folder_analysis_nodes(#[case] labels: &[&str], #[case] matches_analysis: bool) -> Result<()> {
+    fn test_folder_analysis_nodes(#[case] labels: &[&str], #[case] matches_analysis: bool) {
         let dependencies = [("alpha", "beta", Production), ("beta", "alpha", Production)];
         let fixture = FolderGraph::new(
             folder_path(&["alpha", "beta", "isolated"]).into_iter().collect(),
             folder_dependencies(&dependencies),
-        )?;
-        let system_under_test = analyze_folders(&fixture)?;
-        let changed_graph = FolderGraph::new(folder_path(labels).into_iter().collect(), folder_dependencies(&dependencies))?;
+        );
+        let fixture = assert_ok!(fixture, "Cycle and isolated nodes must form a valid graph");
+        let system_under_test = analyze_folders(&fixture);
+        let system_under_test = assert_ok!(system_under_test, "Original node set must support cycle analysis");
+        let changed_graph = FolderGraph::new(folder_path(labels).into_iter().collect(), folder_dependencies(&dependencies));
+        let changed_graph = assert_ok!(changed_graph, "Changed node set must retain every dependency endpoint");
 
         let result = validate_folder_analysis(&system_under_test, &changed_graph);
 
-        assert_eq!(matches_analysis, result.is_ok(), "Cycle analysis did not validate the full folder node set");
-        Ok(())
+        if matches_analysis {
+            assert_ok!(result, "Reordered folder nodes must preserve the cycle analysis topology");
+        } else {
+            assert!(result.is_err(), "Changed folder node set accepted an outdated cycle analysis");
+        }
     }
 
     #[rstest]
     #[case(1)]
     #[case(27)]
-    fn test_folder_analysis_dependency_counts(#[case] count: usize) -> Result<()> {
+    fn test_folder_analysis_dependency_counts(#[case] count: usize) {
         let dependencies = [("alpha", "beta", Production), ("beta", "alpha", Production)];
-        let fixture = folder_fixture(&dependencies)?;
-        let system_under_test = analyze_folders(&fixture)?;
+        let fixture = folder_fixture(&dependencies);
+        let fixture = assert_ok!(fixture, "Dependency-count fixture must form a valid graph");
+        let system_under_test = analyze_folders(&fixture);
+        let system_under_test = assert_ok!(system_under_test, "Dependency-count fixture must support cycle analysis");
         let mut edges = folder_dependencies(&dependencies);
         for weight in edges.values_mut() {
             *weight = DependencyCount::new(count);
         }
-        let changed_graph = FolderGraph::new(fixture.nodes().clone(), edges)?;
+        let changed_graph = FolderGraph::new(fixture.nodes().clone(), edges);
+        let changed_graph = assert_ok!(changed_graph, "Changed dependency counts must preserve graph validity");
 
         let result = validate_folder_analysis(&system_under_test, &changed_graph);
 
-        assert!(result.is_ok(), "Dependency counts invalidated an unchanged cycle topology");
-        Ok(())
+        assert_ok!(result, "Dependency counts must not invalidate an unchanged cycle topology");
     }
 }

@@ -9,12 +9,12 @@ use crate::model::FolderGraph;
 use crate::model::FolderNode;
 
 pub(in crate::export) fn graph_fixture() -> Result<FolderGraph> {
-    const PUNCTUATION_LABEL: &str = "src/a\"<&\\#`\n\r\u{43f}\u{430}\u{43f}\u{43a}\u{430}";
+    const LABEL_PUNCTUATION: &str = "src/a\"<&\\#`\n\r\u{43f}\u{430}\u{43f}\u{43a}\u{430}";
     FolderGraph::new(
-        [PUNCTUATION_LABEL, "src/b", "src/isolated"].map(String::from).map(FolderNode::new).into(),
+        [LABEL_PUNCTUATION, "src/b", "src/isolated"].map(String::from).map(FolderNode::new).into(),
         BTreeMap::from([(
             FolderEdge::new(
-                FolderNode::new(PUNCTUATION_LABEL.into()), FolderNode::new("src/b".into()), DependencyKind::Production,
+                FolderNode::new(LABEL_PUNCTUATION.into()), FolderNode::new("src/b".into()), DependencyKind::Production,
             ),
             DependencyCount::new(7),
         )]),

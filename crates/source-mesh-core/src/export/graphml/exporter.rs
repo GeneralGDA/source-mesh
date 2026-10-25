@@ -10,7 +10,7 @@ use askama::Template;
 
 use crate::cycle_presentation::group_color;
 use crate::export::rendering::edge_style::CYCLE_EDGE_WIDTH;
-use crate::export::rendering::edge_style::TEST_EDGE_COLOR;
+use crate::export::rendering::edge_style::COLOR_EDGE_TEST;
 use crate::export::rendering::edge_style::edge_label;
 use crate::export::rendering::edge_style::kind_name;
 use crate::export::rendering::exporter::Exporter;
@@ -22,9 +22,9 @@ use crate::export::rendering::structure::IndexedGraph;
 use crate::model::DependencyKind;
 use crate::model::FolderGraph;
 
-pub(in crate::export) const GRAPHML_NAMESPACE: &str = "http://graphml.graphdrawing.org/xmlns";
-pub(in crate::export) const YWORKS_NAMESPACE: &str = "http://www.yworks.com/xml/graphml";
-const DEFAULT_GRAPHICS_COLOR: &str = "#47699B";
+pub(in crate::export) const NAMESPACE_GRAPHML: &str = "http://graphml.graphdrawing.org/xmlns";
+pub(in crate::export) const NAMESPACE_YWORKS: &str = "http://www.yworks.com/xml/graphml";
+const COLOR_GRAPHICS_DEFAULT: &str = "#47699B";
 const LAYOUT_OVERFLOW: &str = "GraphML layout exceeds the supported coordinate range";
 
 pub struct GraphMl;
@@ -252,8 +252,8 @@ impl GraphMlTemplate {
         );
         let edges = graph.edges().iter().enumerate().map(|(index, edge)| {
             let (color, line_style) = match edge.kind() {
-                DependencyKind::Production => (DEFAULT_GRAPHICS_COLOR, "line"),
-                DependencyKind::Test => (TEST_EDGE_COLOR, "dashed"),
+                DependencyKind::Production => (COLOR_GRAPHICS_DEFAULT, "line"),
+                DependencyKind::Test => (COLOR_EDGE_TEST, "dashed"),
             };
             let cycle_color = edge.cycle_group().map(|group| group_color(group, graph.cycle_group_count()));
             EdgePresentation {
@@ -270,9 +270,9 @@ impl GraphMlTemplate {
             }
         }).collect();
         Self {
-            graphml_namespace: GRAPHML_NAMESPACE,
-            yworks_namespace: YWORKS_NAMESPACE,
-            default_graphics_color: DEFAULT_GRAPHICS_COLOR,
+            graphml_namespace: NAMESPACE_GRAPHML,
+            yworks_namespace: NAMESPACE_YWORKS,
+            default_graphics_color: COLOR_GRAPHICS_DEFAULT,
             has_cycle_groups: graph.cycle_group_count() != 0,
             node_events,
             edges,
@@ -306,6 +306,7 @@ impl Exporter for GraphMl {
 
 #[cfg(test)]
 mod tests {
+    use claims::assert_ok;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -322,9 +323,10 @@ mod tests {
     fn test_label_dimensions(#[case] label: &str, #[case] expected_dimensions: (usize, usize)) {
         let system_under_test = NodeVisual::new(0, label, Position { horizontal: 0, vertical: 0 });
 
-        let dimensions = system_under_test.map(|visual| (visual.width, visual.height)).ok();
+        let visual = assert_ok!(system_under_test, "Representable label must produce node geometry: {label:?}");
+        let dimensions = (visual.width, visual.height);
 
-        assert_eq!(dimensions, Some(expected_dimensions), "Label measurement changed line or Unicode character handling");
+        assert_eq!(dimensions, expected_dimensions, "Label measurement changed line or Unicode character handling");
     }
 
     #[rstest]
@@ -345,9 +347,10 @@ mod tests {
 
         let system_under_test = text_dimensions(longest_line, line_count);
 
+        let dimensions = assert_ok!(system_under_test, "Label dimensions at the representable boundary must succeed");
         assert_eq!(
-            system_under_test.ok(),
-            Some((longest_line * 8 + 40, line_count * 20 + 20)),
+            dimensions,
+            (longest_line * 8 + 40, line_count * 20 + 20),
             "Representable label dimensions must not be capped"
         );
     }
@@ -383,7 +386,11 @@ mod tests {
 
         let result = system_under_test.include_child(&child);
 
-        assert_eq!(result.is_ok(), representable, "Group bounds must check both child dimensions and padding");
+        if representable {
+            assert_ok!(result, "Representable group bounds including child dimensions and padding must succeed");
+        } else {
+            assert!(result.is_err(), "Group bounds must reject overflowing child dimensions or padding");
+        }
     }
 
     #[rstest]
@@ -401,7 +408,11 @@ mod tests {
 
         let result = system_under_test.child_position();
 
-        assert_eq!(result.is_ok(), representable, "Child coordinates must use checked offsets");
+        if representable {
+            assert_ok!(result, "Representable child coordinates including offsets must succeed");
+        } else {
+            assert!(result.is_err(), "Child coordinates must reject overflowing offsets");
+        }
     }
 
     #[rstest]
@@ -420,7 +431,11 @@ mod tests {
 
         let result = system_under_test.next_root_vertical_position();
 
-        assert_eq!(result.is_ok(), representable, "Root coordinates must include checked height and spacing");
+        if representable {
+            assert_ok!(result, "Representable root coordinates including height and spacing must succeed");
+        } else {
+            assert!(result.is_err(), "Root coordinates must reject overflowing height or spacing");
+        }
     }
 
     #[test]
@@ -428,10 +443,12 @@ mod tests {
         let fixture = FolderGraph::default();
 
         let maximum = usize::try_from(i32::MAX);
-        let system_under_test = maximum.map(|maximum| {
-            (validate_graph(&fixture, maximum).is_ok(), validate_graph(&fixture, maximum + 1).is_err())
-        });
+        let maximum = assert_ok!(maximum, "GraphML signed-int maximum must fit in the platform's index type");
+        let system_under_test = validate_graph;
+        let boundary = system_under_test(&fixture, maximum);
+        let overflow = system_under_test(&fixture, maximum + 1);
 
-        assert_eq!(system_under_test.ok(), Some((true, true)), "Cycle groups must retain GraphML's signed int schema");
+        assert_ok!(boundary, "Cycle-group count at the GraphML signed-int maximum must be accepted");
+        assert!(overflow.is_err(), "Cycle-group count above the GraphML signed-int maximum must be rejected");
     }
 }

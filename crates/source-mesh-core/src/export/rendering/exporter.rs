@@ -32,11 +32,11 @@ pub trait Exporter {
 }
 
 #[cfg(test)]
-#[expect(clippy::panic_in_result_fn, reason = "Tests use assertions for expectations while returning Result for fallible setup.")]
 pub(super) mod tests {
     use std::io::Write;
 
     use anyhow::Result;
+    use claims::assert_ok;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -83,21 +83,24 @@ pub(super) mod tests {
     #[rstest]
     #[case(false, "flat 0\n")]
     #[case(true, "grouped 0\n")]
-    fn test_existing_exporter_default_dispatch(#[case] grouped: bool, #[case] expected: &str) -> Result<()> {
+    fn test_existing_exporter_default_dispatch(#[case] grouped: bool, #[case] expected: &str) {
         let fixture = FolderGraph::default();
         let system_under_test = ExistingExporter;
         let mut output = Vec::new();
 
-        system_under_test.write_with_options(&fixture, &Options::builder().group_folders(grouped).build(), &mut output)?;
+        let options = Options::builder().group_folders(grouped).build();
+        let result = system_under_test.write_with_options(&fixture, &options, &mut output);
+        assert_ok!(result, "Default options must dispatch to the existing exporter, grouped={grouped}");
 
         assert_eq!(output, expected.as_bytes(), "Default options did not call the existing exporter method");
-        Ok(())
     }
 
     #[test]
-    fn test_existing_exporter_unsupported_highlighting() -> Result<()> {
-        let fixture = graph_fixture()?;
-        let cycles = analyze_folders(&fixture)?;
+    fn test_existing_exporter_unsupported_highlighting() {
+        let fixture = graph_fixture();
+        let fixture = assert_ok!(fixture, "Highlighting fixture must form a valid folder graph");
+        let cycles = analyze_folders(&fixture);
+        let cycles = assert_ok!(cycles, "Highlighting fixture must support cycle analysis");
         let system_under_test = ExistingExporter;
         let mut output = Vec::new();
 
@@ -105,6 +108,5 @@ pub(super) mod tests {
 
         assert!(result.is_err(), "Unsupported highlighting was silently accepted");
         assert!(output.is_empty(), "Unsupported highlighting wrote partial output");
-        Ok(())
     }
 }

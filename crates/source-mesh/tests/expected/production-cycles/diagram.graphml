@@ -313,13 +313,13 @@
       </data>
     </edge>
     <edge id="e12" source="n2" target="n10">
-      <data key="weight">2</data>
+      <data key="weight">3</data>
       <data key="kind">production</data>
       <data key="eg">
         <y:PolyLineEdge>
           <y:LineStyle color="#47699B" type="line" width="1.0"/>
           <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>2</y:EdgeLabel>
+          <y:EdgeLabel>3</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>
@@ -559,14 +559,14 @@
       </data>
     </edge>
     <edge id="e32" source="n10" target="n10">
-      <data key="weight">6</data>
+      <data key="weight">7</data>
       <data key="kind">production</data>
       <data key="cycle_group">9</data>
       <data key="eg">
         <y:PolyLineEdge>
           <y:LineStyle color="#999999" type="line" width="3.0"/>
           <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>6</y:EdgeLabel>
+          <y:EdgeLabel>7</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>

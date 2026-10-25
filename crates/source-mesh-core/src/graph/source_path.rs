@@ -33,7 +33,7 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
-    use anyhow::Result;
+    use claims::assert_ok;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -85,16 +85,16 @@ mod tests {
     #[case("file*.rs")]
     #[case("file. ")]
     #[case("..hidden.rs")]
-    fn test_source_path_spelling(#[case] source_path: &str) -> Result<()> {
+    fn test_source_path_spelling(#[case] source_path: &str) {
         let path = PathBuf::from(source_path);
 
-        let system_under_test = SourcePath::new(path)?;
+        let system_under_test = SourcePath::new(path);
+        let system_under_test = assert_ok!(system_under_test, "Valid relative source path must be accepted: {source_path:?}");
 
         assert_eq!(
             Path::new(source_path).as_os_str(),
             system_under_test.path.as_os_str(),
             "Lexical validation changed the supplied path spelling"
         );
-        Ok(())
     }
 }

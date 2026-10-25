@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use anyhow::Error;
 use anyhow::Result;
 use anyhow::bail;
+use claims::assert_some;
 use graphviz_rust::dot_structures::Graph;
 use graphviz_rust::dot_structures::Id;
 use graphviz_rust::dot_structures::Stmt as Statement;
@@ -52,22 +53,20 @@ pub(in crate::export) fn dot_membership(
     root_statements: &[Statement],
     root_groups: &[String],
     membership: &mut BTreeMap<String, Vec<String>>,
-) -> Result<()> {
+) {
     let mut work = vec![(root_statements, root_groups.to_vec())];
     while let Some((statements, groups)) = work.pop() {
         for statement in statements {
             match *statement {
                 Statement::Node(ref node) => {
-                    let Id::Plain(ref identifier) = node.id.0 else {
-                        bail!("expected plain DOT node identifier");
-                    };
+                    let identifier = if let Id::Plain(ref identifier) = node.id.0 { Some(identifier) } else { None };
+                    let identifier = assert_some!(identifier, "DOT dependency nodes must have plain identifiers");
                     let previous = membership.insert(identifier.clone(), groups.clone());
                     assert!(previous.is_none(), "DOT node was declared more than once");
                 }
                 Statement::Subgraph(ref group) => {
-                    let Id::Plain(ref identifier) = group.id else {
-                        bail!("expected plain DOT group identifier");
-                    };
+                    let identifier = if let Id::Plain(ref identifier) = group.id { Some(identifier) } else { None };
+                    let identifier = assert_some!(identifier, "DOT folder groups must have plain identifiers");
                     let mut ancestors = groups.clone();
                     ancestors.push(identifier.clone());
                     work.push((&group.stmts, ancestors));
@@ -77,5 +76,4 @@ pub(in crate::export) fn dot_membership(
             }
         }
     }
-    Ok(())
 }

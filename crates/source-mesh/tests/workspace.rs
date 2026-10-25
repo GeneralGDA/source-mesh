@@ -1,57 +1,52 @@
 #[cfg(test)]
 mod workspace_tests {
-    #![expect(
-        clippy::panic_in_result_fn,
-        reason = "Tests use assertions for expectations while returning Result for fallible setup."
-    )]
-
     use std::path::Path;
     use std::process::Command;
 
-    use anyhow::Context as _;
-    use anyhow::Result;
+    use claims::assert_ok;
+    use claims::assert_some;
     use pretty_assertions::assert_eq;
     use serde_json::Value;
 
     #[test]
-    fn test_workspace_dependency_boundary() -> Result<()> {
+    fn test_workspace_dependency_boundary() {
         const CORE_PACKAGE_NAME: &str = "source-mesh-core";
-        let Some(repository_directory) = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent) else {
-            unreachable!("CLI crate must be located under the workspace crates directory");
-        };
+        let repository_directory = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent);
+        let repository_directory = assert_some!(repository_directory, "CLI crate must have a workspace directory ancestor");
         let mut system_under_test = Command::new(env!("CARGO"));
         system_under_test.current_dir(repository_directory);
         system_under_test.args(["metadata", "--format-version", "1", "--no-deps", "--locked", "--offline"]);
 
-        let output = system_under_test.output()?;
+        let output = system_under_test.output();
+        let output = assert_ok!(output, "Cargo metadata command must launch and collect workspace metadata");
 
         assert!(output.status.success(), "Cannot inspect workspace: {}", String::from_utf8_lossy(&output.stderr));
-        let metadata: Value = serde_json::from_slice(&output.stdout)?;
-        let members = metadata.get("workspace_members").and_then(Value::as_array)
-            .context("Cargo metadata omitted workspace members")?;
-        let default_members = metadata.get("workspace_default_members").and_then(Value::as_array)
-            .context("Cargo metadata omitted default workspace members")?;
-        let packages = metadata.get("packages").and_then(Value::as_array)
-            .context("Cargo metadata omitted packages")?;
+        let metadata = serde_json::from_slice::<Value>(&output.stdout);
+        let metadata = assert_ok!(metadata, "Cargo metadata stdout must contain valid JSON");
+        let members = metadata.get("workspace_members").and_then(Value::as_array);
+        let members = assert_some!(members, "Cargo metadata must include a workspace-members array");
+        let default_members = metadata.get("workspace_default_members").and_then(Value::as_array);
+        let default_members = assert_some!(default_members, "Cargo metadata must include a default-workspace-members array");
+        let packages = metadata.get("packages").and_then(Value::as_array);
+        let packages = assert_some!(packages, "Cargo metadata must include a packages array");
         let frontend = packages.iter()
-            .find(|package| package.get("name").and_then(Value::as_str) == Some(env!("CARGO_PKG_NAME")))
-            .context("Workspace has no CLI package")?;
-        let core = packages.iter()
-            .find(|package| package.get("name").and_then(Value::as_str) == Some(CORE_PACKAGE_NAME))
-            .context("Workspace has no library package")?;
-        let frontend_manifest = frontend.get("manifest_path").and_then(Value::as_str)
-            .context("CLI package has no manifest path")?;
-        let core_manifest = core.get("manifest_path").and_then(Value::as_str)
-            .context("Library package has no manifest path")?;
+            .find(|package| package.get("name").and_then(Value::as_str) == Some(env!("CARGO_PKG_NAME")));
+        let frontend = assert_some!(frontend, "Workspace metadata must contain the CLI package");
+        let core = packages.iter().find(|package| package.get("name").and_then(Value::as_str) == Some(CORE_PACKAGE_NAME));
+        let core = assert_some!(core, "Workspace metadata must contain the core library package");
+        let frontend_manifest = frontend.get("manifest_path").and_then(Value::as_str);
+        let frontend_manifest = assert_some!(frontend_manifest, "CLI package must have a string manifest path");
+        let core_manifest = core.get("manifest_path").and_then(Value::as_str);
+        let core_manifest = assert_some!(core_manifest, "Core library package must have a string manifest path");
         let crates_directory = repository_directory.join("crates");
-        let frontend_targets = frontend.get("targets").and_then(Value::as_array)
-            .context("CLI package has no targets")?;
-        let core_targets = core.get("targets").and_then(Value::as_array)
-            .context("Library package has no targets")?;
-        let frontend_dependencies = frontend.get("dependencies").and_then(Value::as_array)
-            .context("CLI package has no dependency metadata")?;
-        let core_dependencies = core.get("dependencies").and_then(Value::as_array)
-            .context("Library package has no dependency metadata")?;
+        let frontend_targets = frontend.get("targets").and_then(Value::as_array);
+        let frontend_targets = assert_some!(frontend_targets, "CLI package must include a targets array");
+        let core_targets = core.get("targets").and_then(Value::as_array);
+        let core_targets = assert_some!(core_targets, "Core library package must include a targets array");
+        let frontend_dependencies = frontend.get("dependencies").and_then(Value::as_array);
+        let frontend_dependencies = assert_some!(frontend_dependencies, "CLI package must include a dependencies array");
+        let core_dependencies = core.get("dependencies").and_then(Value::as_array);
+        let core_dependencies = assert_some!(core_dependencies, "Core library package must include a dependencies array");
 
         assert_eq!(members.len(), 2, "Only the CLI and library belong to the workspace");
         assert_eq!(default_members.len(), members.len(), "Default checks must cover every workspace member");
@@ -79,6 +74,5 @@ mod workspace_tests {
             matches!(dependency.get("name").and_then(Value::as_str), Some("clap"))
                 || dependency.get("name").and_then(Value::as_str) == Some(env!("CARGO_PKG_NAME"))),
             "The library must not depend on the CLI or its argument parser");
-        Ok(())
     }
 }
