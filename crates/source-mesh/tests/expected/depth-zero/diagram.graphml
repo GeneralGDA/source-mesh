@@ -34,13 +34,13 @@
       </data>
     </edge>
     <edge id="e1" source="n0" target="n0">
-      <data key="weight">79</data>
+      <data key="weight">80</data>
       <data key="kind">test</data>
       <data key="eg">
         <y:PolyLineEdge>
           <y:LineStyle color="#D97706" type="dashed" width="1.0"/>
           <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>test: 79</y:EdgeLabel>
+          <y:EdgeLabel>test: 80</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>

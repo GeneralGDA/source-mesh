@@ -16,6 +16,7 @@ digraph folders {
   n0 -> n1 [label="1"]
   n0 -> n2 [label="1"]
   n1 -> n1 [label="3" color="#6D3FA9" penwidth=3.0 cycle_group=1]
+  n1 -> n1 [label="test: 1" color="#6D3FA9" style=dashed penwidth=3.0 cycle_group=1]
   n1 -> n2 [label="7"]
   n1 -> n2 [label="test: 1" color="#D97706" style=dashed]
   n1 -> n3 [label="1"]
