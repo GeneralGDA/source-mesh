@@ -348,11 +348,7 @@ mod tests {
         let system_under_test = text_dimensions(longest_line, line_count);
 
         let dimensions = assert_ok!(system_under_test, "Label dimensions at the representable boundary must succeed");
-        assert_eq!(
-            dimensions,
-            (longest_line * 8 + 40, line_count * 20 + 20),
-            "Representable label dimensions must not be capped"
-        );
+        assert_eq!(dimensions, (longest_line * 8 + 40, line_count * 20 + 20), "Representable label dimensions were capped");
     }
 
     #[rstest]

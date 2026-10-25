@@ -397,11 +397,7 @@ mod tests {
         let expected_chains: Vec<Vec<String>> = expected_chains.collect();
 
         assert_eq!(expected_chains, folder_chains, "Folder report did not reflect the aggregation depth");
-        assert_eq!(
-            Some(NO_CYCLES_FOUND),
-            file_output.lines().last(),
-            "File report inherited a cycle created by folder aggregation"
-        );
+        assert_eq!(Some(NO_CYCLES_FOUND), file_output.lines().last(), "File report inherited a folder-aggregation cycle");
     }
 
     #[rstest]

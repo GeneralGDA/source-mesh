@@ -54,12 +54,9 @@ fn test_template_syntax_in_folder_labels(
 
     assert_eq!(
         output.matches(&parent_markup).count(), parent_label_count,
-        "Parent and group display labels must preserve template syntax as correctly escaped data"
+        "Parent/group labels must preserve escaped template syntax"
     );
-    assert_eq!(
-        output.matches(&child_markup).count(), 1,
-        "Child display labels must preserve template syntax as correctly escaped data"
-    );
+    assert_eq!(output.matches(&child_markup).count(), 1, "Child labels must preserve escaped template syntax");
     if matches!(format, Format::Graphml) {
         let parent_data = format!("<data key=\"label\">shared/{escaped_label}</data>");
         let child_data = format!("<data key=\"label\">shared/{escaped_label}/leaf</data>");
@@ -186,10 +183,7 @@ fn test_export_write_error_propagation(#[case] format: Format, #[values(false, t
     let writer_error = result.as_ref().err().and_then(|error| error.downcast_ref::<std::io::Error>());
 
     assert!(result.is_err(), "Exporter did not propagate its writer's failure");
-    assert_eq!(
-        writer_error.map(std::io::Error::kind), Some(ErrorKind::BrokenPipe),
-        "Exporter must preserve the original I/O error type and kind"
-    );
+    assert_eq!(writer_error.map(std::io::Error::kind), Some(ErrorKind::BrokenPipe), "Exporter changed I/O error type or kind");
 }
 
 #[derive(Default)]

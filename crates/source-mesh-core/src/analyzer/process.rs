@@ -57,8 +57,7 @@ impl<'a> ScipProcess<'a> {
         }
         let output = analyzer_command.output().with_context(|| {
             format!(
-                "{MESSAGE_ANALYZER_LAUNCH_FAILURE} ({}); check the project directory \
-                 and that rust-analyzer is installed and executable",
+                "{MESSAGE_ANALYZER_LAUNCH_FAILURE} ({}); check project directory; rust-analyzer must be installed and executable",
                 phase.label()
             )
         })?;

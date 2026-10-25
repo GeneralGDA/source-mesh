@@ -371,10 +371,7 @@ mod tests {
         let preserved = fs::read(input);
         let preserved = assert_ok!(preserved, "Protected SCIP input must remain readable after replay rejection");
 
-        assert!(
-            result.as_ref().is_err_and(Error::is::<OutputPathConflict>),
-            "Replay must reject overwriting its input through either path spelling: {result:?}"
-        );
+        assert!(result.as_ref().is_err_and(Error::is::<OutputPathConflict>), "Replay must protect input aliases: {result:?}");
         assert_eq!(preserved, bytes);
         assert_eq!(diagram, [] as [u8; 0]);
     }
@@ -455,7 +452,7 @@ mod tests {
         let diagram_write = fs::write(&output, CONTENTS_EXISTING);
         assert_ok!(diagram_write, "Existing diagram must be initialized before output conflict validation");
         let report_write = fs::write(&file_report, CONTENTS_EXISTING);
-        assert_ok!(report_write, "Existing file-cycle report must be initialized before output conflict validation");
+        assert_ok!(report_write, "File-cycle report must be written before testing output conflicts");
         let folder_report = if alias {
             let report = fixture.path().join("folders.json");
             let linked = fs::hard_link(&output, &report);
@@ -470,14 +467,11 @@ mod tests {
 
         let result = run(&system_under_test, &mut diagram);
         let preserved_diagram = fs::read_to_string(output);
-        let preserved_diagram = assert_ok!(preserved_diagram, "Diagram must remain readable after output conflict rejection");
+        let preserved_diagram = assert_ok!(preserved_diagram, "Diagram must remain readable after output conflicts");
         let preserved_report = fs::read_to_string(file_report);
-        let preserved_report = assert_ok!(preserved_report, "File report must remain readable after output conflict rejection");
+        let preserved_report = assert_ok!(preserved_report, "File report must remain readable after output conflicts");
 
-        assert!(
-            result.as_ref().is_err_and(Error::is::<OutputPathConflict>),
-            "Replay must reject output files referring to the same file: {result:?}"
-        );
+        assert!(result.as_ref().is_err_and(Error::is::<OutputPathConflict>), "Replay must reject output aliases: {result:?}");
         assert_eq!(preserved_diagram, CONTENTS_EXISTING);
         assert_eq!(preserved_report, CONTENTS_EXISTING);
         assert_eq!(diagram, [] as [u8; 0]);

@@ -137,10 +137,7 @@ impl<Node: Clone + Ord> CycleAnalysis<Node> {
                         Box::new(paths)
                     };
                     for path in paths {
-                        ensure!(
-                            cycles.len() < limit.get(),
-                            "Cycle count exceeds the configured limit of {limit}; increase the limit to enumerate every cycle"
-                        );
+                        ensure!(cycles.len() < limit.get(), "Cycle count exceeds {limit}; raise the limit to list all cycles");
                         let path_nodes = iter::once(minimum_cycle_node).chain(path);
                         let nodes = path_nodes.map(|node| self.topology[node].clone()).collect();
                         cycles.push(Cycle { nodes, group: component.group });

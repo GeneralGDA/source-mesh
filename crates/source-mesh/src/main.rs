@@ -50,11 +50,7 @@ struct CycleOptions {
     cycles_output: Option<PathBuf>,
     #[arg(long, help = "Write file cycles before folder folding to a separate Markdown report")]
     file_cycles_output: Option<PathBuf>,
-    #[arg(
-        long,
-        default_value_t = DEFAULT_CYCLE_LIMIT,
-        help = "Maximum cycles per report; exceeding it fails without writing partial results"
-    )]
+    #[arg(long, default_value_t = DEFAULT_CYCLE_LIMIT, help = "Maximum cycles per report; fail without output if exceeded")]
     cycle_limit: NonZeroUsize,
 }
 
@@ -79,10 +75,7 @@ struct Cli {
     output: Option<PathBuf>,
     #[arg(short, long, help = "Maximum folder levels below --root: 0 = root only; default = all")]
     depth: Option<usize>,
-    #[arg(
-        long, default_value = ".",
-        help = "Restrict to this relative subtree of the index/project, e.g. src or crates/server/src"
-    )]
+    #[arg(long, default_value = ".", help = "Restrict to a relative index/project subtree, e.g. src or crates/server/src")]
     root: PathBuf,
     #[arg(long, help = "Keep edges between distinct files collapsed into the same folder")]
     include_self: bool,
@@ -92,7 +85,7 @@ struct Cli {
     exclude_tests: bool,
     #[command(flatten)]
     cycles: CycleOptions,
-    #[arg(long, conflicts_with_all = ["save_scip", "config"], help = "Reuse saved analysis without analyzing the source again")]
+    #[arg(long, conflicts_with_all = ["save_scip", "config"], help = "Reuse saved analysis without reanalyzing sources")]
     from_scip: Option<PathBuf>,
     #[arg(long, help = "Save the index for fast re-export at other depths/formats")]
     save_scip: Option<PathBuf>,
@@ -325,14 +318,14 @@ mod command_tests {
         let index_write_result = fs::write(&index_path, index);
         assert_ok!(index_write_result, "Invalid-input scenario must write its SCIP fixture");
         let diagram_write_result = fs::write(&diagram_path, CONTENTS_OUTPUT_EXISTING);
-        assert_ok!(diagram_write_result, "Invalid-input scenario must create the existing diagram before running the command");
+        assert_ok!(diagram_write_result, "Existing diagram must be written before testing invalid input");
         let system_under_test = Cli::try_parse_from([
             OsStr::new(env!("CARGO_PKG_NAME")),
             OsStr::new("--from-scip"), index_path.as_os_str(),
             OsStr::new("--root"), root.as_os_str(),
             OsStr::new("--output"), diagram_path.as_os_str(),
         ]);
-        let system_under_test = assert_ok!(system_under_test, "Invalid-input fixture arguments must parse before execution");
+        let system_under_test = assert_ok!(system_under_test, "Invalid-input fixture arguments must parse");
         let mut output = Vec::new();
 
         let command_result = run(system_under_test, &mut output);
@@ -406,10 +399,7 @@ mod command_tests {
 
         assert!(command_result.is_err(), "Command accepted more cycles than the limit");
         if let Err(error) = command_result {
-            assert!(
-                error.to_string().contains("Cycle count exceeds"),
-                "Command failed before checking the cycle limit: {error:#}"
-            );
+            assert!(error.to_string().contains("Cycle count exceeds"), "Failure must be due to the cycle limit: {error:#}");
         }
         assert!(output.is_empty(), "Command wrote to stdout before checking the cycle limit");
         for path in [&diagram_path, &folder_report_path, &file_report_path] {
@@ -441,7 +431,7 @@ mod command_tests {
             OsStr::new("--cycles-output"), folder_report_path.as_os_str(),
             OsStr::new("--file-cycles-output"), file_report_path.as_os_str(),
         ]);
-        let mut system_under_test = assert_ok!(system_under_test, "CLI must accept highlighted GraphML and cycle-report outputs");
+        let mut system_under_test = assert_ok!(system_under_test, "CLI must accept GraphML highlighting and cycle reports");
         system_under_test.cycles.fail_on_cycles = fail_on_cycles;
         system_under_test.output = diagram_to_file.then(|| diagram_path.clone());
         let mut output = Vec::new();
@@ -460,15 +450,9 @@ mod command_tests {
         let file_report = fs::read_to_string(&file_report_path);
         let file_report = assert_ok!(file_report, "Cyclic graph command must produce a readable file report");
 
-        assert_eq!(
-            command_result.is_err(), fail_on_cycles,
-            "Cycles must fail only when explicitly requested: {command_result:?}"
-        );
+        assert_eq!(command_result.is_err(), fail_on_cycles, "Fail on cycles only when requested: {command_result:?}");
         if let Err(error) = command_result {
-            assert!(
-                error.to_string().contains("Dependency cycles found:"),
-                "Cycle gate failed for an unrelated reason: {error:#}"
-            );
+            assert!(error.to_string().contains("Dependency cycles found:"), "Failure must be due to cycles: {error:#}");
         }
         assert_eq!(standard_output_is_empty, diagram_to_file, "Diagram output did not follow the selected destination");
         assert!(diagram.contains("cycle_group"), "Cyclic graph did not produce a highlighted diagram");

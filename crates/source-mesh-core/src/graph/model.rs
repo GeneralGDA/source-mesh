@@ -354,10 +354,7 @@ mod tests {
 
         assert_eq!(&expected_nodes, graph.nodes(), "Physical directory nodes differ");
         assert_eq!(&expected_edges, graph.edges(), "Physical directory dependencies differ");
-        assert!(
-            !graph.nodes().contains(&FolderNode::new("persistence".into())),
-            "A semantic module name was substituted for the physical folder"
-        );
+        assert!(!graph.nodes().contains(&FolderNode::new("persistence".into())), "Module name replaced physical folder");
     }
 
     #[rstest]
@@ -375,16 +372,8 @@ mod tests {
         let graph = system_under_test.folders(Path::new("src"), depth, false);
         let graph = assert_ok!(graph, "Folder aggregation must succeed at depth {depth:?}");
 
-        assert_eq!(
-            complete_graph.nodes(),
-            graph.nodes(),
-            "Depth {depth:?} changed nodes in a graph shallower than the requested limit"
-        );
-        assert_eq!(
-            complete_graph.edges(),
-            graph.edges(),
-            "Depth {depth:?} changed dependencies in a graph shallower than the requested limit"
-        );
+        assert_eq!(complete_graph.nodes(), graph.nodes(), "Depth {depth:?} changed nodes in a shallower graph");
+        assert_eq!(complete_graph.edges(), graph.edges(), "Depth {depth:?} changed dependencies in a shallower graph");
     }
 
     #[rstest]
@@ -407,11 +396,7 @@ mod tests {
         let graph = assert_ok!(graph, "Folder grouping must succeed at depth {depth}");
 
         assert_eq!(&folder_nodes(expected_nodes), graph.nodes(), "Depth {depth} grouped nodes incorrectly");
-        assert_eq!(
-            &folder_edges(expected_edges, DependencyKind::Production),
-            graph.edges(),
-            "Depth {depth} grouped dependencies incorrectly"
-        );
+        assert_eq!(&folder_edges(expected_edges, DependencyKind::Production), graph.edges(), "Depth {depth}: misgrouped edges");
     }
 
     #[rstest]
@@ -468,15 +453,8 @@ mod tests {
         let source_graph = assert_ok!(source_graph, "Source folder scope must aggregate successfully");
 
         assert_eq!(&folder_nodes(&[".", "v1"]), api_graph.nodes(), "API scope contains unexpected folders");
-        assert_eq!(
-            &folder_edges(&[(".", "v1", 1)], DependencyKind::Production),
-            api_graph.edges(),
-            "API scope contains unexpected dependencies"
-        );
-        assert!(
-            !source_graph.nodes().contains(&FolderNode::new("src2".into())),
-            "Scope included a directory with a shared prefix outside the source tree"
-        );
+        assert_eq!(&folder_edges(&[(".", "v1", 1)], DependencyKind::Production), api_graph.edges(), "API scope edges differ");
+        assert!(!source_graph.nodes().contains(&FolderNode::new("src2".into())), "Scope included a shared-prefix sibling");
         assert_eq!(7, source_graph.edges().len(), "Scope changed the seven dependencies internal to the source tree");
     }
 
@@ -542,11 +520,7 @@ mod tests {
         let graph = system_under_test.folders(Path::new("src"), depth, true);
         let graph = assert_ok!(graph, "Mixed dependency kinds must aggregate at depth {depth:?}");
 
-        assert_eq!(
-            6,
-            system_under_test.edges().len(),
-            "Duplicate occurrences were retained or distinct dependency kinds were merged"
-        );
+        assert_eq!(6, system_under_test.edges().len(), "Duplicate occurrences retained or dependency kinds merged");
         assert_eq!(&expected_edges, graph.edges(), "Depth {depth:?} changed dependency kinds or distinct file-pair counts");
     }
 

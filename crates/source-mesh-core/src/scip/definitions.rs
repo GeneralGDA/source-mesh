@@ -214,10 +214,7 @@ mod tests {
         let system_under_test = definitions(&fixture);
 
         assert_eq!(system_under_test.get(symbol), Some(&expected), "Every defining file must remain an ambiguity candidate");
-        assert!(
-            system_under_test.get(symbol).is_some_and(|files| files.contains(&last_owner)),
-            "The last definition owner must remain a candidate"
-        );
+        assert!(system_under_test.get(symbol).is_some_and(|files| files.contains(&last_owner)), "Last definition owner lost");
     }
 
     #[rstest]

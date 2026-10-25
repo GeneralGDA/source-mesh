@@ -11,12 +11,10 @@ use anyhow::Context as _;
 use anyhow::Result;
 use anyhow::ensure;
 
-const INSTALL_HINT: &str =
-    "Install the required components for the active project toolchain with `rustup component add rust-analyzer rust-src`.";
+const INSTALL_HINT: &str = "Install for the project toolchain: `rustup component add rust-analyzer rust-src`.";
 const ENV_RUST_SOURCE_PATH: &str = "RUST_SRC_PATH";
 const MESSAGE_ANALYZER_LAUNCH_ADVICE: &str = "check the project directory and that rust-analyzer is installed and executable.";
-const MESSAGE_ANALYZER_UNAVAILABLE: &str =
-    "rust-analyzer is unavailable for the active project toolchain or does not support SCIP indexing.";
+const MESSAGE_ANALYZER_UNAVAILABLE: &str = "rust-analyzer is unavailable or lacks SCIP support for the project toolchain.";
 
 #[derive(Debug)]
 enum PrerequisiteLaunchError {
@@ -34,8 +32,7 @@ impl fmt::Display for PrerequisiteLaunchError {
             ),
             Self::RustToolchainQuery(ref project) => write!(
                 formatter,
-                "Cannot run `rustc --print sysroot` in {}; check the project directory \
-                 and that rustc is installed and executable",
+                "Cannot run `rustc --print sysroot` in {}; check the project directory; rustc must be installed and executable",
                 project.display()
             ),
         }
@@ -76,10 +73,7 @@ fn validate_rust_sources(
         if configured_source_directory.is_some() {
             format!("Cannot read Rust sources configured by {ENV_RUST_SOURCE_PATH} at {}", source_file.display())
         } else {
-            format!(
-                "rust-src is required for the active project toolchain; cannot read {}. {INSTALL_HINT}",
-                source_file.display()
-            )
+            format!("rust-src is required for this toolchain; cannot read {}. {INSTALL_HINT}", source_file.display())
         }
     })?;
     Ok(())
@@ -87,17 +81,14 @@ fn validate_rust_sources(
 
 #[must_use]
 fn standard_library_source_directory(rust_toolchain_directory: &Path) -> PathBuf {
-    assert!(!rust_toolchain_directory.as_os_str().is_empty(), "Standard library source lookup needs a Rust toolchain directory");
+    assert!(!rust_toolchain_directory.as_os_str().is_empty(), "Rust toolchain directory must not be empty");
     rust_toolchain_directory.join(PathBuf::from_iter(["lib", "rustlib", "src", "rust", "library"]))
 }
 
 fn active_rust_toolchain_directory(project: &Path) -> Result<PathBuf> {
     let toolchain_query = Command::new("rustc").current_dir(project).args(["--print", "sysroot"]).output();
     let output = toolchain_query.with_context(|| PrerequisiteLaunchError::RustToolchainQuery(project.to_path_buf()))?;
-    ensure!(
-        output.status.success(),
-        "Cannot query the active Rust toolchain directory with `rustc --print sysroot`. {INSTALL_HINT}"
-    );
+    ensure!(output.status.success(), "`rustc --print sysroot` failed. {INSTALL_HINT}");
     let output = std::str::from_utf8(&output.stdout).context("rustc returned a non-UTF-8 Rust toolchain directory")?;
     let rust_toolchain_directory = output.trim();
     ensure!(!rust_toolchain_directory.is_empty(), "rustc returned an empty Rust toolchain directory");
@@ -146,7 +137,7 @@ mod tests {
 
         let diagnostic = system_under_test.to_string();
 
-        assert!(diagnostic.contains(&project_context), "Launch diagnostics must identify the requested directory: {diagnostic}");
+        assert!(diagnostic.contains(&project_context), "Launch error must identify the project directory: {diagnostic}");
     }
 
     #[test]
@@ -159,13 +150,13 @@ mod tests {
 
         let error = assert_some!(system_under_test.err(), "The prerequisite probe must fail to launch");
         let launch_error = error.downcast_ref::<PrerequisiteLaunchError>();
-        let launch_error = assert_some!(launch_error, "Prerequisite orchestration must retain its launch error: {error:#}");
+        let launch_error = assert_some!(launch_error, "Prerequisite check must retain its launch error: {error:#}");
         assert!(
             matches!(*launch_error, PrerequisiteLaunchError::AnalyzerProbe(ref directory) if directory == &project),
-            "Prerequisite orchestration must retain the analyzer launch context and requested directory: {error:#}"
+            "Prerequisite check lost the analyzer launch context or project directory: {error:#}"
         );
         let cause = error.downcast_ref::<io::Error>();
-        let cause = assert_some!(cause, "Prerequisite orchestration must preserve the analyzer probe I/O error");
+        let cause = assert_some!(cause, "Prerequisite check must preserve the analyzer I/O error");
         assert!(cause.raw_os_error().is_some(), "The analyzer probe must retain its native launch error");
     }
 
@@ -182,7 +173,7 @@ mod tests {
     fn test_standard_library_source_toolchain_precondition() {
         let system_under_test = catch_unwind(|| standard_library_source_directory(Path::new("")));
 
-        assert!(system_under_test.is_err(), "An empty toolchain directory violates the source-layout precondition");
+        assert!(system_under_test.is_err(), "Source lookup must reject an empty toolchain directory");
     }
 
     #[test]
@@ -210,7 +201,7 @@ mod tests {
         let launch_error = assert_some!(launch_error, "The toolchain query must retain its launch error: {error:#}");
         assert!(
             matches!(*launch_error, PrerequisiteLaunchError::RustToolchainQuery(ref directory) if directory == &project),
-            "The toolchain query must retain its launch context and requested directory: {error:#}"
+            "Toolchain query lost its launch context or project directory: {error:#}"
         );
         let cause = error.downcast_ref::<io::Error>();
         let cause = assert_some!(cause, "The toolchain query must preserve its I/O error");
@@ -232,8 +223,8 @@ mod tests {
 
         let error = assert_some!(system_under_test.err(), "An unavailable analyzer must be rejected");
         let message = error.to_string();
-        assert!(message.contains(expected_message), "Unavailable analyzer did not produce an actionable error: {message}");
-        assert!(message.contains(INSTALL_HINT), "Unavailable analyzer must include installation advice: {message}");
+        assert!(message.contains(expected_message), "Analyzer error must explain the failure: {message}");
+        assert!(message.contains(INSTALL_HINT), "Analyzer error must include installation advice: {message}");
     }
 
     #[rstest]
@@ -252,21 +243,21 @@ mod tests {
         let launch_error = assert_some!(launch_error, "The analyzer probe must retain its launch error: {error:#}");
         assert!(
             matches!(*launch_error, PrerequisiteLaunchError::AnalyzerProbe(ref directory) if directory == project),
-            "The analyzer probe must retain its launch context and requested directory: {error:#}"
+            "Analyzer probe lost its launch context or project directory: {error:#}"
         );
         let cause = error.downcast_ref::<io::Error>();
         let cause = assert_some!(cause, "Analyzer launch errors must remain downcastable to their I/O cause");
         assert_eq!(cause.kind(), kind, "The analyzer launch error must preserve its original I/O kind");
-        assert_eq!(cause.to_string(), CAUSE_MESSAGE, "The analyzer launch error must preserve its original I/O message");
+        assert_eq!(cause.to_string(), CAUSE_MESSAGE, "Analyzer launch must preserve the I/O error message");
     }
 
     #[test]
     fn test_rust_source_read_error() {
         let system_under_test = {
             let fixture_creation = tempdir();
-            let fixture = assert_ok!(fixture_creation, "The unreadable Rust source fixture directory must be created");
+            let fixture = assert_ok!(fixture_creation, "Unreadable Rust source fixture must be created");
             let source_directory_creation = fs::create_dir_all(fixture.path().join("core").join("src").join("lib.rs"));
-            assert_ok!(source_directory_creation, "The source-file path must contain a directory to provoke a read error");
+            assert_ok!(source_directory_creation, "A directory at the source-file path must force a read error");
             validate_rust_sources(Some(fixture.path()), || {
                 unreachable!("Configured sources must bypass Rust toolchain directory lookup")
             })
@@ -298,7 +289,7 @@ mod tests {
     #[test]
     fn test_missing_rust_sources() {
         let toolchain_creation = tempdir();
-        let rust_toolchain_directory = assert_ok!(toolchain_creation, "The toolchain fixture without rust-src must be created");
+        let rust_toolchain_directory = assert_ok!(toolchain_creation, "Toolchain fixture without rust-src must be created");
         let system_under_test = validate_rust_sources(None, || Ok(rust_toolchain_directory.path().to_path_buf()));
 
         assert!(

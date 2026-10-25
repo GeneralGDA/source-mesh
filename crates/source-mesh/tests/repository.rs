@@ -62,7 +62,7 @@ mod repository_tests {
             let index = fs::read(saved_index);
             let index = assert_ok!(index, "Repository analysis must save a readable SCIP index for shared replay");
             let result = directory.close();
-            assert_ok!(result, "Repository analysis must clean up its temporary directory after retaining the shared index");
+            assert_ok!(result, "Analysis must remove its temporary directory after retaining the index");
 
             Self { index, project_analysis_diagram, update_expected_outputs }
         }
@@ -75,7 +75,7 @@ mod repository_tests {
             let actual = actual.replace("\r\n", "\n");
             if self.update_expected_outputs {
                 let directory = path.parent();
-                let directory = assert_some!(directory, "Expected output path must retain its constructed parent directory");
+                let directory = assert_some!(directory, "Expected output path must have a parent directory");
                 let directory_creation_result = fs::create_dir_all(directory);
                 assert_ok!(directory_creation_result, "Expected-output directory must be created: {}", directory.display());
                 let expected_output_write_result = fs::write(&path, &actual);
@@ -130,8 +130,7 @@ mod repository_tests {
     #[rstest]
     #[case::including_tests(true)]
     #[case::excluding_tests(false)]
-    #[ignore = "slow whole-workspace indexing with rust-analyzer; excluded to keep default tests fast; \
-                run Test-All.ps1 from the repository root"]
+    #[ignore = "slow workspace indexing with rust-analyzer; run Test-All.ps1 from the repository root"]
     fn test_repository_dependency_architecture(repository_fixture: &LazyLock<RepositoryFixture>, #[case] include_tests: bool) {
         let fixture = LazyLock::force(repository_fixture);
         let replay = replay_fixture(&fixture.index);
@@ -157,12 +156,11 @@ mod repository_tests {
             }
 
             let output = system_under_test.output();
-            let output = assert_ok!(output, "Repository cycle analysis command must launch and collect output at depth {depth}");
+            let output = assert_ok!(output, "Repository cycle analysis must run and collect output at depth {depth}");
 
             assert!(
                 output.status.success(),
-                "Repository dependency architecture failed at depth {depth} (include_tests={include_tests}); \
-                 stdout: {}\nstderr: {}",
+                "Repository cycle check failed at depth {depth} (include_tests={include_tests}); stdout: {}\nstderr: {}",
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
@@ -184,8 +182,7 @@ mod repository_tests {
     #[case::source_top_level("source-top-level", &["--root", "crates/source-mesh-core/src", "--depth", "1", "--exclude-tests"])]
     #[case::cycles("cycles", &["--highlight-cycles", "--include-self"])]
     #[case::production_cycles("production-cycles", &["--highlight-cycles", "--include-self", "--exclude-tests"])]
-    #[ignore = "slow whole-workspace indexing with rust-analyzer; excluded to keep default tests fast; \
-                run Test-All.ps1 from the repository root"]
+    #[ignore = "slow workspace indexing with rust-analyzer; run Test-All.ps1 from the repository root"]
     fn test_repository_exports(
         repository_fixture: &LazyLock<RepositoryFixture>,
         #[case] scenario: &str,
@@ -245,8 +242,7 @@ mod repository_tests {
     #[rstest]
     #[case::folder("--cycles-output", "report-only", NAME_CYCLE_REPORT_FOLDER)]
     #[case::file("--file-cycles-output", "cycles", NAME_CYCLE_REPORT_FILE)]
-    #[ignore = "slow whole-workspace indexing with rust-analyzer; excluded to keep default tests fast; \
-                run Test-All.ps1 from the repository root"]
+    #[ignore = "slow workspace indexing with rust-analyzer; run Test-All.ps1 from the repository root"]
     fn test_repository_report_without_highlighting(
         repository_fixture: &LazyLock<RepositoryFixture>,
         #[case] output_argument: &str,

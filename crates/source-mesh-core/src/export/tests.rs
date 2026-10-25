@@ -127,11 +127,7 @@ fn test_parallel_dependency_styles(#[case] format: Format, #[values(false, true)
             let styles: Vec<_> = output.lines().filter(|line| line.contains("linkStyle ")).collect();
 
             assert_eq!(production_edges, ["    n0 -->|2| n1"], "Production Mermaid edge changed");
-            assert_eq!(
-                test_edges,
-                [format!("    n0 -.->|{test_label}| n1")],
-                "Test Mermaid edge is missing or has incorrect styling"
-            );
+            assert_eq!(test_edges, [format!("    n0 -.->|{test_label}| n1")], "Test Mermaid edge missing or incorrectly styled");
             let expected_style = format!("    linkStyle 1 stroke:{COLOR_EDGE_TEST},color:{COLOR_EDGE_TEST}");
             assert_eq!(styles, [expected_style], "Mermaid styles target the wrong parallel edge");
         }

@@ -118,10 +118,7 @@ struct DefinitionRecovery {
 impl DefinitionRecovery {
     fn apply(&mut self, occurrence: &mut Occurrence, definition: Option<(FileNode, String)>) {
         let Some((target, symbol)) = definition else {
-            assert!(
-                !self.candidates.contains_key(&occurrence.symbol),
-                "A known project definition cannot resolve to an external file"
-            );
+            assert!(!self.candidates.contains_key(&occurrence.symbol), "Known project definitions cannot resolve externally");
             return;
         };
         occurrence.symbol.clone_from(&symbol);
@@ -335,9 +332,7 @@ mod tests {
         let system_under_test = repair_occurrences(fixture, &collisions, |_| {
             unreachable!("Unreferenced definitions must not invoke semantic resolution")
         });
-        let system_under_test = assert_ok!(
-            system_under_test, "Unreferenced definition collisions must be repairable without lookup"
-        );
+        let system_under_test = assert_ok!(system_under_test, "Repairing unreferenced definition collisions needs no lookup");
         let graph = file_graph(&system_under_test);
         let graph = assert_ok!(graph, "The repaired unreferenced definitions must produce a file graph");
 
@@ -367,9 +362,7 @@ mod tests {
         let repaired_without_test = repair_occurrences(index_without_test, &collisions, |_| {
             unreachable!("The unambiguous index without cfg(test) must not invoke definition resolution")
         });
-        let repaired_without_test = assert_ok!(
-            repaired_without_test, "The index without cfg(test) must share definition qualification"
-        );
+        let repaired_without_test = assert_ok!(repaired_without_test, "Definition qualification must match without cfg(test)");
         let classified = mark_test_references(repaired_original, &repaired_without_test);
         let classified = assert_ok!(classified, "Shared qualified definitions must support test-reference classification");
         let system_under_test = file_graph(&classified);
@@ -390,17 +383,13 @@ mod tests {
         let repaired_original = repair_occurrences(index_original, &collisions, |_| {
             unreachable!("The original configuration has an unambiguous definition target")
         });
-        let repaired_original = assert_ok!(
-            repaired_original, "The original index must qualify its configuration-specific target"
-        );
+        let repaired_original = assert_ok!(repaired_original, "Original index must qualify its configuration-specific target");
         let repaired_without_test = repair_occurrences(index_without_test, &collisions, |_| {
             unreachable!("The configuration without cfg(test) has an unambiguous definition target")
         });
         let repaired_without_test = assert_ok!(repaired_without_test, "The index without cfg(test) must qualify its own target");
         let system_under_test = mark_test_references(repaired_original, &repaired_without_test);
-        let system_under_test = assert_ok!(
-            system_under_test, "Configuration-specific targets must support reference classification"
-        );
+        let system_under_test = assert_ok!(system_under_test, "Configuration-specific references must be classifiable");
 
         let occurrences = system_under_test.documents().iter().flat_map(|document| &document.document().occurrences);
         let mut references = occurrences.filter(|occurrence| occurrence.symbol_roles & SymbolRole::Definition as i32 == 0);
@@ -517,9 +506,7 @@ mod tests {
         });
         let repaired = assert_ok!(repaired, "Repair must preserve an existing unambiguous definition");
         let system_under_test = file_graph(&repaired);
-        let system_under_test = assert_ok!(
-            system_under_test, "The index with preserved definition information must produce a graph"
-        );
+        let system_under_test = assert_ok!(system_under_test, "Index with preserved definition information must yield a graph");
         let retained_documentation: Vec<_> = repaired.symbols().map(|information| information.documentation.clone()).collect();
         let replay_bytes = repaired.into_index().write_to_bytes();
         let replay_bytes = assert_ok!(replay_bytes, "The index with preserved definition information must serialize for replay");
@@ -609,9 +596,7 @@ mod tests {
         });
         let repaired_original = assert_ok!(repaired_original, "The original index must retain its generated definition");
         let repaired_without_test = repair_occurrences(index_without_test, &repair_symbols, |_| Ok(Some(target.clone())));
-        let repaired_without_test = assert_ok!(
-            repaired_without_test, "The index without cfg(test) must recover its generated definition"
-        );
+        let repaired_without_test = assert_ok!(repaired_without_test, "Generated definitions must be restored without cfg(test)");
         let classified = mark_test_references(repaired_original, &repaired_without_test);
         let classified = assert_ok!(classified, "Different export metadata must still support test-reference classification");
         let system_under_test = file_graph(&classified);
@@ -630,9 +615,7 @@ mod tests {
         let repaired = repair_occurrences(fixture, &repair_symbols, |_| Ok(None));
         let repaired = assert_ok!(repaired, "Repair must accept a definition resolved outside the project");
         let system_under_test = file_graph(&repaired);
-        let system_under_test = assert_ok!(
-            system_under_test, "The repaired external definition reference must produce a file graph"
-        );
+        let system_under_test = assert_ok!(system_under_test, "Repaired external definition reference must yield a file graph");
 
         assert!(system_under_test.edges().is_empty());
     }
@@ -666,9 +649,7 @@ mod tests {
         }
 
         let system_under_test = definition_target(&project, &files, false);
-        let system_under_test = assert_ok!(
-            system_under_test, "External macro locations must not prevent selecting a project call site"
-        );
+        let system_under_test = assert_ok!(system_under_test, "External macro locations must allow project call-site selection");
 
         assert_eq!(system_under_test, include_call_site.then_some(target));
     }
@@ -829,9 +810,7 @@ mod tests {
         let repaired = repair.perform(index_original, index_without_test);
         let (repaired_original, repaired_without_test) = assert_ok!(repaired, "Repair must accept both parsed pipeline indexes");
         let system_under_test = mark_test_references(repaired_original, &repaired_without_test);
-        let system_under_test = assert_ok!(
-            system_under_test, "The repaired pipeline indexes must support reference classification"
-        );
+        let system_under_test = assert_ok!(system_under_test, "Repaired pipeline indexes must support reference classification");
         let graph = file_graph(&system_under_test);
         let graph = assert_ok!(graph, "The classified pipeline index must produce a file graph");
         let classified_files = system_under_test.documents().iter().map(|document| std::ptr::from_ref(document.file()));
@@ -851,9 +830,7 @@ mod tests {
         let fixture = index(symbol, &[("first.rs", &[1]), ("second.rs", &[1]), ("caller.rs", &[0, 0])]);
         let fixture = assert_ok!(fixture, "The qualified symbol cache fixture must parse");
         let original_structure = fixture.symbol_cache().get(symbol).require_structure();
-        let original_structure = assert_ok!(
-            original_structure, "The original fixture symbol must have a parsed structure"
-        ).clone();
+        let original_structure = assert_ok!(original_structure, "Original fixture symbol must have parsed structure").clone();
         let repair_symbols = colliding_symbols(&fixture, &fixture);
         let target = SourcePath::new(PathBuf::from("first.rs"));
         let target = assert_ok!(target, "The qualified symbol target must be a valid source path");
@@ -865,9 +842,7 @@ mod tests {
         let unresolved = assert_ok!(unresolved, "Qualified symbols must support unresolved-symbol analysis");
         let definition_count = definitions(&system_under_test).len();
         let retained_original = system_under_test.symbol_cache().get(symbol).require_structure();
-        let retained_original = assert_ok!(
-            retained_original, "The original symbol structure must remain cached after repair"
-        ).clone();
+        let retained_original = assert_ok!(retained_original, "Repair must retain the original cached symbol structure").clone();
         let cached_symbols = system_under_test.symbols().map(|information| {
             let structure = system_under_test.symbol_cache().get(&information.symbol).require_structure();
             let structure = assert_ok!(structure, "Qualified symbol {} must have a cached structure", information.symbol);
@@ -884,9 +859,7 @@ mod tests {
         assert_eq!(retained_original, original_structure, "Qualification must not mutate the original cached symbol");
         for (qualified_symbol, structure) in cached_symbols {
             let replayed_structure = replayed.symbol_cache().get(&qualified_symbol).require_structure();
-            let replayed_structure = assert_ok!(
-                replayed_structure, "Replayed qualified symbol {qualified_symbol} must have a structure"
-            );
+            let replayed_structure = assert_ok!(replayed_structure, "Replayed qualified symbol {qualified_symbol} must parse");
             assert_eq!(replayed_structure, &structure, "Cached generated symbols must match their serialized identity");
         }
     }

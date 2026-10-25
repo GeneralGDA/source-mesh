@@ -43,8 +43,7 @@ const TIMEOUT_INITIALIZATION: Duration = Duration::from_mins(10);
 const TIMEOUT_DEFINITION: Duration = Duration::from_mins(5);
 const POLL_INTERVAL_READER: Duration = Duration::from_millis(10);
 const SERVER_STATUS: &str = "experimental/serverStatus";
-const MESSAGE_WORKSPACE_LOADING_WARNING: &str =
-    "Workspace loading reported a warning; run with --verbose for analyzer diagnostics";
+const MESSAGE_WORKSPACE_LOADING_WARNING: &str = "Warning during workspace loading; run with --verbose for analyzer diagnostics";
 const MESSAGE_WORKSPACE_LOADING_ERROR: &str = "unknown workspace loading error";
 const MESSAGE_DEFINITION_FILE_RESOLUTION_ERROR: &str = "Cannot resolve definition at";
 const MESSAGE_DEPENDENCY_RESOLUTION_FAILURE: &str = "Dependency resolution failed";
@@ -61,7 +60,6 @@ pub(crate) struct DefinitionLocation {
 }
 
 pub(crate) struct DefinitionResolver {
-    /* Field drop order stops the child before releasing its captured stdout. */
     process: AnalyzerProcess,
     input: ChildStdin,
     output: BufReader<NamedTempFile>,

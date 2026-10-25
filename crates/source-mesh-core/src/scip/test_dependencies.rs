@@ -41,11 +41,7 @@ fn missing_definition_scopes(
         }
         let scope = ScipRange::parse(&occurrence.enclosing_range)?;
         if scope != definition.range {
-            ensure!(
-                scope.contains(&definition.range),
-                "SCIP definition scope does not contain its name in {}",
-                file.path().display()
-            );
+            ensure!(scope.contains(&definition.range), "SCIP definition scope omits its name in {}", file.path().display());
             scopes.push(scope);
         }
     }
@@ -434,10 +430,7 @@ mod tests {
 
         let reference = system_under_test.documents().first().and_then(|document| document.document().occurrences.last());
         let classified_reference = assert_some!(reference, "{MESSAGE_MISSING_REFERENCE}");
-        assert_eq!(
-            classified_reference.symbol_roles, 0,
-            "A file-module definition incorrectly classified the entire source file"
-        );
+        assert_eq!(classified_reference.symbol_roles, 0, "File-module definition classified the whole source file");
     }
 
     #[test]
@@ -452,10 +445,7 @@ mod tests {
 
         let reference = system_under_test.documents().first().and_then(|document| document.document().occurrences.first());
         let classified_reference = assert_some!(reference, "{MESSAGE_MISSING_REFERENCE}");
-        assert_eq!(
-            classified_reference.symbol_roles, 0,
-            "A reference target's definition range was used as the reference's own scope"
-        );
+        assert_eq!(classified_reference.symbol_roles, 0, "Reference used its target's definition range as its own scope");
     }
 
     #[test]

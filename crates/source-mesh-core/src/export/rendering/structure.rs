@@ -335,11 +335,7 @@ mod tests {
             ("src/api/v1", "v1"),
             ("src/api/v2", "v2"),
         ]) {
-            assert!(
-                folder.label == canonical && folder.display_label == display,
-                "Unexpected common ancestor or descendant label: {}",
-                folder.label
-            );
+            assert!(folder.label == canonical && folder.display_label == display, "Unexpected folder label: {}", folder.label);
             assert_eq!(indexed_graph.nodes.get(canonical), Some(&folder.index), "Dependency endpoint was renumbered");
         }
         assert_eq!(indexed_graph.edges.len(), fixture.edges().len(), "Dependencies were removed");
@@ -406,10 +402,7 @@ mod tests {
             let child = folder.children.first();
             let child = assert_some!(child, "Top-level folder {expected_label} must have a descendant");
             let child = system_under_test.folder(*child);
-            assert!(
-                child.label == child.display_label && child.dependency,
-                "A descendant without a shared path prefix was relabeled"
-            );
+            assert!(child.label == child.display_label && child.dependency, "Descendant without a common prefix was relabeled");
         }
     }
 

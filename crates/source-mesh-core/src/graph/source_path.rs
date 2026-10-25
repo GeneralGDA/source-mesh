@@ -91,10 +91,6 @@ mod tests {
         let system_under_test = SourcePath::new(path);
         let system_under_test = assert_ok!(system_under_test, "Valid relative source path must be accepted: {source_path:?}");
 
-        assert_eq!(
-            Path::new(source_path).as_os_str(),
-            system_under_test.path.as_os_str(),
-            "Lexical validation changed the supplied path spelling"
-        );
+        assert_eq!(Path::new(source_path).as_os_str(), system_under_test.path.as_os_str(), "Validation changed path spelling");
     }
 }

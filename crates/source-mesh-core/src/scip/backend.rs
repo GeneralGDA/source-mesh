@@ -211,14 +211,8 @@ mod tests {
         let system_under_test = file_graph(&fixture);
         let system_under_test = assert_ok!(system_under_test, "Either document ordering must produce a graph");
 
-        assert_eq!(
-            &expected_files, system_under_test.files(), "Graph construction lost parsed files or introduced external files"
-        );
-        assert_eq!(
-            &expected_edges,
-            system_under_test.edges(),
-            "Document order changed dependency endpoints, kinds, or deduplication"
-        );
+        assert_eq!(&expected_files, system_under_test.files(), "Graph lost parsed files or added external files");
+        assert_eq!(&expected_edges, system_under_test.edges(), "Document order changed endpoints, kinds, or deduplication");
     }
 
     #[test]
@@ -270,9 +264,7 @@ mod tests {
         let system_under_test = parse_scip(&index);
         let system_under_test = assert_ok!(system_under_test, "Definition bitmasks and local symbols must produce a graph");
 
-        assert_eq!(
-            system_under_test.edges(), &expected_dependencies, "Definition bitmasks or local symbols changed dependencies"
-        );
+        assert_eq!(system_under_test.edges(), &expected_dependencies, "Definition bitmasks or local symbols changed edges");
     }
 
     #[test]
@@ -317,9 +309,7 @@ mod tests {
 
         assert!(system_under_test.is_err(), "Ambiguous definitions were accepted");
         if let Err(error) = system_under_test {
-            assert!(
-                error.to_string().contains("multiple files"), "Unexpected diagnostic for ambiguous symbol definitions: {error}"
-            );
+            assert!(error.to_string().contains("multiple files"), "Unexpected ambiguous-symbol diagnostic: {error}");
         }
     }
 
@@ -500,10 +490,7 @@ mod tests {
         system_under_test.documents_mut().reverse();
         let ownership = definitions(&system_under_test);
 
-        assert_eq!(
-            ownership.get("target"), Some(&DefinitionFiles::Unique(target)),
-            "Reordering parsed documents must preserve normalized definition ownership"
-        );
+        assert_eq!(ownership.get("target"), Some(&DefinitionFiles::Unique(target)), "Reordering changed normalized ownership");
         assert_eq!(system_under_test.symbols().count(), 1, "External symbol metadata was lost");
 
         system_under_test.documents_mut().reverse();

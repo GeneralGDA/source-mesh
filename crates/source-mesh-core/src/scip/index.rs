@@ -188,14 +188,8 @@ mod tests {
         let cached_structure = system_under_test.get(&emitted).require_structure();
         let replayed_structure = replayed.get(&emitted).require_structure();
 
-        assert_eq!(
-            system_under_test.symbols.len(), if emitted == symbol { 1 } else { 2 },
-            "Interning must add an entry only when the emitted symbol differs"
-        );
-        assert_eq!(
-            cached_structure.as_ref().ok(), replayed_structure.as_ref().ok(),
-            "Cached and replayed symbols must have identical structure outcomes"
-        );
+        assert_eq!(system_under_test.symbols.len(), if emitted == symbol { 1 } else { 2 }, "Only new symbols add cache entries");
+        assert_eq!(cached_structure.as_ref().ok(), replayed_structure.as_ref().ok(), "Cached and replayed structures differ");
         let cached_error = cached_structure.err().map(|error| error.to_string());
         let replayed_error = replayed_structure.err().map(|error| error.to_string());
         assert_eq!(cached_error, replayed_error, "Cached and replayed symbols must retain identical decoding errors");
