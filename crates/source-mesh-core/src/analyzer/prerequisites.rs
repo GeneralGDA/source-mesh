@@ -1,4 +1,6 @@
 use std::env;
+use std::error::Error;
+use std::fmt;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -12,6 +14,35 @@ use anyhow::ensure;
 const INSTALL_HINT: &str =
     "Install the required components for the active project toolchain with `rustup component add rust-analyzer rust-src`.";
 const ENV_RUST_SOURCE_PATH: &str = "RUST_SRC_PATH";
+const MESSAGE_ANALYZER_LAUNCH_ADVICE: &str = "check the project directory and that rust-analyzer is installed and executable.";
+const MESSAGE_ANALYZER_UNAVAILABLE: &str =
+    "rust-analyzer is unavailable for the active project toolchain or does not support SCIP indexing.";
+
+#[derive(Debug)]
+enum PrerequisiteLaunchError {
+    AnalyzerProbe(PathBuf),
+    RustToolchainQuery(PathBuf),
+}
+
+impl fmt::Display for PrerequisiteLaunchError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::AnalyzerProbe(ref project) => write!(
+                formatter,
+                "Cannot run `rust-analyzer scip --help` in {}; {MESSAGE_ANALYZER_LAUNCH_ADVICE} {INSTALL_HINT}",
+                project.display()
+            ),
+            Self::RustToolchainQuery(ref project) => write!(
+                formatter,
+                "Cannot run `rustc --print sysroot` in {}; check the project directory \
+                 and that rustc is installed and executable",
+                project.display()
+            ),
+        }
+    }
+}
+
+impl Error for PrerequisiteLaunchError {}
 
 pub(crate) fn ensure_available(project: &Path) -> Result<()> {
     let analyzer_probe = {
@@ -26,17 +57,8 @@ pub(crate) fn ensure_available(project: &Path) -> Result<()> {
 }
 
 fn validate_analyzer_probe(project: &Path, analyzer_probe: io::Result<bool>) -> Result<()> {
-    let supports_scip = analyzer_probe.with_context(|| {
-        format!(
-            "Cannot run `rust-analyzer scip --help` in {}; check the project directory \
-             and that rust-analyzer is installed and executable. {INSTALL_HINT}",
-            project.display()
-        )
-    })?;
-    ensure!(
-        supports_scip,
-        "rust-analyzer is unavailable for the active project toolchain or does not support SCIP indexing. {INSTALL_HINT}"
-    );
+    let supports_scip = analyzer_probe.with_context(|| PrerequisiteLaunchError::AnalyzerProbe(project.to_path_buf()))?;
+    ensure!(supports_scip, "{MESSAGE_ANALYZER_UNAVAILABLE} {INSTALL_HINT}");
     Ok(())
 }
 
@@ -70,13 +92,8 @@ fn standard_library_source_directory(rust_toolchain_directory: &Path) -> PathBuf
 }
 
 fn active_rust_toolchain_directory(project: &Path) -> Result<PathBuf> {
-    let output = Command::new("rustc").current_dir(project).args(["--print", "sysroot"]).output().with_context(|| {
-        format!(
-            "Cannot run `rustc --print sysroot` in {}; check the project directory \
-             and that rustc is installed and executable",
-            project.display()
-        )
-    })?;
+    let toolchain_query = Command::new("rustc").current_dir(project).args(["--print", "sysroot"]).output();
+    let output = toolchain_query.with_context(|| PrerequisiteLaunchError::RustToolchainQuery(project.to_path_buf()))?;
     ensure!(
         output.status.success(),
         "Cannot query the active Rust toolchain directory with `rustc --print sysroot`. {INSTALL_HINT}"
@@ -97,11 +114,15 @@ mod tests {
 
     use anyhow::Result;
     use claims::assert_ok;
+    use claims::assert_some;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use tempfile::tempdir;
 
     use super::INSTALL_HINT;
+    use super::MESSAGE_ANALYZER_LAUNCH_ADVICE;
+    use super::MESSAGE_ANALYZER_UNAVAILABLE;
+    use super::PrerequisiteLaunchError;
     use super::active_rust_toolchain_directory;
     use super::ensure_available;
     use super::standard_library_source_directory;
@@ -115,27 +136,37 @@ mod tests {
         Ok(())
     }
 
+    #[rstest]
+    #[case::analyzer_probe(PrerequisiteLaunchError::AnalyzerProbe)]
+    #[case::toolchain_query(PrerequisiteLaunchError::RustToolchainQuery)]
+    fn test_launch_error_project_diagnostic(#[case] failure: fn(PathBuf) -> PrerequisiteLaunchError) {
+        const NAME_PROJECT: &str = "project with spaces";
+        let system_under_test = failure(PathBuf::from(NAME_PROJECT));
+        let project_context = format!(" in {NAME_PROJECT}; ");
+
+        let diagnostic = system_under_test.to_string();
+
+        assert!(diagnostic.contains(&project_context), "Launch diagnostics must identify the requested directory: {diagnostic}");
+    }
+
     #[test]
-    fn test_prerequisite_probe_project_error() {
+    fn test_prerequisite_probe_launch_error_propagation() {
         let fixture_creation = tempdir();
         let fixture = assert_ok!(fixture_creation, "The prerequisite probe fixture directory must be created");
         let project = fixture.path().join("missing project");
 
         let system_under_test = ensure_available(&project);
 
+        let error = assert_some!(system_under_test.err(), "The prerequisite probe must fail to launch");
+        let launch_error = error.downcast_ref::<PrerequisiteLaunchError>();
+        let launch_error = assert_some!(launch_error, "Prerequisite orchestration must retain its launch error: {error:#}");
         assert!(
-            system_under_test.as_ref().is_err_and(|error| {
-                let message = error.to_string();
-                message.contains(&project.display().to_string()) && message.contains(INSTALL_HINT)
-            }),
-            "Prerequisite orchestration must report the failed probe with its project and installation advice"
+            matches!(*launch_error, PrerequisiteLaunchError::AnalyzerProbe(ref directory) if directory == &project),
+            "Prerequisite orchestration must retain the analyzer launch context and requested directory: {error:#}"
         );
-        assert!(
-            system_under_test.is_err_and(|error| {
-                error.downcast_ref::<io::Error>().is_some_and(|cause| cause.raw_os_error().is_some())
-            }),
-            "Prerequisite orchestration must preserve the native launch error"
-        );
+        let cause = error.downcast_ref::<io::Error>();
+        let cause = assert_some!(cause, "Prerequisite orchestration must preserve the analyzer probe I/O error");
+        assert!(cause.raw_os_error().is_some(), "The analyzer probe must retain its native launch error");
     }
 
     #[test]
@@ -167,23 +198,23 @@ mod tests {
     }
 
     #[test]
-    fn test_active_toolchain_project_error() {
+    fn test_active_toolchain_launch_error_propagation() {
         let fixture_creation = tempdir();
         let fixture = assert_ok!(fixture_creation, "The toolchain query fixture directory must be created");
         let project = fixture.path().join("missing project");
 
         let system_under_test = active_rust_toolchain_directory(&project);
 
+        let error = assert_some!(system_under_test.err(), "The toolchain query must fail to launch");
+        let launch_error = error.downcast_ref::<PrerequisiteLaunchError>();
+        let launch_error = assert_some!(launch_error, "The toolchain query must retain its launch error: {error:#}");
         assert!(
-            system_under_test.as_ref().is_err_and(|error| error.to_string().contains(&project.display().to_string())),
-            "The toolchain query must identify the project whose compiler could not be launched"
+            matches!(*launch_error, PrerequisiteLaunchError::RustToolchainQuery(ref directory) if directory == &project),
+            "The toolchain query must retain its launch context and requested directory: {error:#}"
         );
-        assert!(
-            system_under_test.is_err_and(|error| {
-                error.downcast_ref::<io::Error>().is_some_and(|cause| cause.raw_os_error().is_some())
-            }),
-            "The toolchain query lost its native launch error"
-        );
+        let cause = error.downcast_ref::<io::Error>();
+        let cause = assert_some!(cause, "The toolchain query must preserve its I/O error");
+        assert!(cause.raw_os_error().is_some(), "The toolchain query must retain its native launch error");
     }
 
     #[test]
@@ -194,15 +225,15 @@ mod tests {
     }
 
     #[rstest]
-    #[case::missing(Err(io::Error::new(io::ErrorKind::NotFound, "missing executable")), "check the project directory")]
-    #[case::unsupported(Ok(false), "does not support SCIP indexing")]
-    fn test_unavailable_analyzer(#[case] analyzer_probe: io::Result<bool>, #[case] expected_message: &str) {
+    #[case::launch(Err(io::Error::new(io::ErrorKind::NotFound, "launch failure")), MESSAGE_ANALYZER_LAUNCH_ADVICE)]
+    #[case::unsupported(Ok(false), MESSAGE_ANALYZER_UNAVAILABLE)]
+    fn test_unavailable_analyzer_diagnostic(#[case] analyzer_probe: io::Result<bool>, #[case] expected_message: &str) {
         let system_under_test = validate_analyzer_probe(Path::new("project"), analyzer_probe);
 
-        assert!(
-            system_under_test.as_ref().is_err_and(|error| error.to_string().contains(expected_message)),
-            "Unavailable analyzer did not produce an actionable error"
-        );
+        let error = assert_some!(system_under_test.err(), "An unavailable analyzer must be rejected");
+        let message = error.to_string();
+        assert!(message.contains(expected_message), "Unavailable analyzer did not produce an actionable error: {message}");
+        assert!(message.contains(INSTALL_HINT), "Unavailable analyzer must include installation advice: {message}");
     }
 
     #[rstest]
@@ -210,14 +241,23 @@ mod tests {
     #[case::denied(io::ErrorKind::PermissionDenied)]
     #[case::invalid_directory(io::ErrorKind::NotADirectory)]
     fn test_analyzer_spawn_error_identity(#[case] kind: io::ErrorKind) {
-        let failure = io::Error::new(kind, "Cannot launch probe");
+        const CAUSE_MESSAGE: &str = "Cannot launch probe";
+        let project = Path::new("project");
+        let failure = io::Error::new(kind, CAUSE_MESSAGE);
 
-        let system_under_test = validate_analyzer_probe(Path::new("project"), Err(failure));
+        let system_under_test = validate_analyzer_probe(project, Err(failure));
 
+        let error = assert_some!(system_under_test.err(), "A failed analyzer launch must be propagated");
+        let launch_error = error.downcast_ref::<PrerequisiteLaunchError>();
+        let launch_error = assert_some!(launch_error, "The analyzer probe must retain its launch error: {error:#}");
         assert!(
-            system_under_test.is_err_and(|error| error.downcast_ref::<io::Error>().is_some_and(|cause| cause.kind() == kind)),
-            "Analyzer launch error lost its original cause"
+            matches!(*launch_error, PrerequisiteLaunchError::AnalyzerProbe(ref directory) if directory == project),
+            "The analyzer probe must retain its launch context and requested directory: {error:#}"
         );
+        let cause = error.downcast_ref::<io::Error>();
+        let cause = assert_some!(cause, "Analyzer launch errors must remain downcastable to their I/O cause");
+        assert_eq!(cause.kind(), kind, "The analyzer launch error must preserve its original I/O kind");
+        assert_eq!(cause.to_string(), CAUSE_MESSAGE, "The analyzer launch error must preserve its original I/O message");
     }
 
     #[test]

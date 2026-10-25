@@ -1,3 +1,5 @@
+use std::error::Error;
+use std::fmt;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read as _;
@@ -14,6 +16,45 @@ use derive_new::new;
 use same_file::Handle;
 
 const OUTPUT_PATH_CONFLICT: &str = "Output files must use distinct paths and must not overwrite input files";
+
+#[derive(Debug, new)]
+pub(crate) struct OutputPathConflict {
+    path: PathBuf,
+    other_path: PathBuf,
+}
+
+impl fmt::Display for OutputPathConflict {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{OUTPUT_PATH_CONFLICT}: {} and {}", self.path.display(), self.other_path.display())
+    }
+}
+
+impl Error for OutputPathConflict {}
+
+#[derive(Debug)]
+enum OutputIoError {
+    Resolve(PathBuf),
+    Open(PathBuf),
+    Identify(PathBuf),
+    Truncate(PathBuf),
+    Seek(PathBuf),
+    Write(PathBuf),
+}
+
+impl fmt::Display for OutputIoError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Resolve(ref path) => write!(formatter, "Cannot resolve output path {}", path.display()),
+            Self::Open(ref path) => write!(formatter, "Cannot open output file {}", path.display()),
+            Self::Identify(ref path) => write!(formatter, "Cannot identify output file {}", path.display()),
+            Self::Truncate(ref path) => write!(formatter, "Cannot truncate output file {}", path.display()),
+            Self::Seek(ref path) => write!(formatter, "Cannot seek output file {}", path.display()),
+            Self::Write(ref path) => write!(formatter, "Cannot write output file {}", path.display()),
+        }
+    }
+}
+
+impl Error for OutputIoError {}
 
 pub(crate) struct InputFile {
     path: PathBuf,
@@ -58,25 +99,25 @@ impl<'a> OutputFiles<'a> {
     */
     pub(crate) fn open(outputs: &[FileOutput<'a>], inputs: &[InputFile]) -> Result<Self> {
         let paths = outputs.iter().map(|output| {
-            absolute(output.path).with_context(|| format!("Cannot resolve output path {}", output.path.display()))
+            absolute(output.path).with_context(|| OutputIoError::Resolve(output.path.to_path_buf()))
         }).collect::<Result<Vec<_>>>()?;
         for (index, path) in paths.iter().enumerate() {
             for other in paths.iter().take(index).chain(inputs.iter().map(|input| &input.path)) {
-                ensure!(path != other, "{OUTPUT_PATH_CONFLICT}: {} and {}", path.display(), other.display());
+                ensure!(path != other, OutputPathConflict::new(path.clone(), other.clone()));
             }
         }
 
         let mut files: Vec<OpenedOutput<'a>> = Vec::with_capacity(outputs.len());
         for (output, path) in outputs.iter().zip(paths) {
             let file = OpenOptions::new().write(true).create(true).truncate(false).open(&path);
-            let file = file.with_context(|| format!("Cannot open output file {}", output.path.display()))?;
+            let file = file.with_context(|| OutputIoError::Open(output.path.to_path_buf()))?;
             let handle = Handle::from_file(file);
-            let handle = handle.with_context(|| format!("Cannot identify output file {}", output.path.display()))?;
+            let handle = handle.with_context(|| OutputIoError::Identify(output.path.to_path_buf()))?;
             let output_identities = files.iter().map(|opened| (&opened.handle, opened.output.path));
             let input_identities = inputs.iter().map(|input| (&input.handle, input.path.as_path()));
             for (other_handle, other_path) in output_identities.chain(input_identities) {
                 let distinct = &handle != other_handle;
-                ensure!(distinct, "{OUTPUT_PATH_CONFLICT}: {} and {}", output.path.display(), other_path.display());
+                ensure!(distinct, OutputPathConflict::new(output.path.to_path_buf(), other_path.to_path_buf()));
             }
             files.push(OpenedOutput { output: FileOutput::new(output.path, output.contents), handle });
         }
@@ -86,10 +127,10 @@ impl<'a> OutputFiles<'a> {
     pub(crate) fn write(self) -> Result<()> {
         for mut file in self.files {
             let output = file.handle.as_file_mut();
-            output.set_len(0).with_context(|| format!("Cannot truncate output file {}", file.output.path.display()))?;
-            output.rewind().with_context(|| format!("Cannot seek output file {}", file.output.path.display()))?;
+            output.set_len(0).with_context(|| OutputIoError::Truncate(file.output.path.to_path_buf()))?;
+            output.rewind().with_context(|| OutputIoError::Seek(file.output.path.to_path_buf()))?;
             let write_result = output.write_all(file.output.contents);
-            write_result.with_context(|| format!("Cannot write output file {}", file.output.path.display()))?;
+            write_result.with_context(|| OutputIoError::Write(file.output.path.to_path_buf()))?;
         }
         Ok(())
     }
@@ -107,6 +148,7 @@ mod tests {
     use std::path::PathBuf;
 
     use claims::assert_ok;
+    use claims::assert_some;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use same_file::Handle;
@@ -117,6 +159,33 @@ mod tests {
     use super::OUTPUT_PATH_CONFLICT;
     use super::OpenedOutput;
     use super::OutputFiles;
+    use super::OutputIoError;
+    use super::OutputPathConflict;
+
+    #[test]
+    fn test_output_path_conflict_diagnostic() {
+        let system_under_test = OutputPathConflict::new(PathBuf::from("report.md"), PathBuf::from("index.scip"));
+
+        let diagnostic = system_under_test.to_string();
+
+        assert_eq!(diagnostic, format!("{OUTPUT_PATH_CONFLICT}: report.md and index.scip"));
+    }
+
+    #[rstest]
+    #[case::resolve(OutputIoError::Resolve)]
+    #[case::open(OutputIoError::Open)]
+    #[case::identify(OutputIoError::Identify)]
+    #[case::truncate(OutputIoError::Truncate)]
+    #[case::seek(OutputIoError::Seek)]
+    #[case::write(OutputIoError::Write)]
+    fn test_output_io_error_path_diagnostic(#[case] failure: fn(PathBuf) -> OutputIoError) {
+        const NAME_OUTPUT: &str = "report with spaces.md";
+        let system_under_test = failure(PathBuf::from(NAME_OUTPUT));
+
+        let diagnostic = system_under_test.to_string();
+
+        assert!(diagnostic.ends_with(NAME_OUTPUT), "Output I/O diagnostics must identify the requested file: {diagnostic}");
+    }
 
     #[test]
     fn test_input_read() {
@@ -161,7 +230,7 @@ mod tests {
         let replacement = assert_ok!(replacement, "The replacement input must remain readable");
 
         assert_eq!(contents, CONTENTS_ORIGINAL, "Reading reopened the input path");
-        let conflict = output.is_err_and(|error| error.to_string().starts_with(OUTPUT_PATH_CONFLICT));
+        let conflict = output.is_err_and(|error| error.is::<OutputPathConflict>());
         assert!(conflict, "The retained input object was not protected after renaming");
         assert_eq!(original, CONTENTS_ORIGINAL, "Conflict detection must preserve the renamed input");
         assert_eq!(replacement, CONTENTS_REPLACEMENT, "Conflict detection must preserve the replacement input");
@@ -236,7 +305,7 @@ mod tests {
         let second_contents = fs::read(&second);
         let second_contents = assert_ok!(second_contents, "The second aliased output must remain readable");
 
-        let conflict = system_under_test.is_err_and(|error| error.to_string().starts_with(OUTPUT_PATH_CONFLICT));
+        let conflict = system_under_test.is_err_and(|error| error.is::<OutputPathConflict>());
         assert!(conflict, "Aliased outputs were accepted");
         assert_eq!(earlier_contents, CONTENTS_EXISTING, "An earlier output was written before validation completed");
         assert_eq!(first_contents, CONTENTS_EXISTING, "Alias rejection must preserve the first output");
@@ -273,7 +342,7 @@ mod tests {
         let earlier_contents = fs::read(&earlier);
         let earlier_contents = assert_ok!(earlier_contents, "The earlier output must remain readable after conflict rejection");
 
-        let conflict = system_under_test.is_err_and(|error| error.to_string().starts_with(OUTPUT_PATH_CONFLICT));
+        let conflict = system_under_test.is_err_and(|error| error.is::<OutputPathConflict>());
         assert!(conflict, "An output could overwrite a protected input");
         assert_eq!(input_contents, CONTENTS_INPUT, "Conflict rejection must preserve the protected input");
         assert_eq!(earlier_contents, CONTENTS_OUTPUT_EXISTING, "Conflict rejection must preserve the earlier output");
@@ -296,7 +365,7 @@ mod tests {
         let earlier_contents = fs::read(&earlier);
         let report_contents = fs::read(&first);
 
-        let conflict = system_under_test.is_err_and(|error| error.to_string().starts_with(OUTPUT_PATH_CONFLICT));
+        let conflict = system_under_test.is_err_and(|error| error.is::<OutputPathConflict>());
         assert!(conflict, "Duplicate lexical output names were accepted");
         let earlier_missing = earlier_contents.is_err_and(|error| error.kind() == ErrorKind::NotFound);
         assert!(earlier_missing, "Lexical conflict detection created an earlier output");
@@ -327,7 +396,7 @@ mod tests {
         let renamed_contents = fs::read(&renamed);
         let renamed_contents = assert_ok!(renamed_contents, "The renamed protected input must remain readable");
 
-        let conflict = system_under_test.is_err_and(|error| error.to_string().starts_with(OUTPUT_PATH_CONFLICT));
+        let conflict = system_under_test.is_err_and(|error| error.is::<OutputPathConflict>());
         assert!(conflict, "The lexical input name was not protected after renaming");
         let earlier_missing = earlier_contents.is_err_and(|error| error.kind() == ErrorKind::NotFound);
         assert!(earlier_missing, "Protecting the input name must not create an earlier output");
@@ -360,9 +429,13 @@ mod tests {
         let second_contents = fs::read(&second);
         let second_contents = assert_ok!(second_contents, "The second new output must remain readable");
 
-        let conflict = system_under_test.is_err();
         let aliases = first_handle == second_handle;
-        assert_eq!(conflict, aliases, "Case handling must follow actual file identity, not an operating-system assumption");
+        if aliases {
+            let conflict = system_under_test.is_err_and(|error| error.is::<OutputPathConflict>());
+            assert!(conflict, "Aliased file identities must fail with an output path conflict");
+        } else {
+            assert_ok!(system_under_test, "Distinct file identities must open successfully");
+        }
         assert!(first_contents.is_empty(), "Opening must not write the first new output");
         assert!(second_contents.is_empty(), "Opening must not write the second new output");
     }
@@ -386,16 +459,18 @@ mod tests {
             FileOutput::new(&created, b"new output"),
             FileOutput::new(&invalid, b"invalid output"),
         ];
-        let system_under_test = OutputFiles::open(&outputs, &[]).and_then(OutputFiles::write);
+        let system_under_test = OutputFiles::open(&outputs, &[]);
         let existing_contents = fs::read(&existing);
         let existing_contents = assert_ok!(existing_contents, "The existing output must remain readable after opening fails");
         let created_contents = fs::read(&created);
         let created_contents = assert_ok!(created_contents, "The newly created output must remain after opening fails");
 
-        let has_path_and_io_error = system_under_test.is_err_and(|error| {
-            error.downcast_ref::<Error>().is_some() && error.to_string().contains(&invalid.display().to_string())
-        });
-        assert!(has_path_and_io_error, "Output-opening failures must retain the path and underlying I/O error");
+        let error = assert_some!(system_under_test.err(), "Opening the invalid output must fail");
+        let output_error = error.downcast_ref::<OutputIoError>();
+        let output_error = assert_some!(output_error, "Output opening must retain its operation and path: {error:#}");
+        let opens_invalid_path = matches!(*output_error, OutputIoError::Open(ref path) if path == &invalid);
+        assert!(opens_invalid_path, "Opening must fail at the invalid output path: {error:#}");
+        assert!(error.downcast_ref::<Error>().is_some(), "Opening failures must retain the original I/O error: {error:#}");
         assert_eq!(existing_contents, CONTENTS, "An opening failure truncated an existing output");
         assert!(created_contents.is_empty(), "Opening must not write newly created outputs");
     }
@@ -492,10 +567,10 @@ mod tests {
     }
 
     #[test]
-    fn test_output_write_error() {
+    fn test_output_truncation_failure() {
         const CONTENTS: &[u8] = b"read-only handle";
         let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "The output write failure fixture directory must be created");
+        let fixture = assert_ok!(fixture, "The output truncation failure fixture directory must be created");
         let path = fixture.path().join("report.md");
         let written = fs::write(&path, CONTENTS);
         assert_ok!(written, "The output fixture must be written before opening a read-only handle");
@@ -509,13 +584,15 @@ mod tests {
 
         let result = system_under_test.write();
         let contents = fs::read(&path);
-        let contents = assert_ok!(contents, "The output fixture must remain readable after the handle write fails");
+        let contents = assert_ok!(contents, "The output fixture must remain readable after truncation fails");
 
-        let has_path_and_io_error = result.is_err_and(|error| {
-            error.downcast_ref::<Error>().is_some() && error.to_string().contains(&path.display().to_string())
-        });
-        assert!(has_path_and_io_error, "A failed handle write must retain its path and I/O error rather than reopening the path");
-        assert_eq!(contents, CONTENTS, "A failed handle write must preserve the output contents");
+        let error = assert_some!(result.err(), "A read-only output handle must fail during truncation");
+        let output_error = error.downcast_ref::<OutputIoError>();
+        let output_error = assert_some!(output_error, "Output truncation must retain its operation and path: {error:#}");
+        let truncates_path = matches!(*output_error, OutputIoError::Truncate(ref failed_path) if failed_path == &path);
+        assert!(truncates_path, "Truncation must fail on the retained read-only output handle: {error:#}");
+        assert!(error.downcast_ref::<Error>().is_some(), "Truncation failures must retain their I/O error: {error:#}");
+        assert_eq!(contents, CONTENTS, "A failed handle truncation must preserve the output contents");
     }
 
     #[test]

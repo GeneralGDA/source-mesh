@@ -1,3 +1,5 @@
+use std::error::Error;
+use std::fmt;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -107,35 +109,60 @@ impl RustAnalyzer<'_> {
     }
 }
 
+#[derive(Debug)]
+enum ProjectValidationError {
+    InspectPath(PathBuf),
+    UnsupportedFile(PathBuf),
+    ResolveDirectory(PathBuf),
+    ReadManifest(PathBuf),
+    ReadProjectFile { project_file: PathBuf, directory: PathBuf },
+}
+
+impl fmt::Display for ProjectValidationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::InspectPath(ref path) => write!(formatter, "Cannot inspect Rust project path {}", path.display()),
+            Self::UnsupportedFile(ref path) => write!(formatter, "{MESSAGE_PROJECT_INPUT_ERROR}: {}", path.display()),
+            Self::ResolveDirectory(ref path) => write!(formatter, "Cannot resolve Rust project directory {}", path.display()),
+            Self::ReadManifest(ref path) => write!(formatter, "Cannot read project manifest {}", path.display()),
+            Self::ReadProjectFile { ref project_file, ref directory } => write!(
+                formatter,
+                "Cannot read project file {} after {NAME_CARGO_MANIFEST} was not found in {}",
+                project_file.display(),
+                directory.display()
+            ),
+        }
+    }
+}
+
+impl Error for ProjectValidationError {}
+
 fn resolve_project_directory(project: &Path) -> Result<PathBuf> {
-    let metadata = fs::metadata(project).with_context(|| format!("Cannot inspect Rust project path {}", project.display()))?;
+    let metadata = fs::metadata(project).with_context(|| ProjectValidationError::InspectPath(project.to_path_buf()))?;
     let directory = if metadata.is_dir() {
         project
     } else {
         ensure!(
             project.file_name().is_some_and(|name| name == NAME_CARGO_MANIFEST),
-            "{MESSAGE_PROJECT_INPUT_ERROR}: {}", project.display()
+            ProjectValidationError::UnsupportedFile(project.to_path_buf())
         );
         project.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."))
     };
     let directory = dunce::canonicalize(directory).with_context(|| {
-        format!("Cannot resolve Rust project directory {}", directory.display())
+        ProjectValidationError::ResolveDirectory(directory.to_path_buf())
     })?;
     let manifest = directory.join(NAME_CARGO_MANIFEST);
     match fs::read(&manifest) {
         Ok(_) => {}
         Err(error) if error.kind() == ErrorKind::NotFound => {
             let project_file = directory.join(NAME_RUST_PROJECT_FILE);
-            fs::read(&project_file).with_context(|| {
-                format!(
-                    "Cannot read project file {} after {NAME_CARGO_MANIFEST} was not found in {}",
-                    project_file.display(),
-                    directory.display()
-                )
+            fs::read(&project_file).with_context(|| ProjectValidationError::ReadProjectFile {
+                project_file,
+                directory: directory.clone(),
             })?;
         }
         Err(error) => {
-            return Err(error).with_context(|| format!("Cannot read project manifest {}", manifest.display()));
+            return Err(error).context(ProjectValidationError::ReadManifest(manifest));
         }
     }
     Ok(directory)
@@ -168,10 +195,10 @@ mod tests {
 
     use super::NAME_CARGO_MANIFEST;
     use super::IndexSource as _;
-    use super::MESSAGE_PROJECT_INPUT_ERROR;
     use super::NAME_RUST_PROJECT_FILE;
     use super::RustAnalyzer;
     use super::MESSAGE_SCIP_READ_ERROR;
+    use super::ProjectValidationError;
     use super::ScipFile;
     use super::contains_project_file;
     use super::resolve_project_directory;
@@ -225,16 +252,14 @@ mod tests {
 
         let index_generation = system_under_test.index();
 
+        let error = assert_some!(index_generation.err(), "IndexSource::index must reject an invalid project");
         assert!(
-            index_generation.as_ref().is_err_and(|error| error.to_string().contains(&project.display().to_string())),
-            "IndexSource::index must validate the project before producing bytes"
+            error.is::<ProjectValidationError>(),
+            "IndexSource::index must preserve the project-validation error, not a later analyzer failure: {error:#}"
         );
-        assert!(
-            index_generation.is_err_and(|error| {
-                error.downcast_ref::<io::Error>().is_some_and(|cause| cause.kind() == io::ErrorKind::NotFound)
-            }),
-            "IndexSource::index lost the project filesystem error"
-        );
+        let cause = error.downcast_ref::<io::Error>();
+        let cause = assert_some!(cause, "IndexSource::index must retain the project filesystem error");
+        assert_eq!(cause.kind(), io::ErrorKind::NotFound, "IndexSource::index must reject a missing project or project file");
     }
 
     #[rstest]
@@ -370,18 +395,20 @@ mod tests {
 
     #[test]
     fn test_non_manifest_project_file() {
-        let system_under_test = {
-            let fixture_creation = tempdir();
-            let fixture = assert_ok!(fixture_creation, "The non-manifest project-file fixture directory must be created");
-            let project = fixture.path().join("source.rs");
-            let source_write = fs::write(&project, "");
-            assert_ok!(source_write, "The non-manifest source file must exist before project resolution");
-            resolve_project_directory(&project)
-        };
+        let fixture_creation = tempdir();
+        let fixture = assert_ok!(fixture_creation, "The non-manifest project-file fixture directory must be created");
+        let project = fixture.path().join("source.rs");
+        let source_write = fs::write(&project, "");
+        assert_ok!(source_write, "The non-manifest source file must exist before project resolution");
 
+        let system_under_test = resolve_project_directory(&project);
+
+        let error = assert_some!(system_under_test.err(), "A non-manifest project file must be rejected");
+        let validation_error = error.downcast_ref::<ProjectValidationError>();
+        let validation_error = assert_some!(validation_error, "Project validation must retain its failure context: {error:#}");
         assert!(
-            system_under_test.is_err_and(|error| error.to_string().contains(MESSAGE_PROJECT_INPUT_ERROR)),
-            "A non-manifest project file was accepted"
+            matches!(*validation_error, ProjectValidationError::UnsupportedFile(ref path) if path == &project),
+            "Project validation must reject the supplied file as unsupported, not fail for an unrelated reason: {error:#}"
         );
     }
 

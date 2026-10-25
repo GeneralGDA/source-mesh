@@ -180,6 +180,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    use anyhow::Error;
     use claims::assert_ok;
     use pretty_assertions::assert_eq;
     use protobuf::Message as _;
@@ -197,6 +198,7 @@ mod tests {
     use crate::cycle_report::NO_CYCLES_FOUND;
     use crate::export::Format;
     use crate::export::Options;
+    use crate::output_paths::OutputPathConflict;
     use crate::scip::backend::parse_scip;
 
     #[test]
@@ -370,7 +372,7 @@ mod tests {
         let preserved = assert_ok!(preserved, "Protected SCIP input must remain readable after replay rejection");
 
         assert!(
-            result.as_ref().is_err_and(|error| error.to_string().contains("must not overwrite input")),
+            result.as_ref().is_err_and(Error::is::<OutputPathConflict>),
             "Replay must reject overwriting its input through either path spelling: {result:?}"
         );
         assert_eq!(preserved, bytes);
@@ -473,7 +475,7 @@ mod tests {
         let preserved_report = assert_ok!(preserved_report, "File report must remain readable after output conflict rejection");
 
         assert!(
-            result.as_ref().is_err_and(|error| error.to_string().contains("distinct paths")),
+            result.as_ref().is_err_and(Error::is::<OutputPathConflict>),
             "Replay must reject output files referring to the same file: {result:?}"
         );
         assert_eq!(preserved_diagram, CONTENTS_EXISTING);
