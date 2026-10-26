@@ -1,7 +1,7 @@
 # source-mesh-core
 
 Analyze Rust file and folder dependencies, export DOT, Mermaid, or `GraphML` diagrams,
-and produce file and folder cycle reports. The `source-mesh` package provides the CLI;
+and produce file and folder cycle reports or check outgoing dependency limits. The `source-mesh` package provides the CLI;
 this package exposes the same pipeline without command-line parsing.
 
 ```rust
@@ -36,7 +36,15 @@ Validation and analysis errors preserve existing outputs. Cycle gating with
 `CycleOptions::builder().fail_on_cycles(true).build()` reports failure after writing requested outputs. Output I/O
 errors can leave earlier files written; output writes are not a transaction.
 
-The low-level analyzer, graph, cycle, and exporter APIs remain available.
+Configure an outgoing dependency check with `OutgoingDependencyOptions::builder().maximum(5).build()` and pass it to
+`.outgoing_dependencies(...)` on the request. The default mode is `outgoing_dependencies::Mode::Folders`; use
+`.mode(outgoing_dependencies::Mode::Files)` to check files before folder aggregation. An optional `.output(path)` writes a
+Markdown violation report. Each distinct target counts once regardless of dependency kind or folder edge weight;
+retained self-edges count as one target. Root and test filters apply in both modes, while depth folding affects only folders.
+Counts equal to the maximum pass, and zero is supported. A violation fails after outputs have been written and includes every
+violating source and count in the error; simultaneous cycle failures are included too.
+
+The low-level analyzer, graph, cycle, outgoing dependency analysis, and exporter APIs remain available.
 
 For contributor documentation, see the
 [development guide](https://github.com/GeneralGDA/source-mesh/blob/main/crates/source-mesh-core/DEVELOPMENT.md).

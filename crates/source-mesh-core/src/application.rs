@@ -18,6 +18,8 @@ use crate::cycles::analyze_files;
 use crate::cycles::analyze_folders;
 use crate::export::Format;
 use crate::export::Options as ExportOptions;
+use crate::outgoing_dependencies::Analysis as OutgoingDependencyAnalysis;
+use crate::outgoing_dependencies::Mode as OutgoingDependencyMode;
 use crate::output_paths::FileOutput;
 use crate::output_paths::InputFile;
 use crate::output_paths::OutputFiles;
@@ -54,6 +56,14 @@ pub struct CycleOptions {
 }
 
 #[derive(Builder)]
+pub struct OutgoingDependencyOptions {
+    maximum: usize,
+    #[builder(default = OutgoingDependencyMode::Folders)]
+    mode: OutgoingDependencyMode,
+    output: Option<PathBuf>,
+}
+
+#[derive(Builder)]
 pub struct Request {
     input: Input,
     #[builder(default = PathBuf::from("."))]
@@ -70,6 +80,7 @@ pub struct Request {
     exclude_tests: bool,
     #[builder(default = CycleOptions::builder().build())]
     cycles: CycleOptions,
+    outgoing_dependencies: Option<OutgoingDependencyOptions>,
     save_scip: Option<PathBuf>,
     #[builder(default = AnalyzerOptions::new(false))]
     analyzer: AnalyzerOptions,
@@ -82,7 +93,7 @@ unless the request selects an output file.
 Analysis and serialization failures leave existing output files unchanged.
 Output files must be distinct and must not overwrite input files.
 Opening failures can leave new empty files; writing failures can leave partial outputs.
-Cycle gating fails only after outputs have been written.
+Cycle and outgoing dependency checks fail only after outputs have been written.
 */
 pub fn run(request: &Request, diagram_output: &mut dyn Write) -> Result<()> {
     ensure!(
@@ -139,6 +150,16 @@ pub fn run(request: &Request, diagram_output: &mut dyn Write) -> Result<()> {
     } else {
         (None, 0)
     };
+    let (outgoing_analysis, outgoing_report_output) = if let Some(options) = request.outgoing_dependencies.as_ref() {
+        let analysis = match options.mode {
+            OutgoingDependencyMode::Files => OutgoingDependencyAnalysis::files(&file_graph, options.maximum)?,
+            OutgoingDependencyMode::Folders => OutgoingDependencyAnalysis::folders(&folder_graph, options.maximum),
+        };
+        let report = options.output.as_ref().map(|path| (path, analysis.markdown()));
+        (Some(analysis), report)
+    } else {
+        (None, None)
+    };
     let mut diagram_bytes = Vec::new();
     let exporter = request.format.exporter();
     let options = ExportOptions::builder().group_folders(request.group_folders).maybe_cycles(highlight_analysis.as_ref()).build();
@@ -158,6 +179,9 @@ pub fn run(request: &Request, diagram_output: &mut dyn Write) -> Result<()> {
     if let Some((path, ref report)) = file_report_output {
         outputs.push(FileOutput::new(path, report.as_bytes()));
     }
+    if let Some((path, ref report)) = outgoing_report_output {
+        outputs.push(FileOutput::new(path, report.as_bytes()));
+    }
     if let Some(path) = request.output.as_deref() {
         outputs.push(FileOutput::new(path, &diagram_bytes));
     }
@@ -165,13 +189,17 @@ pub fn run(request: &Request, diagram_output: &mut dyn Write) -> Result<()> {
     if request.output.is_none() {
         diagram_output.write_all(&diagram_bytes)?;
     }
-    if cycles.fail_on_cycles {
-        ensure!(
-            folder_cycle_group_count == 0 && file_cycle_group_count == 0,
+    let mut failures = Vec::new();
+    if cycles.fail_on_cycles && (folder_cycle_group_count != 0 || file_cycle_group_count != 0) {
+        failures.push(format!(
             "Dependency cycles found: {folder_cycle_group_count} folder cycle group(s), \
              {file_cycle_group_count} file cycle group(s)"
-        );
+        ));
     }
+    if let Some(analysis) = outgoing_analysis && analysis.has_violations() {
+        failures.push(analysis.diagnostic());
+    }
+    ensure!(failures.is_empty(), "{}", failures.join("\n\n"));
     Ok(())
 }
 
@@ -182,6 +210,7 @@ mod tests {
 
     use anyhow::Error;
     use claims::assert_ok;
+    use claims::assert_some;
     use pretty_assertions::assert_eq;
     use protobuf::Message as _;
     use rstest::rstest;
@@ -193,11 +222,13 @@ mod tests {
 
     use super::CycleOptions;
     use super::Input;
+    use super::OutgoingDependencyOptions;
     use super::Request;
     use super::run;
     use crate::cycle_report::NO_CYCLES_FOUND;
     use crate::export::Format;
     use crate::export::Options;
+    use crate::outgoing_dependencies::Mode;
     use crate::output_paths::OutputPathConflict;
     use crate::scip::backend::parse_scip;
 
@@ -266,6 +297,165 @@ mod tests {
         }
     }
 
+    #[must_use]
+    fn outgoing_dependency_index_fixture() -> Index {
+        let targets = [
+            ("src/target/first.rs", "first", 0),
+            ("src/target/second.rs", "second", 0),
+            ("src/target/deep/third.rs", "third", 0),
+            ("src/testonly/test.rs", "test_only", SymbolRole::Test as i32),
+            ("outside/external.rs", "external", 0),
+        ];
+        let mut documents = Vec::new();
+        let mut references = Vec::new();
+        for (relative_path, name, symbol_roles) in targets {
+            let symbol = format!("rust-analyzer cargo fixture 0.0.0 {name}().");
+            references.push(Occurrence { symbol: symbol.clone(), symbol_roles, ..Occurrence::default() });
+            documents.push(Document {
+                relative_path: relative_path.into(),
+                occurrences: vec![Occurrence { symbol, symbol_roles: SymbolRole::Definition as i32, ..Occurrence::default() }],
+                ..Document::default()
+            });
+        }
+        documents.push(Document {
+            relative_path: "outside/entry.rs".into(),
+            occurrences: references.clone(),
+            ..Document::default()
+        });
+        documents.push(Document { relative_path: "src/app/entry.rs".into(), occurrences: references, ..Document::default() });
+        Index { documents, ..Index::default() }
+    }
+
+    #[rstest]
+    #[case::files_all(Mode::Files, ".", false, None, &[("outside/entry.rs", 5), ("src/app/entry.rs", 5)])]
+    #[case::folders_all(Mode::Folders, ".", false, None, &[("outside", 3), ("src/app", 4)])]
+    #[case::files_root(Mode::Files, "src", false, None, &[("src/app/entry.rs", 4)])]
+    #[case::folders_root(Mode::Folders, "src", false, None, &[("app", 3)])]
+    #[case::files_production(Mode::Files, "src", true, None, &[("src/app/entry.rs", 3)])]
+    #[case::folders_production(Mode::Folders, "src", true, None, &[("app", 2)])]
+    #[case::files_folded(Mode::Files, "src", true, Some(1), &[("src/app/entry.rs", 3)])]
+    #[case::folders_folded(Mode::Folders, "src", true, Some(1), &[])]
+    #[case::folders_folded_with_tests(Mode::Folders, "src", false, Some(1), &[("app", 2)])]
+    fn test_outgoing_dependency_graph_selection(
+        #[case] mode: Mode,
+        #[case] root: &str,
+        #[case] exclude_tests: bool,
+        #[case] depth: Option<usize>,
+        #[case] expected: &[(&str, usize)],
+    ) {
+        let fixture = tempdir();
+        let fixture = assert_ok!(fixture, "Outgoing dependency fixture directory must be created");
+        let input = fixture.path().join("index.scip");
+        let report_path = fixture.path().join("outgoing.md");
+        let bytes = outgoing_dependency_index_fixture().write_to_bytes();
+        let bytes = assert_ok!(bytes, "Outgoing dependency fixture must serialize");
+        let written = fs::write(&input, bytes);
+        assert_ok!(written, "Outgoing dependency index must be written");
+        let options = OutgoingDependencyOptions::builder().maximum(1).mode(mode).output(report_path.clone()).build();
+        let request = Request::builder().input(Input::ScipFile(input)).root(PathBuf::from(root)).exclude_tests(exclude_tests);
+        let system_under_test = request.maybe_depth(depth).outgoing_dependencies(options).build();
+        let expected_lines: Vec<_> = expected.iter().map(|&(label, count)| {
+            let label = match mode {
+                Mode::Files => PathBuf::from_iter(label.split('/')).to_string_lossy().replace('\\', "&#92;"),
+                Mode::Folders => label.to_owned(),
+            };
+            format!("- <code>{label}</code>: {count} outgoing dependencies (maximum: 1)")
+        }).collect();
+        let mut diagram = Vec::new();
+
+        let result = run(&system_under_test, &mut diagram);
+        let report = fs::read_to_string(report_path);
+        let report = assert_ok!(report, "Outgoing report must be written before a threshold failure");
+        let actual_lines: Vec<_> = report.lines().filter(|line| line.starts_with("- ")).collect();
+
+        assert_eq!(actual_lines, expected_lines, "Report must reflect the selected graph after filtering and folding");
+        assert_eq!(result.is_err(), !expected.is_empty(), "Threshold result disagrees with expected sources: {result:?}");
+        if let Err(error) = result {
+            assert!(error.to_string().contains("Outgoing dependency threshold exceeded"), "Unexpected failure: {error}");
+        }
+        if expected.is_empty() {
+            assert!(report.contains("No outgoing dependency violations"), "Passing reports must state that no sources violate");
+        }
+        let mode_label = match mode { Mode::Files => "files", Mode::Folders => "folders" };
+        assert!(report.contains(&format!("Mode: {mode_label}")), "Report must identify the selected mode");
+        assert!(report.contains("Maximum: 1"), "Report must include the requested maximum");
+        assert!(!diagram.is_empty(), "Graph checks must run after diagram output is written");
+    }
+
+    #[rstest]
+    #[case::disabled(false, None, true, 0, false)]
+    #[case::default_folders(true, None, false, 0, false)]
+    #[case::default_folder_self(true, None, true, 0, true)]
+    #[case::files_without_self(true, Some(Mode::Files), false, 0, true)]
+    #[case::files_with_self(true, Some(Mode::Files), true, 0, true)]
+    #[case::folder_equality(true, Some(Mode::Folders), true, 1, false)]
+    #[case::file_equality(true, Some(Mode::Files), false, 1, false)]
+    fn test_outgoing_dependency_gate_and_outputs(
+        #[case] enabled: bool,
+        #[case] mode: Option<Mode>,
+        #[case] include_self: bool,
+        #[case] maximum: usize,
+        #[case] expected_failure: bool,
+        #[values(false, true)] report_requested: bool,
+    ) {
+        const CONTENTS_EXISTING: &str = "preserved";
+        let fixture = tempdir();
+        let fixture = assert_ok!(fixture, "Outgoing gate fixture directory must be created");
+        let input = fixture.path().join("index.scip");
+        let output = fixture.path().join("diagram.dot");
+        let report_path = fixture.path().join("outgoing.md");
+        let bytes = two_file_index_fixture(false).write_to_bytes();
+        let bytes = assert_ok!(bytes, "Same-folder dependency fixture must serialize");
+        let index_write = fs::write(&input, bytes);
+        assert_ok!(index_write, "Same-folder dependency index must be written");
+        let diagram_write = fs::write(&output, CONTENTS_EXISTING);
+        assert_ok!(diagram_write, "Existing diagram must be initialized before the outgoing gate");
+        let write_report = enabled && report_requested;
+        if write_report {
+            let report_write = fs::write(&report_path, CONTENTS_EXISTING);
+            assert_ok!(report_write, "Existing outgoing report must be initialized before the gate");
+        }
+        let options = OutgoingDependencyOptions::builder().maximum(maximum);
+        let options = options.maybe_output(report_requested.then(|| report_path.clone()));
+        let options = match mode { Some(mode) => options.mode(mode).build(), None => options.build() };
+        let request = Request::builder().input(Input::ScipFile(input)).root(PathBuf::from("src")).include_self(include_self);
+        let system_under_test = request.output(output.clone()).maybe_outgoing_dependencies(enabled.then_some(options)).build();
+        let mut diagram = Vec::new();
+
+        let result = run(&system_under_test, &mut diagram);
+        let exported = fs::read_to_string(output);
+        let exported = assert_ok!(exported, "Diagram must be readable after the outgoing gate");
+        let report_exists = report_path.try_exists();
+        let report_exists = assert_ok!(report_exists, "Outgoing report path must be inspectable");
+
+        assert_eq!(result.is_err(), expected_failure, "Unexpected outgoing threshold result: {result:?}");
+        if let Err(error) = result {
+            assert!(error.to_string().contains("Outgoing dependency threshold exceeded"), "Unexpected gate failure: {error}");
+        }
+        assert!(exported.contains("digraph"), "The requested diagram must replace existing output before gating");
+        assert_eq!(diagram, [] as [u8; 0], "An output-file request must not also write the diagram to the supplied writer");
+        assert_eq!(report_exists, write_report, "Only an enabled check with an output path should write a report");
+        if write_report {
+            let report = fs::read_to_string(report_path);
+            let report = assert_ok!(report, "Requested outgoing report must remain readable after gating");
+            let actual_lines: Vec<_> = report.lines().filter(|line| line.starts_with("- ")).collect();
+            let expected_lines = if expected_failure {
+                let label = if matches!(mode, Some(Mode::Files)) {
+                    PathBuf::from("src").join("first.rs").to_string_lossy().replace('\\', "&#92;")
+                } else {
+                    String::from(".")
+                };
+                vec![format!("- <code>{label}</code>: 1 outgoing dependencies (maximum: {maximum})")]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(actual_lines, expected_lines, "File targets must not inherit folder self-edge filtering");
+            if !expected_failure {
+                assert!(report.contains("No outgoing dependency violations"), "Equality and zero targets must pass the check");
+            }
+        }
+    }
+
     #[rstest]
     #[case::cyclic_neither(true, false, false, None)]
     #[case::cyclic_report_only(true, true, false, None)]
@@ -280,20 +470,25 @@ mod tests {
         #[case] report_requested: bool,
         #[case] fail_on_cycles: bool,
         #[case] expected_file_cycle_groups: Option<usize>,
+        #[values(false, true)] outgoing_requested: bool,
     ) {
         let fixture = tempdir();
         let fixture = assert_ok!(fixture, "Cycle report fixture directory must be created");
         let input = fixture.path().join("index.scip");
         let file_report = fixture.path().join("files.md");
+        let outgoing_report = fixture.path().join("outgoing.md");
         let bytes = two_file_index_fixture(cyclic).write_to_bytes();
         let bytes = assert_ok!(bytes, "Two-file cycle fixture must serialize");
         let written = fs::write(&input, bytes);
         assert_ok!(written, "Cycle fixture index must be written: {}", input.display());
         let cycles = CycleOptions::builder().fail_on_cycles(fail_on_cycles);
         let cycles = cycles.maybe_file_cycles_output(report_requested.then(|| file_report.clone())).build();
+        let outgoing = outgoing_requested.then(|| {
+            OutgoingDependencyOptions::builder().maximum(0).mode(Mode::Files).output(outgoing_report.clone()).build()
+        });
         /* Same-folder files and disabled self-edges keep the folder gate from masking skipped file analysis. */
         let request = Request::builder().input(Input::ScipFile(input)).root(PathBuf::from("src")).include_self(false);
-        let system_under_test = request.cycles(cycles).build();
+        let system_under_test = request.cycles(cycles).maybe_outgoing_dependencies(outgoing).build();
         let expected_error = expected_file_cycle_groups.map(|groups| {
             format!("Dependency cycles found: 0 folder cycle group(s), {groups} file cycle group(s)")
         });
@@ -301,7 +496,24 @@ mod tests {
 
         let result = run(&system_under_test, &mut diagram);
 
-        assert_eq!(result.err().map(|error| error.to_string()), expected_error);
+        let actual_error = result.err().map(|error| error.to_string());
+        if outgoing_requested {
+            let error = assert_some!(actual_error, "The zero outgoing maximum must reject the fixture's file dependencies");
+            assert!(error.contains("Outgoing dependency threshold exceeded"), "Combined gate omitted the outgoing reason");
+            assert_eq!(error.contains("Dependency cycles found:"), expected_error.is_some(), "Cycle checks are independent");
+            if let Some(expected_error) = expected_error {
+                assert!(error.contains(&expected_error), "Combined gate omitted the cycle reason: {error}");
+            }
+            let report = fs::read_to_string(outgoing_report);
+            let report = assert_ok!(report, "Outgoing report must be written even when both dependency checks fail");
+            let violations = report.lines().filter(|line| line.starts_with("- ")).count();
+            assert_eq!(violations, if cyclic { 2 } else { 1 }, "Outgoing report must include every violating source");
+            assert!(report.contains("first.rs</code>: 1 outgoing dependencies (maximum: 0)"), "First source count is missing");
+            let second_source = report.contains("second.rs</code>: 1 outgoing dependencies (maximum: 0)");
+            assert_eq!(second_source, cyclic, "Only a cyclic fixture has an outgoing dependency from the second source");
+        } else {
+            assert_eq!(actual_error, expected_error);
+        }
         assert!(!diagram.is_empty(), "Cycle gating must happen after diagram output is written");
         let report_exists = file_report.try_exists();
         let report_exists = assert_ok!(report_exists, "File-cycle report path must be inspectable");
@@ -349,12 +561,13 @@ mod tests {
     #[rstest]
     #[case::same_path(false)]
     #[case::hard_link(true)]
-    fn test_replay_cannot_overwrite_input(#[case] alias: bool) {
+    fn test_replay_cannot_overwrite_input(#[case] alias: bool, #[values(false, true)] outgoing_report: bool) {
         let fixture = tempdir();
         let fixture = assert_ok!(fixture, "Protected input fixture directory must be created");
         let input = fixture.path().join("index.scip");
-        let bytes = include_bytes!("fixtures/dependency-graph.scip");
-        let written = fs::write(&input, bytes);
+        let bytes = two_file_index_fixture(false).write_to_bytes();
+        let bytes = assert_ok!(bytes, "Protected input fixture must serialize");
+        let written = fs::write(&input, &bytes);
         assert_ok!(written, "Protected SCIP input must be initialized");
         let output = if alias {
             let output = fixture.path().join("alias.scip");
@@ -364,7 +577,13 @@ mod tests {
         } else {
             input.clone()
         };
-        let system_under_test = Request::builder().input(Input::ScipFile(input.clone())).output(output).build();
+        let request = Request::builder().input(Input::ScipFile(input.clone()));
+        let system_under_test = if outgoing_report {
+            let options = OutgoingDependencyOptions::builder().maximum(usize::MAX).output(output).build();
+            request.outgoing_dependencies(options).build()
+        } else {
+            request.output(output).build()
+        };
         let mut diagram = Vec::new();
 
         let result = run(&system_under_test, &mut diagram);
@@ -379,7 +598,7 @@ mod tests {
     #[rstest]
     #[case::empty(b"")]
     #[case::malformed(b"\xff")]
-    fn test_invalid_index_preserves_outputs(#[case] bytes: &[u8]) {
+    fn test_invalid_index_preserves_outputs(#[case] bytes: &[u8], #[values(false, true)] existing_report: bool) {
         const CONTENTS_EXISTING: &str = "preserved";
         let fixture = tempdir();
         let fixture = assert_ok!(fixture, "Invalid-index fixture directory must be created");
@@ -387,13 +606,20 @@ mod tests {
         let output = fixture.path().join("diagram.dot");
         let folder_report = fixture.path().join("folders.json");
         let file_report = fixture.path().join("files.json");
+        let outgoing_report = fixture.path().join("outgoing.md");
         let input_write = fs::write(&input, bytes);
         assert_ok!(input_write, "Invalid SCIP bytes must be written for the rejection check");
         let diagram_write = fs::write(&output, CONTENTS_EXISTING);
         assert_ok!(diagram_write, "Existing diagram must be initialized before invalid-index replay");
+        if existing_report {
+            let report_write = fs::write(&outgoing_report, CONTENTS_EXISTING);
+            assert_ok!(report_write, "Existing outgoing report must be initialized before invalid-index replay");
+        }
+        let outgoing = OutgoingDependencyOptions::builder().maximum(0).output(outgoing_report.clone()).build();
         let cycles = CycleOptions::builder().cycles_output(folder_report.clone());
         let cycles = cycles.file_cycles_output(file_report.clone()).build();
-        let system_under_test = Request::builder().input(Input::ScipFile(input)).output(output.clone()).cycles(cycles).build();
+        let request = Request::builder().input(Input::ScipFile(input)).output(output.clone()).cycles(cycles);
+        let system_under_test = request.outgoing_dependencies(outgoing).build();
         let mut diagram = Vec::new();
 
         let result = run(&system_under_test, &mut diagram);
@@ -408,6 +634,14 @@ mod tests {
         let file_report_exists = file_report.try_exists();
         let file_report_exists = assert_ok!(file_report_exists, "File report path must be inspectable");
         assert!(!file_report_exists, "Invalid input created a file report");
+        let outgoing_report_exists = outgoing_report.try_exists();
+        let outgoing_report_exists = assert_ok!(outgoing_report_exists, "Outgoing report path must be inspectable");
+        assert_eq!(outgoing_report_exists, existing_report, "Invalid input must not create an outgoing report");
+        if existing_report {
+            let preserved_report = fs::read_to_string(outgoing_report);
+            let preserved_report = assert_ok!(preserved_report, "Invalid input must leave the existing outgoing report readable");
+            assert_eq!(preserved_report, CONTENTS_EXISTING, "Invalid input must not replace an outgoing report");
+        }
         assert_eq!(diagram, [] as [u8; 0]);
     }
 
@@ -440,29 +674,37 @@ mod tests {
     #[rstest]
     #[case::same_path(false)]
     #[case::hard_link(true)]
-    fn test_conflicting_outputs_preserve_files(#[case] alias: bool) {
+    fn test_conflicting_outputs_preserve_files(#[case] alias: bool, #[values(false, true)] outgoing_report: bool) {
         const CONTENTS_EXISTING: &str = "preserved";
         let fixture = tempdir();
         let fixture = assert_ok!(fixture, "Conflicting-output fixture directory must be created");
         let input = fixture.path().join("index.scip");
         let output = fixture.path().join("diagram.dot");
         let file_report = fixture.path().join("files.json");
-        let input_write = fs::write(&input, include_bytes!("fixtures/dependency-graph.scip"));
+        let bytes = two_file_index_fixture(false).write_to_bytes();
+        let bytes = assert_ok!(bytes, "Conflicting-output fixture must serialize");
+        let input_write = fs::write(&input, bytes);
         assert_ok!(input_write, "Valid SCIP input must be initialized before output conflict validation");
         let diagram_write = fs::write(&output, CONTENTS_EXISTING);
         assert_ok!(diagram_write, "Existing diagram must be initialized before output conflict validation");
         let report_write = fs::write(&file_report, CONTENTS_EXISTING);
         assert_ok!(report_write, "File-cycle report must be written before testing output conflicts");
-        let folder_report = if alias {
-            let report = fixture.path().join("folders.json");
+        let conflicting_report = if alias {
+            let report = fixture.path().join("conflict.md");
             let linked = fs::hard_link(&output, &report);
-            assert_ok!(linked, "Folder report alias must refer to the existing diagram");
+            assert_ok!(linked, "Conflicting report alias must refer to the existing diagram");
             report
         } else {
             output.clone()
         };
-        let cycles = CycleOptions::builder().cycles_output(folder_report).file_cycles_output(file_report.clone()).build();
-        let system_under_test = Request::builder().input(Input::ScipFile(input)).output(output.clone()).cycles(cycles).build();
+        let cycles = CycleOptions::builder().file_cycles_output(file_report.clone());
+        let request = Request::builder().input(Input::ScipFile(input)).output(output.clone());
+        let system_under_test = if outgoing_report {
+            let outgoing = OutgoingDependencyOptions::builder().maximum(usize::MAX).output(conflicting_report).build();
+            request.cycles(cycles.build()).outgoing_dependencies(outgoing).build()
+        } else {
+            request.cycles(cycles.cycles_output(conflicting_report).build()).build()
+        };
         let mut diagram = Vec::new();
 
         let result = run(&system_under_test, &mut diagram);

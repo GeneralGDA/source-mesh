@@ -34,8 +34,8 @@ digraph folders {
   n1 -> n4 [label="test: 1" color="#D97706" style=dashed]
   n1 -> n8 [label="1"]
   n1 -> n8 [label="test: 1" color="#D97706" style=dashed]
-  n1 -> n9 [label="4"]
-  n1 -> n9 [label="test: 4" color="#D97706" style=dashed]
+  n1 -> n9 [label="5"]
+  n1 -> n9 [label="test: 5" color="#D97706" style=dashed]
   n1 -> n10 [label="4"]
   n1 -> n10 [label="test: 2" color="#D97706" style=dashed]
   n2 -> n3 [label="4"]
@@ -69,4 +69,5 @@ digraph folders {
   n11 -> n1 [label="2"]
   n11 -> n2 [label="1"]
   n11 -> n4 [label="1"]
+  n11 -> n9 [label="1"]
 }

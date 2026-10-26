@@ -1,6 +1,6 @@
 digraph folders {
   rankdir=LR
   n0[label="." shape=box]
-  n0 -> n0 [label="96"]
-  n0 -> n0 [label="test: 80" color="#D97706" style=dashed]
+  n0 -> n0 [label="101"]
+  n0 -> n0 [label="test: 83" color="#D97706" style=dashed]
 }

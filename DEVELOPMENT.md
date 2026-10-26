@@ -7,7 +7,7 @@ The repository root is a virtual workspace with two sibling crates:
 - `source-mesh` in `crates/source-mesh` owns argument parsing, help, and process exit handling.
   It installs the `source-mesh` executable.
 - [`source-mesh-core`](crates/source-mesh-core/README.md) owns analysis, graph processing, exports, output validation,
-  and cycle checks. Its typed API can be used without the CLI or `clap`.
+  and cycle/outgoing dependency checks. Its typed API can be used without the CLI or `clap`.
 
 The root `Cargo.toml` contains only workspace configuration, shared package metadata, dependencies, and lints;
 it does not define a package.

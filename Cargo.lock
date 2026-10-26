@@ -988,7 +988,7 @@ checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 
 [[package]]
 name = "source-mesh"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "claims",
@@ -1005,7 +1005,7 @@ dependencies = [
 
 [[package]]
 name = "source-mesh-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "askama",

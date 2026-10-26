@@ -5,7 +5,7 @@
 ![macOS CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.svg?nameFilter=macos-latest&style=for-the-badge&label=macOS&logo=apple&logoColor=white)
 ![Windows CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.svg?nameFilter=windows-latest&style=for-the-badge&label=Windows)
 
-Draw dependencies between physical folders in a Rust project. Export **GraphML for yEd**, **Mermaid**, or **DOT**, highlight cycles, and report cycles between folders or files.
+Draw dependencies between physical folders in a Rust project. Export **GraphML for yEd**, **Mermaid**, or **DOT**, highlight cycles, and check cycles or outgoing dependency limits between folders or files.
 
 ## Install
 
@@ -48,11 +48,36 @@ source-mesh . --root src --format graphml --exclude-tests --highlight-cycles --c
 | `--fail-on-cycles` | Exit unsuccessfully when file or folder cycle groups are found, after writing requested outputs |
 | `--cycles-output FILE` | Write folder cycle chains to Markdown |
 | `--file-cycles-output FILE` | Write file cycle chains before folder aggregation |
+| `--max-outgoing-dependencies N` | Fail when a file or folder has more than N distinct outgoing targets |
+| `--outgoing-dependencies-mode files\|folders` | Select the threshold check's scope (default: `folders`) |
+| `--outgoing-dependencies-output FILE` | Write outgoing dependency violations to Markdown; requires a threshold |
 | `--verbose` / `-v` | Include diagnostic details and timings |
 
 `A → B` means a file in A refers to a symbol defined in B. Edge labels count distinct file pairs. Folder aggregation can introduce cycles even when the file graph is acyclic.
 
 Analysis of large projects can take several minutes. Use `--verbose` for diagnostic details and `source-mesh --help` for all options.
+
+## Outgoing dependency limits
+
+Limit each folder to at most five distinct dependency targets:
+
+```console
+source-mesh . --root src --exclude-tests --max-outgoing-dependencies 5 --outgoing-dependencies-output dependencies.md --output folders.dot
+```
+
+To check individual files instead, add `--outgoing-dependencies-mode files`. The default mode, `folders`, checks the final
+folder graph after `--root` filtering and `--depth` folding. File mode checks the file graph before folder aggregation, so
+folder depth does not affect its counts. Both modes respect `--root` and `--exclude-tests`; targets outside the root are excluded.
+`--group-folders` only changes diagram presentation, not dependency counts.
+
+Each distinct target counts once, even if referenced repeatedly or by both production and test code. Folder edge weights
+(the number of file pairs) are not summed. A retained folder self-edge counts as one target when `--include-self` is enabled.
+`N` must be a non-negative integer: equality passes, and `0` forbids any outgoing dependencies. Without a threshold, no check runs;
+an explicit mode or report path requires `--max-outgoing-dependencies`.
+
+On a violation, source-mesh writes the diagram and requested reports, then exits with code `1`. Stderr lists every violating
+file or folder with its count and the threshold. The optional Markdown report lists the same violations, or explicitly states
+that none were found. When combined with `--fail-on-cycles`, diagnostics include both kinds of failure.
 
 ## GitHub Actions
 

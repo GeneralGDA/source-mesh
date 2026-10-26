@@ -15,11 +15,13 @@ use clap::ValueEnum;
 use source_mesh_core::CycleOptions as LibraryCycleOptions;
 use source_mesh_core::DEFAULT_CYCLE_LIMIT;
 use source_mesh_core::Input;
+use source_mesh_core::OutgoingDependencyOptions;
 use source_mesh_core::Project;
 use source_mesh_core::Request;
 use source_mesh_core::analyzer_options::Options as AnalyzerOptions;
 use source_mesh_core::backend::contains_project_file;
 use source_mesh_core::export::Format as ExportFormat;
+use source_mesh_core::outgoing_dependencies::Mode as LibraryOutgoingDependencyMode;
 
 const BOOLEAN_OPTIONS_DEFAULT_HELP: &str = "All boolean options are disabled by default.";
 
@@ -54,6 +56,37 @@ struct CycleOptions {
     cycle_limit: NonZeroUsize,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum OutgoingDependencyMode {
+    Files,
+    Folders,
+}
+
+impl From<OutgoingDependencyMode> for LibraryOutgoingDependencyMode {
+    fn from(mode: OutgoingDependencyMode) -> Self {
+        match mode {
+            OutgoingDependencyMode::Files => Self::Files,
+            OutgoingDependencyMode::Folders => Self::Folders,
+        }
+    }
+}
+
+#[derive(Args)]
+struct OutgoingDependencyArguments {
+    #[arg(long, value_name = "N", help = "Fail after writing outputs if any node has more than N distinct outgoing targets")]
+    max_outgoing_dependencies: Option<usize>,
+    #[arg(
+        long, value_enum, default_value = "folders", requires = "max_outgoing_dependencies",
+        help = "Check files before folder folding, or folders after root/depth filtering"
+    )]
+    outgoing_dependencies_mode: OutgoingDependencyMode,
+    #[arg(
+        long, value_name = "FILE", requires = "max_outgoing_dependencies",
+        help = "Write outgoing dependency violations to Markdown"
+    )]
+    outgoing_dependencies_output: Option<PathBuf>,
+}
+
 #[derive(Args)]
 struct AnalyzerArguments {
     #[arg(short, long, help = "Show diagnostic details and analysis timings")]
@@ -63,7 +96,7 @@ struct AnalyzerArguments {
 #[derive(Parser)]
 #[command(
     version,
-    about = "Draw Rust folder dependencies and detect dependency cycles",
+    about = "Draw Rust folder dependencies, detect cycles, and check outgoing dependency limits",
     after_help = BOOLEAN_OPTIONS_DEFAULT_HELP
 )]
 struct Cli {
@@ -85,6 +118,8 @@ struct Cli {
     exclude_tests: bool,
     #[command(flatten)]
     cycles: CycleOptions,
+    #[command(flatten)]
+    outgoing_dependencies: OutgoingDependencyArguments,
     #[arg(long, conflicts_with_all = ["save_scip", "config"], help = "Reuse saved analysis without reanalyzing sources")]
     from_scip: Option<PathBuf>,
     #[arg(long, help = "Save the index for fast re-export at other depths/formats")]
@@ -104,10 +139,15 @@ fn run(cli: Cli, standard_output: &mut dyn Write) -> Result<()> {
     let cycles = cycles.highlight_cycles(cli.cycles.highlight_cycles).fail_on_cycles(cli.cycles.fail_on_cycles);
     let cycles = cycles.maybe_cycles_output(cli.cycles.cycles_output).maybe_file_cycles_output(cli.cycles.file_cycles_output);
     let cycles = cycles.cycle_limit(cli.cycles.cycle_limit).build();
+    let outgoing_dependencies = cli.outgoing_dependencies.max_outgoing_dependencies.map(|maximum| {
+        let options = OutgoingDependencyOptions::builder().maximum(maximum);
+        let options = options.mode(cli.outgoing_dependencies.outgoing_dependencies_mode.into());
+        options.maybe_output(cli.outgoing_dependencies.outgoing_dependencies_output).build()
+    });
     let request = Request::builder().input(input).root(cli.root).format(cli.format.into());
     let request = request.maybe_output(cli.output).maybe_depth(cli.depth);
     let request = request.include_self(cli.include_self).group_folders(cli.group_folders).exclude_tests(cli.exclude_tests);
-    let request = request.cycles(cycles).maybe_save_scip(cli.save_scip);
+    let request = request.cycles(cycles).maybe_outgoing_dependencies(outgoing_dependencies).maybe_save_scip(cli.save_scip);
     let request = request.analyzer(AnalyzerOptions::new(cli.analyzer.verbose)).build();
     source_mesh_core::run(&request, standard_output)
 }
@@ -163,6 +203,7 @@ mod cli_tests {
 
     use super::BOOLEAN_OPTIONS_DEFAULT_HELP;
     use super::Cli;
+    use super::OutgoingDependencyMode;
     use super::error_message;
     use super::report_error;
     use super::should_display_help;
@@ -175,6 +216,14 @@ mod cli_tests {
     #[case(&["--save-scip", "saved.scip"])]
     #[case(&["--config", "config.json"])]
     #[case(&["--cycle-limit", "0"])]
+    #[case(&["--max-outgoing-dependencies=-1"])]
+    #[case(&["--max-outgoing-dependencies", "not-a-number"])]
+    #[case(&["--max-outgoing-dependencies", "1.5"])]
+    #[case(&["--max-outgoing-dependencies", "18446744073709551616"])]
+    #[case(&["--max-outgoing-dependencies"])]
+    #[case(&["--max-outgoing-dependencies", "1", "--outgoing-dependencies-mode", "unknown"])]
+    #[case(&["--outgoing-dependencies-mode", "files"])]
+    #[case(&["--outgoing-dependencies-output", "dependencies.md"])]
     fn test_invalid_arguments(#[case] arguments: &[&str]) {
         let replay_arguments = [env!("CARGO_PKG_NAME"), "--from-scip", "input.scip"];
         let system_under_test = Cli::try_parse_from(replay_arguments.into_iter().chain(arguments.iter().copied()));
@@ -217,6 +266,33 @@ mod cli_tests {
         let system_under_test = assert_ok!(system_under_test, "CLI must accept the cycle-failure flag");
 
         assert!(system_under_test.cycles.fail_on_cycles, "CLI did not enable cycle failure");
+    }
+
+    #[rstest]
+    #[case::disabled(&[], None, false, false)]
+    #[case::zero(&["--max-outgoing-dependencies", "0"], Some(0), false, false)]
+    #[case::files(
+        &["--max-outgoing-dependencies", "5", "--outgoing-dependencies-mode", "files"], Some(5), true, false
+    )]
+    #[case::folders(
+        &["--max-outgoing-dependencies", "7", "--outgoing-dependencies-mode", "folders"], Some(7), false, false
+    )]
+    #[case::report(
+        &["--max-outgoing-dependencies", "3", "--outgoing-dependencies-output", "dependencies.md"], Some(3), false, true
+    )]
+    fn test_outgoing_dependency_arguments(
+        #[case] arguments: &[&str],
+        #[case] maximum: Option<usize>,
+        #[case] files: bool,
+        #[case] report: bool,
+    ) {
+        let system_under_test = Cli::try_parse_from(iter::once(env!("CARGO_PKG_NAME")).chain(arguments.iter().copied()));
+        let system_under_test = assert_ok!(system_under_test, "CLI must accept outgoing dependency arguments: {arguments:?}");
+        let options = system_under_test.outgoing_dependencies;
+
+        assert_eq!(options.max_outgoing_dependencies, maximum, "The threshold must be opt-in and allow zero");
+        assert_eq!(matches!(options.outgoing_dependencies_mode, OutgoingDependencyMode::Files), files);
+        assert_eq!(options.outgoing_dependencies_output.is_some(), report, "Only an explicitly requested report is enabled");
     }
 
     #[rstest]
@@ -298,6 +374,8 @@ mod command_tests {
     use tempfile::tempdir;
 
     use super::Cli;
+    use super::error_message;
+    use super::report_error;
     use super::run;
 
     #[rstest]
@@ -458,6 +536,60 @@ mod command_tests {
         assert!(diagram.contains("cycle_group"), "Cyclic graph did not produce a highlighted diagram");
         assert!(folder_report.contains("## C1 ("), "Cyclic graph did not produce a folder cycle report");
         assert!(file_report.contains("## C1 ("), "Cyclic graph did not produce a file cycle report");
+    }
+
+    #[rstest]
+    fn test_outgoing_dependency_failure_outputs(
+        #[values("files", "folders")] mode: &str,
+        #[values(false, true)] diagram_to_file: bool,
+    ) {
+        let fixture = tempdir();
+        let fixture = assert_ok!(fixture, "Outgoing dependency fixture must have a temporary directory");
+        let index_path = fixture.path().join("input.scip");
+        let diagram_path = fixture.path().join("diagram.dot");
+        let report_path = fixture.path().join("outgoing.md");
+        let index = cyclic_index_fixture();
+        let index = assert_ok!(index, "Outgoing dependency scenario must have a valid serialized index");
+        let written = fs::write(&index_path, index);
+        assert_ok!(written, "Outgoing dependency scenario must write its SCIP fixture");
+        let system_under_test = Cli::try_parse_from([
+            OsStr::new(env!("CARGO_PKG_NAME")),
+            OsStr::new("--from-scip"), index_path.as_os_str(),
+            OsStr::new("--max-outgoing-dependencies"), OsStr::new("1"),
+            OsStr::new("--outgoing-dependencies-mode"), OsStr::new(mode),
+            OsStr::new("--outgoing-dependencies-output"), report_path.as_os_str(),
+        ]);
+        let mut system_under_test = assert_ok!(system_under_test, "CLI must accept outgoing dependency check and report options");
+        system_under_test.output = diagram_to_file.then(|| diagram_path.clone());
+        let mut output = Vec::new();
+
+        let result = run(system_under_test, &mut output);
+        let mut diagnostic = Vec::new();
+        assert!(result.is_err(), "Two outgoing targets must exceed a maximum of one");
+        if let Err(error) = result {
+            let status = report_error(&error_message(&error, false), &mut diagnostic);
+            assert_eq!(status, std::process::ExitCode::FAILURE, "A threshold violation must fail the command");
+        }
+        let diagnostic = String::from_utf8(diagnostic);
+        let diagnostic = assert_ok!(diagnostic, "Dependency diagnostic must be UTF-8");
+        let report = fs::read_to_string(report_path);
+        let report = assert_ok!(report, "The violation report must be written before command failure");
+        let source = if mode == "files" { Path::new("second").join("item.rs") } else { "second".into() };
+        let source = source.to_string_lossy();
+        let expected_violation = format!("- {source:?}: 2 outgoing dependencies (maximum: 1)");
+        let violations: Vec<_> = diagnostic.lines().filter(|line| line.starts_with("- ")).collect();
+
+        assert_eq!(violations, [expected_violation], "Normal stderr must list exactly the violating source and count");
+        assert!(diagnostic.starts_with("error: "), "CLI must emit the failure on the error stream");
+        assert!(diagnostic.contains(&format!("mode: {mode}, maximum: 1")), "Diagnostic must identify the check");
+        assert!(report.contains(&format!("Mode: {mode}")), "Report must use the requested dependency mode");
+        assert_eq!(report.lines().filter(|line| line.starts_with("- ")).count(), 1, "Report must list the violation");
+        assert_eq!(output.is_empty(), diagram_to_file, "Diagnostics must not replace or contaminate the diagram");
+        if diagram_to_file {
+            let diagram = fs::read(diagram_path);
+            let diagram = assert_ok!(diagram, "Diagram must be written before threshold failure");
+            assert!(!diagram.is_empty(), "Threshold failure must preserve the requested diagram");
+        }
     }
 
     #[test]

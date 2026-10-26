@@ -3,6 +3,7 @@ use std::num::NonZeroUsize;
 use anyhow::Context as _;
 use anyhow::Result;
 
+use super::markdown::inline_code;
 use crate::cycle_presentation::group_color;
 use crate::cycles::CycleAnalysis;
 use crate::model::FileNode;
@@ -64,24 +65,6 @@ fn render_cycles<Node: Clone + Ord>(
     Ok(output)
 }
 
-#[must_use]
-fn inline_code(label: &str) -> String {
-    let visible_label = label.replace('\r', "\\r").replace('\n', "\\n").replace('\t', "\\t");
-    let mut output = String::from("<code>");
-    for character in quick_xml::escape::escape(&visible_label).chars() {
-        match character {
-            '`' | '*' | '_' | '[' | ']' | '\\' | '~' | '|' => {
-                output.push_str("&#");
-                output.push_str(&u32::from(character).to_string());
-                output.push(';');
-            }
-            _ => output.push(character),
-        }
-    }
-    output.push_str("</code>");
-    output
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -99,7 +82,6 @@ mod tests {
     use super::NO_CYCLES_FOUND;
     use super::file_report;
     use super::folder_report;
-    use super::inline_code;
     use crate::SourcePath;
     use crate::cycle_presentation::group_color;
     use crate::cycles::analyze_files;
@@ -246,20 +228,6 @@ mod tests {
         assert_eq!(first_expected, first_chains, "First group contains incorrect chains");
         let last_expected = vec![vec![String::from("queue"), String::from("storage"), String::from("queue")]];
         assert_eq!(last_expected, last_chains, "Second group contains incorrect chains");
-    }
-
-    #[rstest]
-    #[case("", "<code></code>")]
-    #[case("plain text", "<code>plain text</code>")]
-    #[case("&lt;", "<code>&amp;lt;</code>")]
-    #[case("\r\n\t", "<code>&#92;r&#92;n&#92;t</code>")]
-    #[case("`*_[]\\~|", "<code>&#96;&#42;&#95;&#91;&#93;&#92;&#126;&#124;</code>")]
-    fn test_inline_code(#[case] label: &str, #[case] expected: &str) {
-        let system_under_test = inline_code;
-
-        let output = system_under_test(label);
-
-        assert_eq!(expected, output, "Inline code escaping changed");
     }
 
     #[rstest]

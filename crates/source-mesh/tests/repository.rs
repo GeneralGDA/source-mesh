@@ -174,6 +174,10 @@ mod repository_tests {
     #[rstest]
     #[case::all_folders("all-folders", &[])]
     #[case::production("production", &["--exclude-tests"])]
+    #[case::outgoing_folders("all-folders", &["--max-outgoing-dependencies", "1000000"])]
+    #[case::outgoing_files(
+        "all-folders", &["--max-outgoing-dependencies", "1000000", "--outgoing-dependencies-mode", "files"]
+    )]
     #[case::top_level("top-level", &["--depth", "1", "--exclude-tests"])]
     #[case::grouped("grouped", &["--group-folders"])]
     #[case::grouped_production("grouped-production", &["--group-folders", "--exclude-tests"])]
