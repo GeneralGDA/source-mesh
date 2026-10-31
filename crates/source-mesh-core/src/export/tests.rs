@@ -146,6 +146,7 @@ fn test_parallel_dependency_styles(#[case] format: Format, #[values(false, true)
             let visible_label = test_edge.descendants().find(|node| node.has_tag_name("EdgeLabel"));
             let visible_label = visible_label.and_then(|node| node.text());
             let visible_label = assert_some!(visible_label, "Test GraphML edge must have visual label text");
+            let expected_color = COLOR_EDGE_TEST.to_string();
 
             assert_eq!(edges.len(), 2, "GraphML merged parallel dependency kinds");
             assert_ne!(production_edge.attribute("id"), test_edge.attribute("id"), "Parallel GraphML edges share an identifier");
@@ -168,11 +169,11 @@ fn test_parallel_dependency_styles(#[case] format: Format, #[values(false, true)
             assert_eq!(test_weight, "3", "Test GraphML numeric weight changed");
             assert!(
                 production_style.attribute("type") == Some("line")
-                    && production_style.attribute("color") != Some(COLOR_EDGE_TEST),
+                    && production_style.attribute("color") != Some(expected_color.as_str()),
                 "Production GraphML style changed"
             );
             assert!(
-                test_style.attribute("type") == Some("dashed") && test_style.attribute("color") == Some(COLOR_EDGE_TEST),
+                test_style.attribute("type") == Some("dashed") && test_style.attribute("color") == Some(expected_color.as_str()),
                 "Test GraphML edge is not orange and dashed"
             );
             assert_eq!(visible_label, test_label.as_str(), "Test GraphML label lost its dependency kind");

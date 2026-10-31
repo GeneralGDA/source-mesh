@@ -7,7 +7,9 @@ use anyhow::Context as _;
 use anyhow::Result;
 use anyhow::ensure;
 use askama::Template;
+use colorous::Color;
 
+use crate::color::RgbColor;
 use crate::cycle_presentation::group_color;
 use crate::export::rendering::edge_style::CYCLE_EDGE_WIDTH;
 use crate::export::rendering::edge_style::COLOR_EDGE_TEST;
@@ -24,7 +26,7 @@ use crate::model::FolderGraph;
 
 pub(in crate::export) const NAMESPACE_GRAPHML: &str = "http://graphml.graphdrawing.org/xmlns";
 pub(in crate::export) const NAMESPACE_YWORKS: &str = "http://www.yworks.com/xml/graphml";
-const COLOR_GRAPHICS_DEFAULT: &str = "#47699B";
+const COLOR_GRAPHICS_DEFAULT: RgbColor = RgbColor::new(Color { r: 0x47, g: 0x69, b: 0x9B });
 const LAYOUT_OVERFLOW: &str = "GraphML layout exceeds the supported coordinate range";
 
 pub struct GraphMl;
@@ -209,7 +211,7 @@ struct EdgePresentation {
     weight: usize,
     kind: &'static str,
     label: String,
-    color: String,
+    color: RgbColor,
     line_style: &'static str,
     width: &'static str,
     cycle_group: Option<NonZeroUsize>,
@@ -220,7 +222,7 @@ struct EdgePresentation {
 struct GraphMlTemplate {
     graphml_namespace: &'static str,
     yworks_namespace: &'static str,
-    default_graphics_color: &'static str,
+    default_graphics_color: RgbColor,
     has_cycle_groups: bool,
     node_events: Vec<NodeEvent>,
     edges: Vec<EdgePresentation>,
@@ -263,7 +265,7 @@ impl GraphMlTemplate {
                 weight: edge.weight().value(),
                 kind: kind_name(edge.kind()),
                 label: edge_label(edge.kind(), edge.weight()),
-                color: cycle_color.unwrap_or_else(|| color.to_owned()),
+                color: cycle_color.unwrap_or(color),
                 line_style,
                 width: if edge.cycle_group().is_some() { CYCLE_EDGE_WIDTH } else { "1.0" },
                 cycle_group: edge.cycle_group().map(|group| group.number()),

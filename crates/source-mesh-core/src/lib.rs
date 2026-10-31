@@ -20,6 +20,7 @@ pub use application::Project;
 pub use application::Request;
 pub use application::run;
 
+pub(crate) use graph::color;
 pub(crate) use graph::cycle_presentation;
 pub use graph::cycle_report;
 pub use graph::cycles;

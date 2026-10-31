@@ -1,7 +1,10 @@
+use colorous::Color;
+
+use crate::color::RgbColor;
 use crate::model::DependencyCount;
 use crate::model::DependencyKind;
 
-pub(in crate::export) const COLOR_EDGE_TEST: &str = "#D97706";
+pub(in crate::export) const COLOR_EDGE_TEST: RgbColor = RgbColor::new(Color { r: 0xD9, g: 0x77, b: 0x06 });
 pub(in crate::export) const CYCLE_EDGE_WIDTH: &str = "3.0";
 
 #[must_use]

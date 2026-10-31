@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::num::NonZeroUsize;
 
 use anyhow::Context as _;
@@ -46,11 +47,9 @@ fn render_cycles<Node: Clone + Ord>(
             if previous_group.is_some() {
                 output.push('\n');
             }
-            output.push_str("## C");
-            output.push_str(&group.number().to_string());
-            output.push_str(" (");
-            output.push_str(&group_color(group, analysis.group_count()));
-            output.push_str(")\n\n");
+            let color = group_color(group, analysis.group_count());
+            write!(output, "## C{} ({color})\n\n", group.number())
+                .unwrap_or_else(|_| unreachable!("Formatting a cycle heading into a String cannot fail"));
             previous_group = Some(group);
         }
         output.push_str("- ");
@@ -115,7 +114,7 @@ mod tests {
         let cycles = assert_ok!(cycles, "Both independent self-loop cycles must be enumerable");
         for cycle in cycles {
             let group = cycle.group();
-            let color = group_color(group, analysis.group_count());
+            let color = group_color(group, analysis.group_count()).to_string();
             let heading = format!("## C{} ({color})", group.number());
             assert!(output.contains(&heading), "Cycle report color differs from the diagram palette");
             assert!(color.starts_with('#') && color.len() == 7, "Cycle report color must use six-digit hexadecimal RGB");

@@ -1,11 +1,12 @@
+use super::color::RgbColor;
 use crate::cycles::CycleGroupId;
 
 #[must_use]
-pub(crate) fn group_color(group: CycleGroupId, group_count: usize) -> String {
+pub(crate) fn group_color(group: CycleGroupId, group_count: usize) -> RgbColor {
     assert!(group.number().get() <= group_count, "Cycle group must belong to the palette");
     let color = colorous::SET1.get(group.number().get() - 1).copied().filter(|_| group_count <= colorous::SET1.len())
         .unwrap_or_else(|| colorous::RAINBOW.eval_rational(group.number().get() - 1, group_count));
-    format!("#{color:X}")
+    RgbColor::new(color)
 }
 
 #[cfg(test)]
@@ -56,7 +57,7 @@ mod tests {
         let cycles = fixture.cycles(NonZeroUsize::MAX);
         let cycles = assert_ok!(cycles, "Every independent component must yield its self-loop cycle");
         let colors_by_group: BTreeMap<_, _> = cycles.iter().map(|cycle| {
-            (cycle.group().number().get(), system_under_test(cycle.group(), fixture.group_count()))
+            (cycle.group().number().get(), system_under_test(cycle.group(), fixture.group_count()).to_string())
         }).collect();
         let colors: BTreeSet<_> = colors_by_group.values().collect();
         let selected_color = colors_by_group.get(&group_number).map(String::as_str);

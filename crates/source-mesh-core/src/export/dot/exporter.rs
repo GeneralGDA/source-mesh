@@ -4,6 +4,7 @@ use std::num::NonZeroUsize;
 use anyhow::Result;
 use askama::Template;
 
+use crate::color::RgbColor;
 use crate::cycle_presentation::group_color;
 use crate::export::rendering::edge_style::CYCLE_EDGE_WIDTH;
 use crate::export::rendering::edge_style::COLOR_EDGE_TEST;
@@ -39,7 +40,7 @@ struct EdgePresentation {
     source: usize,
     target: usize,
     label: String,
-    color: Option<String>,
+    color: Option<RgbColor>,
     test: bool,
     cycle_group: Option<NonZeroUsize>,
 }
@@ -86,7 +87,7 @@ impl DotTemplate {
                 source: edge.source(),
                 target: edge.target(),
                 label: edge_label(edge.kind(), edge.weight()),
-                color: cycle_color.or_else(|| test.then(|| COLOR_EDGE_TEST.to_owned())),
+                color: cycle_color.or_else(|| test.then_some(COLOR_EDGE_TEST)),
                 test,
                 cycle_group: edge.cycle_group().map(|group| group.number()),
             }
