@@ -22,13 +22,13 @@
       </data>
     </node>
     <edge id="e0" source="n0" target="n0">
-      <data key="weight">101</data>
+      <data key="weight">106</data>
       <data key="kind">production</data>
       <data key="eg">
         <y:PolyLineEdge>
           <y:LineStyle color="#47699B" type="line" width="1.0"/>
           <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>101</y:EdgeLabel>
+          <y:EdgeLabel>106</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>
