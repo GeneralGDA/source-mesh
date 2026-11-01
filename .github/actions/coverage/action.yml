@@ -1,0 +1,20 @@
+name: Coverage
+description: Run tests with coverage and upload the main-branch report.
+
+inputs:
+  output-directory:
+    description: Directory for coverage reports.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Run unit and component tests with coverage
+      shell: pwsh
+      run: ./scripts/Test-Coverage.ps1 -OutputDirectory '${{ inputs.output-directory }}'
+
+    - name: Upload coverage site
+      if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+      uses: actions/upload-pages-artifact@v5.0.0
+      with:
+        path: ${{ inputs.output-directory }}/html

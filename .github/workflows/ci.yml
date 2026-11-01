@@ -38,7 +38,14 @@ jobs:
         run: cargo build --release --locked --workspace --all-targets
 
       - name: Run unit and component tests
+        if: runner.os != 'Linux'
         run: cargo test --release --locked --workspace --lib --bins
+
+      - name: Run unit and component tests with coverage
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/coverage
+        with:
+          output-directory: ${{ runner.temp }}/coverage
 
       - name: Run documentation tests
         run: cargo test --release --locked --workspace --doc
@@ -69,6 +76,19 @@ jobs:
 
       - name: Run repository integration tests
         run: cargo test --release --locked -p source-mesh --test repository -- --ignored
+
+  publish-coverage:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment: github-pages
+    steps:
+      - name: Publish coverage report and badge data
+        uses: actions/deploy-pages@v5.0.1
 
   package:
     name: Publishable packages

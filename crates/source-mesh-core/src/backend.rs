@@ -419,7 +419,7 @@ mod tests {
 
     #[test]
     #[ignore = "slow multi-pass rust-analyzer indexing; excluded to keep default tests fast; \
-                run Test-All.ps1 from the repository root"]
+                run scripts/Test-All.ps1 from the repository root"]
     fn test_rust_analyzer_generated_method_dependencies() {
         let (fixture, options) = analyzer_fixture();
         let project = fixture.join("generated-methods");
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     #[ignore = "slow multi-pass rust-analyzer indexing; excluded to keep default tests fast; \
-                run Test-All.ps1 from the repository root"]
+                run scripts/Test-All.ps1 from the repository root"]
     fn test_rust_analyzer_cargo_target_collisions() {
         let (fixture, options) = analyzer_fixture();
         let project = fixture.join("cargo-targets");
@@ -489,7 +489,7 @@ mod tests {
     }
     #[test]
     #[ignore = "slow multi-pass rust-analyzer indexing; excluded to keep default tests fast; \
-                run Test-All.ps1 from the repository root"]
+                run scripts/Test-All.ps1 from the repository root"]
     fn test_rust_analyzer_manifest_file_graph() {
         let (fixture, options) = analyzer_fixture();
         let manifest = fixture.join("dependency-graph").join(NAME_CARGO_MANIFEST);
@@ -512,7 +512,7 @@ mod tests {
 
     #[test]
     #[ignore = "slow multi-pass rust-analyzer indexing; excluded to keep default tests fast; \
-                run Test-All.ps1 from the repository root"]
+                run scripts/Test-All.ps1 from the repository root"]
     fn test_rust_analyzer_test_configuration_classification() {
         let (fixture, options) = analyzer_fixture();
         let manifest = fixture.join("test-dependencies").join(NAME_CARGO_MANIFEST);

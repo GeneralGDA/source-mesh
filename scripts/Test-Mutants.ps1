@@ -26,10 +26,11 @@ if ($null -eq (Get-Command -Name cargo -CommandType Application -ErrorAction Ign
     throw 'Cargo is required to run mutation tests. Install Rust with rustup, then run this script again.'
 }
 if ($null -eq (Get-Command -Name cargo-mutants -CommandType Application -ErrorAction Ignore)) {
-    throw 'cargo-mutants is required. Run Install-DevTools.ps1, then run this script again.'
+    throw 'cargo-mutants is required. Run scripts/Install-DevTools.ps1, then run this script again.'
 }
 
-$mutationOutputDirectory = Join-Path -Path (Join-Path -Path $PSScriptRoot -ChildPath 'work') -ChildPath 'mutants'
+$repositoryDirectory = Split-Path -Parent $PSScriptRoot
+$mutationOutputDirectory = Join-Path -Path (Join-Path -Path $repositoryDirectory -ChildPath 'work') -ChildPath 'mutants'
 $mutationArguments = @(
     '--package', 'source-mesh-core',
     '--test-package', 'source-mesh-core',
@@ -50,7 +51,7 @@ if ($List) {
     $mutationArguments += '--list'
 }
 
-Push-Location -LiteralPath $PSScriptRoot
+Push-Location -LiteralPath $repositoryDirectory
 try {
     & cargo mutants @mutationArguments
     $mutationExitCode = $LASTEXITCODE

@@ -9,7 +9,7 @@ if ($null -eq (Get-Command -Name cargo -CommandType Application -ErrorAction Ign
     throw 'Cargo is required to run tests. Install Rust with rustup, then run this script again.'
 }
 
-Push-Location -LiteralPath $PSScriptRoot
+Push-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
 try {
     Write-Host 'Running all workspace tests in release mode, including ignored tests that run rust-analyzer...'
     Write-Host 'Indexing test projects with rust-analyzer may take several minutes without output. Please wait.'

@@ -4,6 +4,7 @@
 ![Linux CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.svg?nameFilter=ubuntu-latest&style=for-the-badge&label=Linux&logo=linux&logoColor=white)
 ![macOS CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.svg?nameFilter=macos-latest&style=for-the-badge&label=macOS&logo=apple&logoColor=white)
 ![Windows CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.svg?nameFilter=windows-latest&style=for-the-badge&label=Windows)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fgeneralgda.github.io%2Fsource-mesh%2Fcoverage.json&style=for-the-badge&logo=rust&logoColor=white)](https://generalgda.github.io/source-mesh/)
 
 Draw dependencies between physical folders in a Rust project. Export **GraphML for yEd**, **Mermaid**, or **DOT**, highlight cycles, and check cycles or outgoing dependency limits between folders or files.
 

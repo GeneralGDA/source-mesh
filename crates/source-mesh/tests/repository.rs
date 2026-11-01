@@ -130,7 +130,7 @@ mod repository_tests {
     #[rstest]
     #[case::including_tests(true)]
     #[case::excluding_tests(false)]
-    #[ignore = "slow workspace indexing with rust-analyzer; run Test-All.ps1 from the repository root"]
+    #[ignore = "slow workspace indexing with rust-analyzer; run scripts/Test-All.ps1 from the repository root"]
     fn test_repository_dependency_architecture(repository_fixture: &LazyLock<RepositoryFixture>, #[case] include_tests: bool) {
         let fixture = LazyLock::force(repository_fixture);
         let replay = replay_fixture(&fixture.index);
@@ -186,7 +186,7 @@ mod repository_tests {
     #[case::source_top_level("source-top-level", &["--root", "crates/source-mesh-core/src", "--depth", "1", "--exclude-tests"])]
     #[case::cycles("cycles", &["--highlight-cycles", "--include-self"])]
     #[case::production_cycles("production-cycles", &["--highlight-cycles", "--include-self", "--exclude-tests"])]
-    #[ignore = "slow workspace indexing with rust-analyzer; run Test-All.ps1 from the repository root"]
+    #[ignore = "slow workspace indexing with rust-analyzer; run scripts/Test-All.ps1 from the repository root"]
     fn test_repository_exports(
         repository_fixture: &LazyLock<RepositoryFixture>,
         #[case] scenario: &str,
@@ -246,7 +246,7 @@ mod repository_tests {
     #[rstest]
     #[case::folder("--cycles-output", "report-only", NAME_CYCLE_REPORT_FOLDER)]
     #[case::file("--file-cycles-output", "cycles", NAME_CYCLE_REPORT_FILE)]
-    #[ignore = "slow workspace indexing with rust-analyzer; run Test-All.ps1 from the repository root"]
+    #[ignore = "slow workspace indexing with rust-analyzer; run scripts/Test-All.ps1 from the repository root"]
     fn test_repository_report_without_highlighting(
         repository_fixture: &LazyLock<RepositoryFixture>,
         #[case] output_argument: &str,

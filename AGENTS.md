@@ -227,7 +227,10 @@
 
 - Keep GitHub Actions workflow files as thin declarative wrappers: configure jobs, environment, and action/script calls
   in YAML. Put nontrivial shell or PowerShell logic (conditionals, loops, validation, downloads, installation) in separate
-  files under `.github/scripts/`, not inline `run` blocks. Simple script or tool invocations may remain in YAML.
+  files under `scripts/`, not inline `run` blocks. Simple script or tool invocations may remain in YAML.
+- Prefer explicit command-line arguments and script/function parameters over environment variables whenever practical.
+  Do not introduce intermediary environment variables merely to forward values. Use environment variables when required by an
+  external tool or when necessary for secure handling of secrets or untrusted input.
 - Before introducing a constant, path, helper, or abstraction, search the repository for the same knowledge and
   identify its current owner. Extend the owning abstraction instead of creating a second source of truth.
 - After centralizing knowledge, search for the original literals and symbols again. Verify that every remaining occurrence
