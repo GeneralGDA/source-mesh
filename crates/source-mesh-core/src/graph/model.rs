@@ -182,6 +182,7 @@ impl FileGraph {
             folder_graph.nodes.insert(folder.clone());
             file_folders.insert(file, folder);
         }
+        let mut folder_edges: BTreeMap<_, DependencyCount> = BTreeMap::new();
         for edge in &self.edges {
             let (source, target) = (edge.source(), edge.target());
             if source == target {
@@ -190,10 +191,12 @@ impl FileGraph {
             if let (Some(source_folder), Some(target_folder)) = (file_folders.get(source), file_folders.get(target))
                 && (include_self || source_folder != target_folder)
             {
-                let folder_edge = FolderEdge::new(source_folder.clone(), target_folder.clone(), edge.kind());
-                folder_graph.edges.entry(folder_edge).or_default().increment();
+                folder_edges.entry((source_folder, target_folder, edge.kind())).or_default().increment();
             }
         }
+        folder_graph.edges = folder_edges.into_iter().map(|((source, target, kind), count)| {
+            (FolderEdge::new(source.clone(), target.clone(), kind), count)
+        }).collect();
         Ok(folder_graph)
     }
 }
@@ -522,6 +525,36 @@ mod tests {
 
         assert_eq!(6, system_under_test.edges().len(), "Duplicate occurrences retained or dependency kinds merged");
         assert_eq!(&expected_edges, graph.edges(), "Depth {depth:?} changed dependency kinds or distinct file-pair counts");
+    }
+
+    #[test]
+    fn test_many_file_pairs_aggregate_by_folder_and_dependency_kind() {
+        let mut files = BTreeSet::new();
+        let mut dependencies = BTreeSet::new();
+        for index in 0..16 {
+            let source_path = SourcePath::new(Path::new("src").join("api").join(format!("source_{index}.rs")));
+            let source_path = assert_ok!(source_path, "Repeated-edge source path must be valid");
+            let target_path = SourcePath::new(Path::new("src").join("domain").join(format!("target_{index}.rs")));
+            let target_path = assert_ok!(target_path, "Repeated-edge target path must be valid");
+            let source = FileNode::new(source_path);
+            let target = FileNode::new(target_path);
+            files.insert(source.clone());
+            files.insert(target.clone());
+            dependencies.insert(FileEdge::new(source.clone(), target.clone(), DependencyKind::Production));
+            if index < 8 {
+                dependencies.insert(FileEdge::new(source, target, DependencyKind::Test));
+            }
+        }
+        let system_under_test = FileGraph::new(files, dependencies);
+        let system_under_test = assert_ok!(system_under_test, "Repeated folder edges must form a valid file graph");
+        let mut expected_edges = folder_edges(&[("api", "domain", 16)], DependencyKind::Production);
+        expected_edges.extend(folder_edges(&[("api", "domain", 8)], DependencyKind::Test));
+
+        let graph = system_under_test.folders(Path::new("src"), Some(1), false);
+        let graph = assert_ok!(graph, "Repeated mixed-kind file dependencies must aggregate successfully");
+
+        assert_eq!(&folder_nodes(&["api", "domain"]), graph.nodes(), "Repeated endpoints changed folder membership");
+        assert_eq!(&expected_edges, graph.edges(), "Repeated endpoints lost weights or merged dependency kinds");
     }
 
     #[test]

@@ -52,19 +52,29 @@ pub struct CycleAnalysis<Node> {
 
 impl<Node: Clone + Ord> CycleAnalysis<Node> {
     fn new<'a>(nodes: &BTreeSet<Node>, edges: impl Iterator<Item = &'a Edge<Node>>) -> Result<Self> where Node: 'a {
-        let edges: Vec<_> = edges.collect();
         let mut topology = DiGraph::new();
         let node_indices = nodes.iter().map(|node| topology.try_add_node(node.clone()).map(|index| (node, index)));
         let node_indices: Result<BTreeMap<_, _>, _> = node_indices.collect();
         let node_indices = node_indices.context("Cycle analysis exceeds the supported node index capacity")?;
-        for edge in &edges {
+        let mut edges: Vec<_> = edges.map(|edge| {
             let endpoints = (node_indices.get(edge.source()), node_indices.get(edge.target()));
-            let (Some(source_index), Some(target_index)) = endpoints else {
+            let (Some(&source_index), Some(&target_index)) = endpoints else {
                 unreachable!("Validated cycle edge endpoints must have topology indices");
             };
-            topology.try_update_edge(*source_index, *target_index, ()).map_err(|error| match error {
+            (edge, source_index, target_index)
+        }).collect();
+        edges.sort_unstable_by_key(|&(_, source_index, target_index)| (source_index, target_index));
+        /* Dependency kinds share topology edges but retain separate group entries. */
+        let mut previous_endpoints = None;
+        for &(_, source_index, target_index) in &edges {
+            let endpoints = (source_index, target_index);
+            if previous_endpoints == Some(endpoints) {
+                continue;
+            }
+            previous_endpoints = Some(endpoints);
+            topology.try_add_edge(source_index, target_index, ()).map_err(|error| match error {
                 GraphError::EdgeIxLimit => Error::new(error).context("Cycle analysis exceeds the supported edge index capacity"),
-                GraphError::NodeIxLimit => unreachable!("Updating a cycle edge cannot add nodes"),
+                GraphError::NodeIxLimit => unreachable!("Adding a cycle edge cannot add nodes"),
                 GraphError::NodeMissed(_) | GraphError::NodeOutBounds => {
                     unreachable!("Cycle edge endpoints were added to the topology")
                 }
@@ -89,13 +99,9 @@ impl<Node: Clone + Ord> CycleAnalysis<Node> {
             }
             CyclicComponent { group, nodes: component.into_iter().collect() }
         }).collect();
-        let edge_groups = edges.into_iter().map(|edge| {
-            let endpoints = (node_indices.get(edge.source()), node_indices.get(edge.target()));
-            let (Some(source_index), Some(target_index)) = endpoints else {
-                unreachable!("Cycle edge endpoints must remain indexed during grouping");
-            };
-            let source = node_groups.get(source_index);
-            let target = node_groups.get(target_index);
+        let edge_groups = edges.into_iter().map(|(edge, source_index, target_index)| {
+            let source = node_groups.get(&source_index);
+            let target = node_groups.get(&target_index);
             let group = match (source, target) {
                 (Some(source_group), Some(target_group)) if source_group == target_group => Some(*source_group),
                 _ => None,
@@ -179,6 +185,7 @@ mod tests {
     use anyhow::Result;
     use claims::assert_ok;
     use claims::assert_some;
+    use petgraph::visit::EdgeRef as _;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -191,6 +198,7 @@ mod tests {
     use crate::model::DependencyKind;
     use crate::model::DependencyKind::Production;
     use crate::model::DependencyKind::Test;
+    use crate::model::Edge;
     use crate::model::FileEdge;
     use crate::model::FileGraph;
     use crate::model::FileNode;
@@ -274,6 +282,74 @@ mod tests {
         let paths: Vec<_> = cycles.into_iter().map(|cycle| cycle.nodes).collect();
 
         assert_eq!(expected, paths, "Directed cycle routes or their canonical order differ");
+    }
+
+    #[rstest]
+    #[case::unordered(false)]
+    #[case::sorted(true)]
+    fn test_topology_endpoint_deduplication(#[case] sort_dependencies: bool) {
+        let nodes = BTreeSet::from(["alpha", "beta", "gamma", "omega"]);
+        let dependencies = [
+            ("omega", "omega", Test),
+            ("alpha", "gamma", Production),
+            ("alpha", "beta", Test),
+            ("beta", "alpha", Production),
+            ("alpha", "alpha", Test),
+            ("alpha", "omega", Production),
+            ("gamma", "alpha", Test),
+            ("alpha", "beta", Production),
+            ("omega", "omega", Production),
+            ("alpha", "gamma", Test),
+            ("alpha", "alpha", Production),
+            ("alpha", "omega", Test),
+            ("alpha", "beta", Production),
+            ("omega", "omega", Test),
+            ("alpha", "alpha", Production),
+        ];
+        let mut dependencies: Vec<_> = dependencies.into_iter().map(|(source, target, kind)| {
+            Edge::new(source, target, kind)
+        }).collect();
+        if sort_dependencies {
+            dependencies.sort_unstable();
+        }
+        let limit = NonZeroUsize::new(4);
+        let limit = assert_some!(limit, "Topology deduplication fixture must have a nonzero cycle limit");
+
+        let system_under_test = CycleAnalysis::new(&nodes, dependencies.iter());
+        let system_under_test = assert_ok!(system_under_test, "Repeated typed edges must support cycle analysis");
+        let topology = &system_under_test.topology;
+        let mut topology_edges: Vec<_> = topology.edge_references().map(|edge| {
+            (topology[edge.source()], topology[edge.target()])
+        }).collect();
+        topology_edges.sort_unstable();
+        let edge_groups: Vec<_> = system_under_test.edge_groups.iter().map(|(edge, group)| {
+            (*edge.source(), *edge.target(), edge.kind(), group.map(|identifier| identifier.number().get()))
+        }).collect();
+
+        assert_eq!(topology_edges, [
+            ("alpha", "alpha"), ("alpha", "beta"), ("alpha", "gamma"), ("alpha", "omega"),
+            ("beta", "alpha"), ("gamma", "alpha"), ("omega", "omega"),
+        ], "Topology must retain every distinct endpoint pair exactly once");
+        assert_eq!(edge_groups, [
+            ("alpha", "alpha", Production, Some(1)), ("alpha", "alpha", Test, Some(1)),
+            ("alpha", "beta", Production, Some(1)), ("alpha", "beta", Test, Some(1)),
+            ("alpha", "gamma", Production, Some(1)), ("alpha", "gamma", Test, Some(1)),
+            ("alpha", "omega", Production, None), ("alpha", "omega", Test, None),
+            ("beta", "alpha", Production, Some(1)), ("gamma", "alpha", Test, Some(1)),
+            ("omega", "omega", Production, Some(2)), ("omega", "omega", Test, Some(2)),
+        ], "Topology deduplication must retain every typed group entry, including acyclic edges");
+        assert_eq!(system_under_test.group_count(), 2, "Independent cyclic components must retain separate group IDs");
+
+        let cycles = system_under_test.cycles(limit);
+        let cycles = assert_ok!(cycles, "Four distinct cycles must fit the limit despite repeated typed edges");
+        let routes: Vec<_> = cycles.into_iter().map(|cycle| (cycle.group().number().get(), cycle.nodes)).collect();
+
+        assert_eq!(routes, [
+            (1, vec!["alpha", "alpha"]),
+            (1, vec!["alpha", "beta", "alpha"]),
+            (1, vec!["alpha", "gamma", "alpha"]),
+            (2, vec!["omega", "omega"]),
+        ], "Input ordering and repeated edges must not change cycle routes or group IDs");
     }
 
     #[rstest]
