@@ -226,37 +226,55 @@ mod tests {
     }
 
     #[rstest]
-    #[case(&[], vec![])]
-    #[case(&[("alpha", "beta", Production), ("beta", "gamma", Production)], vec![])]
-    #[case(&[("alpha", "beta", Production), ("gamma", "beta", Production)], vec![])]
-    #[case(&[("alpha", "beta", Production), ("beta", "alpha", Production)], vec![vec!["alpha", "beta", "alpha"]])]
+    #[case(
+        &[],
+        vec![],
+    )]
+    #[case(
+        &[("alpha", "beta", Production), ("beta", "gamma", Production)],
+        vec![],
+    )]
+    #[case(
+        &[("alpha", "beta", Production), ("gamma", "beta", Production)],
+        vec![],
+    )]
+    #[case(
+        &[("alpha", "beta", Production), ("beta", "alpha", Production)],
+        vec![vec!["alpha", "beta", "alpha"]],
+    )]
     #[case(
         &[("alpha", "beta", Production), ("beta", "gamma", Production), ("gamma", "alpha", Production)],
-        vec![vec!["alpha", "beta", "gamma", "alpha"]]
+        vec![vec!["alpha", "beta", "gamma", "alpha"]],
     )]
     #[case(
         &[
             ("alpha", "beta", Production), ("beta", "alpha", Production),
             ("beta", "gamma", Production), ("gamma", "beta", Production),
         ],
-        vec![vec!["alpha", "beta", "alpha"], vec!["beta", "gamma", "beta"]]
+        vec![vec!["alpha", "beta", "alpha"], vec!["beta", "gamma", "beta"]],
     )]
-    #[case(&[("alpha", "alpha", Production)], vec![vec!["alpha", "alpha"]])]
+    #[case(
+        &[("alpha", "alpha", Production)],
+        vec![vec!["alpha", "alpha"]],
+    )]
     #[case(
         &[("alpha", "alpha", Production), ("alpha", "beta", Production), ("beta", "alpha", Production)],
-        vec![vec!["alpha", "alpha"], vec!["alpha", "beta", "alpha"]]
+        vec![vec!["alpha", "alpha"], vec!["alpha", "beta", "alpha"]],
     )]
     #[case(
         &[("alpha", "beta", Production), ("alpha", "beta", Test), ("beta", "alpha", Production), ("beta", "alpha", Test)],
-        vec![vec!["alpha", "beta", "alpha"]]
+        vec![vec!["alpha", "beta", "alpha"]],
     )]
-    #[case(&[("alpha", "alpha", Production), ("alpha", "alpha", Test)], vec![vec!["alpha", "alpha"]])]
+    #[case(
+        &[("alpha", "alpha", Production), ("alpha", "alpha", Test)],
+        vec![vec!["alpha", "alpha"]],
+    )]
     #[case(
         &[
             ("alpha", "beta", Production), ("alpha", "gamma", Production), ("beta", "omega", Production),
             ("gamma", "omega", Production), ("omega", "alpha", Production),
         ],
-        vec![vec!["alpha", "beta", "omega", "alpha"], vec!["alpha", "gamma", "omega", "alpha"]]
+        vec![vec!["alpha", "beta", "omega", "alpha"], vec!["alpha", "gamma", "omega", "alpha"]],
     )]
     #[case(
         &[
@@ -266,7 +284,7 @@ mod tests {
         vec![
             vec!["alpha", "beta", "alpha"], vec!["alpha", "beta", "gamma", "alpha"],
             vec!["alpha", "gamma", "alpha"], vec!["alpha", "gamma", "beta", "alpha"], vec!["beta", "gamma", "beta"],
-        ]
+        ],
     )]
     fn test_directed_cycle_routes(#[case] dependencies: &[(&str, &str, DependencyKind)], #[case] expected_paths: Vec<Vec<&str>>) {
         let fixture = folder_fixture(dependencies);
@@ -512,13 +530,21 @@ mod tests {
     }
 
     #[rstest]
-    #[case(&[("alpha", "beta", Production), ("beta", "gamma", Production)])]
-    #[case(&[
-        ("alpha", "beta", Production), ("beta", "alpha", Production),
-        ("beta", "gamma", Production), ("gamma", "alpha", Production),
-    ])]
-    #[case(&[("alpha", "beta", Test), ("beta", "alpha", Production), ("beta", "gamma", Production)])]
-    #[case(&[("alpha", "beta", Production), ("beta", "alpha", Production)])]
+    #[case(
+        &[("alpha", "beta", Production), ("beta", "gamma", Production)],
+    )]
+    #[case(
+        &[
+            ("alpha", "beta", Production), ("beta", "alpha", Production),
+            ("beta", "gamma", Production), ("gamma", "alpha", Production),
+        ],
+    )]
+    #[case(
+        &[("alpha", "beta", Test), ("beta", "alpha", Production), ("beta", "gamma", Production)],
+    )]
+    #[case(
+        &[("alpha", "beta", Production), ("beta", "alpha", Production)],
+    )]
     fn test_folder_analysis_dependencies(#[case] dependencies: &[(&str, &str, DependencyKind)]) {
         let fixture_dependencies = [("alpha", "beta", Production), ("beta", "alpha", Production), ("beta", "gamma", Production)];
         let fixture = folder_fixture(&fixture_dependencies);

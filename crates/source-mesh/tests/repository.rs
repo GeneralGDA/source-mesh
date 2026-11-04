@@ -172,20 +172,42 @@ mod repository_tests {
     }
 
     #[rstest]
-    #[case::all_folders("all-folders", &[])]
-    #[case::production("production", &["--exclude-tests"])]
-    #[case::outgoing_folders("all-folders", &["--max-outgoing-dependencies", "1000000"])]
-    #[case::outgoing_files(
-        "all-folders", &["--max-outgoing-dependencies", "1000000", "--outgoing-dependencies-mode", "files"]
+    #[case::all_folders(
+        "all-folders", &[],
     )]
-    #[case::top_level("top-level", &["--depth", "1", "--exclude-tests"])]
-    #[case::grouped("grouped", &["--group-folders"])]
-    #[case::grouped_production("grouped-production", &["--group-folders", "--exclude-tests"])]
-    #[case::depth_zero("depth-zero", &["--depth", "0", "--include-self"])]
-    #[case::source_subtree("source-subtree", &["--root", "crates/source-mesh-core/src", "--exclude-tests"])]
-    #[case::source_top_level("source-top-level", &["--root", "crates/source-mesh-core/src", "--depth", "1", "--exclude-tests"])]
-    #[case::cycles("cycles", &["--highlight-cycles", "--include-self"])]
-    #[case::production_cycles("production-cycles", &["--highlight-cycles", "--include-self", "--exclude-tests"])]
+    #[case::production(
+        "production", &["--exclude-tests"],
+    )]
+    #[case::outgoing_folders(
+        "all-folders", &["--max-outgoing-dependencies", "1000000"],
+    )]
+    #[case::outgoing_files(
+        "all-folders", &["--max-outgoing-dependencies", "1000000", "--outgoing-dependencies-mode", "files"],
+    )]
+    #[case::top_level(
+        "top-level", &["--depth", "1", "--exclude-tests"],
+    )]
+    #[case::grouped(
+        "grouped", &["--group-folders"],
+    )]
+    #[case::grouped_production(
+        "grouped-production", &["--group-folders", "--exclude-tests"],
+    )]
+    #[case::depth_zero(
+        "depth-zero", &["--depth", "0", "--include-self"],
+    )]
+    #[case::source_subtree(
+        "source-subtree", &["--root", "crates/source-mesh-core/src", "--exclude-tests"],
+    )]
+    #[case::source_top_level(
+        "source-top-level", &["--root", "crates/source-mesh-core/src", "--depth", "1", "--exclude-tests"],
+    )]
+    #[case::cycles(
+        "cycles", &["--highlight-cycles", "--include-self"],
+    )]
+    #[case::production_cycles(
+        "production-cycles", &["--highlight-cycles", "--include-self", "--exclude-tests"],
+    )]
     #[ignore = "slow workspace indexing with rust-analyzer; run scripts/Test-All.ps1 from the repository root"]
     fn test_repository_exports(
         repository_fixture: &LazyLock<RepositoryFixture>,

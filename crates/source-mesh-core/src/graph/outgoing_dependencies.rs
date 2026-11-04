@@ -346,12 +346,20 @@ mod tests {
     }
 
     #[rstest]
-    #[case("unsafe`<>&\n\r\t", "unsafe&#96;&lt;&gt;&amp;&#92;n&#92;r&#92;t", "\"unsafe`<>&\\n\\r\\t\"")]
-    #[case("unsafe*[link]_\\~|", "unsafe&#42;&#91;link&#93;&#95;&#92;&#126;&#124;", "\"unsafe*[link]_\\\\~|\"")]
+    #[case(
+        "unsafe`<>&\n\r\t",
+        "unsafe&#96;&lt;&gt;&amp;&#92;n&#92;r&#92;t",
+        "\"unsafe`<>&\\n\\r\\t\"",
+    )]
+    #[case(
+        "unsafe*[link]_\\~|",
+        "unsafe&#42;&#91;link&#93;&#95;&#92;&#126;&#124;",
+        "\"unsafe*[link]_\\\\~|\"",
+    )]
     #[case(
         "unsafe\n## injected\n<script>alert(1)</script>",
         "unsafe&#92;n## injected&#92;n&lt;script&gt;alert(1)&lt;/script&gt;",
-        "\"unsafe\\n## injected\\n<script>alert(1)</script>\""
+        "\"unsafe\\n## injected\\n<script>alert(1)</script>\"",
     )]
     fn test_report_label_escaping(
         #[values(Mode::Files, Mode::Folders)] mode: Mode,

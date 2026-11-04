@@ -28,27 +28,39 @@ fn graphml_data<'document>(node: Node<'document, '_>, key: &str) -> Result<&'doc
 }
 
 #[rstest]
-#[case(Format::Dot, false, concat!(
-    "digraph folders {\n", "  rankdir=LR\n",
-    "  n0[label=\"src/api/http\" shape=box]\n", "  n1[label=\"src/storage\" shape=box]\n",
-    "  n0 -> n1 [label=\"2\"]\n", "  n0 -> n1 [label=\"test: 3\" color=\"#D97706\" style=dashed]\n", "}\n",
-))]
-#[case(Format::Dot, true, concat!(
-    "digraph folders {\n", "  rankdir=LR\n", "  subgraph cluster_n2 {\n", "    label=\"api\"\n",
-    "    n0[label=\"api/http\" shape=box]\n", "  }\n", "  n1[label=\"storage\" shape=box]\n",
-    "  n0 -> n1 [label=\"2\"]\n", "  n0 -> n1 [label=\"test: 3\" color=\"#D97706\" style=dashed]\n", "}\n",
-))]
-#[case(Format::Mermaid, false, concat!(
-    "flowchart LR\n", "    n0[\"src/api/http\"]\n", "    n1[\"src/storage\"]\n",
-    "    n0 -->|2| n1\n", "    n0 -.->|test: 3| n1\n", "    linkStyle 1 stroke:#D97706,color:#D97706\n",
-))]
-#[case(Format::Mermaid, true, concat!(
-    "flowchart LR\n", "    subgraph g2[\"api\"]\n", "    n0[\"api/http\"]\n", "    end\n",
-    "    n1[\"storage\"]\n", "    n0 -->|2| n1\n", "    n0 -.->|test: 3| n1\n",
-    "    linkStyle 1 stroke:#D97706,color:#D97706\n",
-))]
-#[case(Format::Graphml, false, include_str!("graphml/test_reference_flat.graphml"))]
-#[case(Format::Graphml, true, include_str!("graphml/test_reference_grouped.graphml"))]
+#[case(
+    Format::Dot, false, concat!(
+        "digraph folders {\n", "  rankdir=LR\n",
+        "  n0[label=\"src/api/http\" shape=box]\n", "  n1[label=\"src/storage\" shape=box]\n",
+        "  n0 -> n1 [label=\"2\"]\n", "  n0 -> n1 [label=\"test: 3\" color=\"#D97706\" style=dashed]\n", "}\n",
+    ),
+)]
+#[case(
+    Format::Dot, true, concat!(
+        "digraph folders {\n", "  rankdir=LR\n", "  subgraph cluster_n2 {\n", "    label=\"api\"\n",
+        "    n0[label=\"api/http\" shape=box]\n", "  }\n", "  n1[label=\"storage\" shape=box]\n",
+        "  n0 -> n1 [label=\"2\"]\n", "  n0 -> n1 [label=\"test: 3\" color=\"#D97706\" style=dashed]\n", "}\n",
+    ),
+)]
+#[case(
+    Format::Mermaid, false, concat!(
+        "flowchart LR\n", "    n0[\"src/api/http\"]\n", "    n1[\"src/storage\"]\n",
+        "    n0 -->|2| n1\n", "    n0 -.->|test: 3| n1\n", "    linkStyle 1 stroke:#D97706,color:#D97706\n",
+    ),
+)]
+#[case(
+    Format::Mermaid, true, concat!(
+        "flowchart LR\n", "    subgraph g2[\"api\"]\n", "    n0[\"api/http\"]\n", "    end\n",
+        "    n1[\"storage\"]\n", "    n0 -->|2| n1\n", "    n0 -.->|test: 3| n1\n",
+        "    linkStyle 1 stroke:#D97706,color:#D97706\n",
+    ),
+)]
+#[case(
+    Format::Graphml, false, include_str!("graphml/test_reference_flat.graphml"),
+)]
+#[case(
+    Format::Graphml, true, include_str!("graphml/test_reference_grouped.graphml"),
+)]
 fn test_serialization_output_equivalence(#[case] format: Format, #[case] grouped: bool, #[case] expected: &str) {
     let fixture = parallel_dependency_fixture();
     let fixture = assert_ok!(fixture, "Serialization-reference fixture must form a valid folder graph");

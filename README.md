@@ -45,6 +45,9 @@ source-mesh . --root src --format graphml --exclude-tests --highlight-cycles --c
 | `--group-folders` | Show subfolders inside their parent groups |
 | `--format dot` / `--format mermaid` | Export another diagram format |
 | `--exclude-tests` | Omit dependencies found only with test configuration enabled |
+| `--exclude 'src/generated/**'` | Remove matching files and their incoming/outgoing dependencies; repeat for multiple patterns |
+| `--settings FILE` | Load an explicit TOML configuration instead of the project's `source-mesh.toml` |
+| `--no-settings` | Disable TOML configuration loading |
 | `--highlight-cycles` | Give each connected group of cycles a distinct color |
 | `--fail-on-cycles` | Exit unsuccessfully when file or folder cycle groups are found, after writing requested outputs |
 | `--cycles-output FILE` | Write folder cycle chains to Markdown |
@@ -58,6 +61,54 @@ source-mesh . --root src --format graphml --exclude-tests --highlight-cycles --c
 
 Analysis of large projects can take several minutes. Use `--verbose` for diagnostic details and `source-mesh --help` for all options.
 
+## Project configuration
+
+`source-mesh.toml` is loaded automatically from the selected project directory (current directory by default).
+Use `--settings FILE` to choose another file or `--no-settings` to skip it. All settings are optional:
+
+```toml
+[graph]
+root = "."
+depth = 3
+include-self = false
+exclude-tests = true
+exclude = ["crates/*/src/generated/**", "**/fixtures/**", "crates/server/src/compat.rs"]
+
+[export]
+format = "graphml"
+output = "folders.graphml"
+group-folders = true
+
+[cycles]
+highlight-cycles = true
+fail-on-cycles = true
+cycles-output = "folder-cycles.md"
+file-cycles-output = "file-cycles.md"
+cycle-limit = 10000
+
+[outgoing-dependencies]
+maximum = 10
+mode = "folders"
+output = "dependencies.md"
+
+[analysis]
+verbose = false
+```
+
+- **Priority:** explicit CLI values > TOML values > built-in defaults. Use `--flag=false` to disable a configured flag.
+- **Paths:** file paths in TOML are relative to its directory; CLI file paths are relative to the working directory.
+  `root` remains project-relative.
+- **Exclusions:** CLI `--exclude` values replace the TOML list, rather than append to it.
+
+`[analysis]` also accepts `from-scip`, `save-scip`, and `config` (the rust-analyzer JSON configuration).
+
+### Excluding files and folders
+
+`--exclude` / `[graph].exclude` remove matching files and their dependencies from diagrams and all checks, not from indexing.
+
+Patterns are case-sensitive and project-relative (not relative to `--root`), with `/` separators.
+Use `src/generated/**` for a directory tree or `**/fixtures/**` for fixture directories at any depth. `.gitignore` is not used.
+
 ## Outgoing dependency limits
 
 Limit each folder to at most five distinct dependency targets:
@@ -68,7 +119,7 @@ source-mesh . --root src --exclude-tests --max-outgoing-dependencies 5 --outgoin
 
 To check individual files instead, add `--outgoing-dependencies-mode files`. The default mode, `folders`, checks the final
 folder graph after `--root` filtering and `--depth` folding. File mode checks the file graph before folder aggregation, so
-folder depth does not affect its counts. Both modes respect `--root` and `--exclude-tests`; targets outside the root are excluded.
+folder depth does not affect its counts. Both modes respect `--root`, `--exclude-tests`, and `--exclude`.
 `--group-folders` only changes diagram presentation, not dependency counts.
 
 Each distinct target counts once, even if referenced repeatedly or by both production and test code. Folder edge weights

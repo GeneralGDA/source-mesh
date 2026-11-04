@@ -191,14 +191,14 @@
       </data>
     </edge>
     <edge id="e2" source="n1" target="n1">
-      <data key="weight">3</data>
+      <data key="weight">4</data>
       <data key="kind">production</data>
       <data key="cycle_group">1</data>
       <data key="eg">
         <y:PolyLineEdge>
-          <y:LineStyle color="#E41A1C" type="line" width="3.0"/>
+          <y:LineStyle color="#6D3FA9" type="line" width="3.0"/>
           <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>3</y:EdgeLabel>
+          <y:EdgeLabel>4</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>
@@ -252,13 +252,13 @@
       </data>
     </edge>
     <edge id="e7" source="n1" target="n9">
-      <data key="weight">5</data>
+      <data key="weight">7</data>
       <data key="kind">production</data>
       <data key="eg">
         <y:PolyLineEdge>
           <y:LineStyle color="#47699B" type="line" width="1.0"/>
           <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>5</y:EdgeLabel>
+          <y:EdgeLabel>7</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>
@@ -281,7 +281,7 @@
       <data key="cycle_group">2</data>
       <data key="eg">
         <y:PolyLineEdge>
-          <y:LineStyle color="#377EB8" type="line" width="3.0"/>
+          <y:LineStyle color="#BF3CAE" type="line" width="3.0"/>
           <y:Arrows source="none" target="standard"/>
           <y:EdgeLabel>5</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
@@ -330,7 +330,7 @@
       <data key="cycle_group">3</data>
       <data key="eg">
         <y:PolyLineEdge>
-          <y:LineStyle color="#4DAF4A" type="line" width="3.0"/>
+          <y:LineStyle color="#FE4B82" type="line" width="3.0"/>
           <y:Arrows source="none" target="standard"/>
           <y:EdgeLabel>1</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
@@ -343,7 +343,7 @@
       <data key="cycle_group">4</data>
       <data key="eg">
         <y:PolyLineEdge>
-          <y:LineStyle color="#984EA3" type="line" width="3.0"/>
+          <y:LineStyle color="#FF7746" type="line" width="3.0"/>
           <y:Arrows source="none" target="standard"/>
           <y:EdgeLabel>1</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
@@ -404,7 +404,7 @@
       <data key="cycle_group">5</data>
       <data key="eg">
         <y:PolyLineEdge>
-          <y:LineStyle color="#FF7F00" type="line" width="3.0"/>
+          <y:LineStyle color="#E2B72E" type="line" width="3.0"/>
           <y:Arrows source="none" target="standard"/>
           <y:EdgeLabel>1</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
@@ -441,7 +441,7 @@
       <data key="cycle_group">6</data>
       <data key="eg">
         <y:PolyLineEdge>
-          <y:LineStyle color="#FFFF33" type="line" width="3.0"/>
+          <y:LineStyle color="#AFEF5A" type="line" width="3.0"/>
           <y:Arrows source="none" target="standard"/>
           <y:EdgeLabel>1</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
@@ -478,7 +478,7 @@
       <data key="cycle_group">7</data>
       <data key="eg">
         <y:PolyLineEdge>
-          <y:LineStyle color="#A65628" type="line" width="3.0"/>
+          <y:LineStyle color="#52F566" type="line" width="3.0"/>
           <y:Arrows source="none" target="standard"/>
           <y:EdgeLabel>1</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
@@ -522,14 +522,14 @@
       </data>
     </edge>
     <edge id="e29" source="n9" target="n9">
-      <data key="weight">10</data>
+      <data key="weight">11</data>
       <data key="kind">production</data>
       <data key="cycle_group">8</data>
       <data key="eg">
         <y:PolyLineEdge>
-          <y:LineStyle color="#F781BF" type="line" width="3.0"/>
+          <y:LineStyle color="#1DDEA3" type="line" width="3.0"/>
           <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>10</y:EdgeLabel>
+          <y:EdgeLabel>11</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>
@@ -564,7 +564,7 @@
       <data key="cycle_group">9</data>
       <data key="eg">
         <y:PolyLineEdge>
-          <y:LineStyle color="#999999" type="line" width="3.0"/>
+          <y:LineStyle color="#23AAD8" type="line" width="3.0"/>
           <y:Arrows source="none" target="standard"/>
           <y:EdgeLabel>7</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
@@ -572,13 +572,13 @@
       </data>
     </edge>
     <edge id="e33" source="n11" target="n1">
-      <data key="weight">2</data>
+      <data key="weight">4</data>
       <data key="kind">production</data>
       <data key="eg">
         <y:PolyLineEdge>
           <y:LineStyle color="#47699B" type="line" width="1.0"/>
           <y:Arrows source="none" target="standard"/>
-          <y:EdgeLabel>2</y:EdgeLabel>
+          <y:EdgeLabel>4</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>
         </y:PolyLineEdge>
       </data>
@@ -608,11 +608,24 @@
       </data>
     </edge>
     <edge id="e36" source="n11" target="n9">
-      <data key="weight">1</data>
+      <data key="weight">2</data>
       <data key="kind">production</data>
       <data key="eg">
         <y:PolyLineEdge>
           <y:LineStyle color="#47699B" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel>2</y:EdgeLabel>
+          <y:BendStyle smoothed="false"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>
+    <edge id="e37" source="n11" target="n11">
+      <data key="weight">1</data>
+      <data key="kind">production</data>
+      <data key="cycle_group">10</data>
+      <data key="eg">
+        <y:PolyLineEdge>
+          <y:LineStyle color="#4C6EDB" type="line" width="3.0"/>
           <y:Arrows source="none" target="standard"/>
           <y:EdgeLabel>1</y:EdgeLabel>
           <y:BendStyle smoothed="false"/>

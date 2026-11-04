@@ -161,11 +161,17 @@ mod tests {
     }
 
     #[rstest]
-    #[case::self_loop(&[("api", "api")], "- <code>api</code> -> <code>api</code>")]
-    #[case::two_nodes(&[("api", "domain"), ("domain", "api")], "- <code>api</code> -> <code>domain</code> -> <code>api</code>")]
+    #[case::self_loop(
+        &[("api", "api")],
+        "- <code>api</code> -> <code>api</code>",
+    )]
+    #[case::two_nodes(
+        &[("api", "domain"), ("domain", "api")],
+        "- <code>api</code> -> <code>domain</code> -> <code>api</code>",
+    )]
     #[case::three_nodes(
         &[("api", "domain"), ("domain", "storage"), ("storage", "api")],
-        "- <code>api</code> -> <code>domain</code> -> <code>storage</code> -> <code>api</code>"
+        "- <code>api</code> -> <code>domain</code> -> <code>storage</code> -> <code>api</code>",
     )]
     fn test_cycle_chain_separators(#[case] dependencies: &[(&str, &str)], #[case] expected: &str) {
         let fixture = folder_fixture(dependencies);
@@ -230,11 +236,17 @@ mod tests {
     }
 
     #[rstest]
-    #[case("unsafe`<>&\n\r\t", "unsafe&#96;&lt;&gt;&amp;&#92;n&#92;r&#92;t")]
-    #[case("unsafe*[link]_\\~|", "unsafe&#42;&#91;link&#93;&#95;&#92;&#126;&#124;")]
+    #[case(
+        "unsafe`<>&\n\r\t",
+        "unsafe&#96;&lt;&gt;&amp;&#92;n&#92;r&#92;t",
+    )]
+    #[case(
+        "unsafe*[link]_\\~|",
+        "unsafe&#42;&#91;link&#93;&#95;&#92;&#126;&#124;",
+    )]
     #[case(
         "unsafe\n## injected\n<script>alert(1)</script>",
-        "unsafe&#92;n## injected&#92;n&lt;script&gt;alert(1)&lt;/script&gt;"
+        "unsafe&#92;n## injected&#92;n&lt;script&gt;alert(1)&lt;/script&gt;",
     )]
     fn test_folder_label_markdown_escaping(#[case] label: &str, #[case] escaped: &str) {
         let fixture = folder_fixture(&[(label, "safe"), ("safe", label)]);

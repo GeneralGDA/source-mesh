@@ -24,6 +24,8 @@ pub(crate) use graph::color;
 pub(crate) use graph::cycle_presentation;
 pub use graph::cycle_report;
 pub use graph::cycles;
+pub use graph::exclusions::Exclusions;
 pub use graph::model;
 pub use graph::outgoing_dependencies;
 pub use graph::source_path::SourcePath;
+pub use output_paths::InputFile;

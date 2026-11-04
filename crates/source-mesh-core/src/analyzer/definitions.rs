@@ -957,9 +957,15 @@ mod tests {
     #[case::configuration(
         "workspace/configuration", json!({"items": [{"section": "rust-analyzer.cfg.setTest"}]}), Some(json!([false])),
     )]
-    #[case::progress("window/workDoneProgress/create", json!({"token": "loading"}), Some(Value::Null))]
-    #[case::registration("client/registerCapability", json!({"registrations": []}), Some(Value::Null))]
-    #[case::unsupported("fixture/unsupported", json!({}), None)]
+    #[case::progress(
+        "window/workDoneProgress/create", json!({"token": "loading"}), Some(Value::Null),
+    )]
+    #[case::registration(
+        "client/registerCapability", json!({"registrations": []}), Some(Value::Null),
+    )]
+    #[case::unsupported(
+        "fixture/unsupported", json!({}), None,
+    )]
     fn test_server_request_exchange(#[case] method: &str, #[case] parameters: Value, #[case] expected_result: Option<Value>) {
         let server_id = RequestId::from("server-request".to_owned());
         let server_request = Request { id: server_id.clone(), method: method.into(), params: parameters };
@@ -1381,23 +1387,41 @@ mod tests {
     }
 
     #[rstest]
-    #[case::loading(json!({"quiescent":false,"health":"ok"}), InitializationStatus::Loading)]
-    #[case::loading_error(json!({"quiescent":false,"health":"error"}), InitializationStatus::Loading)]
-    #[case::ready(json!({"quiescent":true,"health":"ok"}), InitializationStatus::Ready)]
-    #[case::loading_null_message(json!({"quiescent":false,"health":"ok","message":null}), InitializationStatus::Loading)]
-    #[case::loading_error_null_message(json!({"quiescent":false,"health":"error","message":null}), InitializationStatus::Loading)]
-    #[case::ready_null_message(json!({"quiescent":true,"health":"ok","message":null}), InitializationStatus::Ready)]
+    #[case::loading(
+        json!({"quiescent":false,"health":"ok"}),
+        InitializationStatus::Loading,
+    )]
+    #[case::loading_error(
+        json!({"quiescent":false,"health":"error"}),
+        InitializationStatus::Loading,
+    )]
+    #[case::ready(
+        json!({"quiescent":true,"health":"ok"}),
+        InitializationStatus::Ready,
+    )]
+    #[case::loading_null_message(
+        json!({"quiescent":false,"health":"ok","message":null}),
+        InitializationStatus::Loading,
+    )]
+    #[case::loading_error_null_message(
+        json!({"quiescent":false,"health":"error","message":null}),
+        InitializationStatus::Loading,
+    )]
+    #[case::ready_null_message(
+        json!({"quiescent":true,"health":"ok","message":null}),
+        InitializationStatus::Ready,
+    )]
     #[case::warning_null_message(
         json!({"quiescent":true,"health":"warning","message":null}),
-        InitializationStatus::Warning(MESSAGE_WORKSPACE_LOADING_WARNING)
+        InitializationStatus::Warning(MESSAGE_WORKSPACE_LOADING_WARNING),
     )]
     #[case::warning(
         json!({"quiescent":true,"health":"warning","message":"Workspace warning"}),
-        InitializationStatus::Warning("Workspace warning")
+        InitializationStatus::Warning("Workspace warning"),
     )]
     #[case::warning_without_message(
         json!({"quiescent":true,"health":"warning"}),
-        InitializationStatus::Warning(MESSAGE_WORKSPACE_LOADING_WARNING)
+        InitializationStatus::Warning(MESSAGE_WORKSPACE_LOADING_WARNING),
     )]
     fn test_initialization_status(#[case] parameters: Value, #[case] expected: InitializationStatus<'_>) {
         let system_under_test = initialization_status(&parameters);
@@ -1477,16 +1501,24 @@ mod tests {
     }
 
     #[rstest]
-    #[case::missing_uri(json!({}))]
-    #[case::remote_uri(json!({"uri":"https://example.com/file.rs", "range":{"start":{"line":0,"character":0}}}))]
-    #[case::negative_line(json!({"uri":"file:///C:/fixture.rs", "range":{"start":{"line":-1,"character":0}}}))]
-    #[case::negative_column(json!({"uri":"file:///C:/fixture.rs", "range":{"start":{"line":0,"character":-1}}}))]
-    #[case::overflowing_line(json!({
-        "uri":"file:///C:/fixture.rs", "range":{"start":{"line":u64::from(u32::MAX) + 1,"character":0}}
-    }))]
-    #[case::overflowing_column(json!({
-        "uri":"file:///C:/fixture.rs", "range":{"start":{"line":0,"character":u64::from(u32::MAX) + 1}}
-    }))]
+    #[case::missing_uri(
+        json!({}),
+    )]
+    #[case::remote_uri(
+        json!({"uri":"https://example.com/file.rs", "range":{"start":{"line":0,"character":0}}}),
+    )]
+    #[case::negative_line(
+        json!({"uri":"file:///C:/fixture.rs", "range":{"start":{"line":-1,"character":0}}}),
+    )]
+    #[case::negative_column(
+        json!({"uri":"file:///C:/fixture.rs", "range":{"start":{"line":0,"character":-1}}}),
+    )]
+    #[case::overflowing_line(
+        json!({"uri":"file:///C:/fixture.rs", "range":{"start":{"line":u64::from(u32::MAX) + 1,"character":0}}}),
+    )]
+    #[case::overflowing_column(
+        json!({"uri":"file:///C:/fixture.rs", "range":{"start":{"line":0,"character":u64::from(u32::MAX) + 1}}}),
+    )]
     fn test_invalid_definition_locations(#[case] response: Value) {
         let system_under_test = definition_locations(&response);
 
@@ -1600,10 +1632,14 @@ mod tests {
     }
 
     #[rstest]
-    #[case::notification(Message::Notification(Notification::new("$/progress".into(), json!({}))), None)]
-    #[case::other_response(Message::Response(Response::new_ok(RequestId::from(2), json!("other"))), None)]
+    #[case::notification(
+        Message::Notification(Notification::new("$/progress".into(), json!({}))), None,
+    )]
+    #[case::other_response(
+        Message::Response(Response::new_ok(RequestId::from(2), json!("other"))), None,
+    )]
     #[case::requested_response(
-        Message::Response(Response::new_ok(RequestId::from(1), json!("definition"))), Some(json!("definition"))
+        Message::Response(Response::new_ok(RequestId::from(1), json!("definition"))), Some(json!("definition")),
     )]
     fn test_protocol_response_selection(#[case] message: Message, #[case] expected: Option<Value>) {
         let result = matching_response(&message, &RequestId::from(1));

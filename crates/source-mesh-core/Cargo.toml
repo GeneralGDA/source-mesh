@@ -23,6 +23,7 @@ colorous.workspace = true
 dunce.workspace = true
 derive-new.workspace = true
 getset.workspace = true
+globset.workspace = true
 graphviz-rust.workspace = true
 quick-xml.workspace = true
 scip.workspace = true

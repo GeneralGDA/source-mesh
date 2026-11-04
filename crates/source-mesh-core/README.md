@@ -44,6 +44,15 @@ retained self-edges count as one target. Root and test filters apply in both mod
 Counts equal to the maximum pass, and zero is supported. A violation fails after outputs have been written and includes every
 violating source and count in the error; simultaneous cycle failures are included too.
 
+To exclude files from every graph and check, compile project-relative glob patterns with
+`Exclusions::new(&["src/generated/**".to_owned()])?` and pass them to `.exclusions(...)` on the request.
+Filtering removes matching files and all their incident edges before folder aggregation, including during saved-index replay.
+An empty filtered graph is an error. The low-level equivalent is `FileGraph::excluding(&exclusions)`.
+
+TOML discovery and CLI precedence belong to the `source-mesh` executable, not this library. Callers that load additional input
+files can retain them as `InputFile` values and pass them to `.protected_inputs(...)` so outputs cannot overwrite those files
+or their aliases. `InputFile::read` reads through the same retained handle used for output protection.
+
 The low-level analyzer, graph, cycle, outgoing dependency analysis, and exporter APIs remain available.
 
 For contributor documentation, see the

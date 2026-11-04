@@ -11,6 +11,7 @@ use derive_new::new;
 use getset::CopyGetters;
 use getset::Getters;
 
+use super::exclusions::Exclusions;
 use crate::SourcePath;
 
 /**
@@ -159,6 +160,13 @@ impl FileGraph {
         self
     }
 
+    #[must_use]
+    pub fn excluding(mut self, exclusions: &Exclusions) -> Self {
+        self.files.retain(|file| !exclusions.matches(file.path()));
+        self.edges.retain(|edge| self.files.contains(edge.source()) && self.files.contains(edge.target()));
+        self
+    }
+
     pub fn within_root(mut self, root: &Path) -> Result<Self> {
         let root = relative_directory_root(root)?;
         self.files.retain(|file| file.directory().starts_with(&root));
@@ -232,6 +240,7 @@ mod tests {
     use super::FolderGraph;
     use super::FolderNode;
     use crate::SourcePath;
+    use crate::graph::exclusions::Exclusions;
 
     #[rstest]
     #[case(0, 1)]
@@ -380,11 +389,15 @@ mod tests {
     }
 
     #[rstest]
-    #[case(0, &["."], &[])]
-    #[case(1, &[".", "api", "body_only", "domain", "isolated", "storage"], &[
-        ("api", "domain", 2), ("api", "storage", 2),
-        ("body_only", "storage", 1), ("domain", "storage", 1),
-    ])]
+    #[case(
+        0, &["."], &[],
+    )]
+    #[case(
+        1, &[".", "api", "body_only", "domain", "isolated", "storage"], &[
+            ("api", "domain", 2), ("api", "storage", 2),
+            ("body_only", "storage", 1), ("domain", "storage", 1),
+        ],
+    )]
     fn test_depth_grouping_and_distinct_file_pair_weights(
         #[case] depth: usize,
         #[case] expected_nodes: &[&str],
@@ -403,19 +416,25 @@ mod tests {
     }
 
     #[rstest]
-    #[case(None, &[
-        ("api", "api", 1), ("api", "api/v1", 1),
-        ("api", "domain", 1), ("api", "storage", 1),
-        ("api/v1", "domain", 1), ("api/v1", "storage", 1),
-        ("body_only", "storage", 1), ("domain", "domain", 1),
-        ("domain", "storage", 1),
-    ])]
-    #[case(Some(0), &[(".", ".", 9)])]
-    #[case(Some(1), &[
-        ("api", "api", 2), ("api", "domain", 2),
-        ("api", "storage", 2), ("body_only", "storage", 1),
-        ("domain", "domain", 1), ("domain", "storage", 1),
-    ])]
+    #[case(
+        None, &[
+            ("api", "api", 1), ("api", "api/v1", 1),
+            ("api", "domain", 1), ("api", "storage", 1),
+            ("api/v1", "domain", 1), ("api/v1", "storage", 1),
+            ("body_only", "storage", 1), ("domain", "domain", 1),
+            ("domain", "storage", 1),
+        ],
+    )]
+    #[case(
+        Some(0), &[(".", ".", 9)],
+    )]
+    #[case(
+        Some(1), &[
+            ("api", "api", 2), ("api", "domain", 2),
+            ("api", "storage", 2), ("body_only", "storage", 1),
+            ("domain", "domain", 1), ("domain", "storage", 1),
+        ],
+    )]
     fn test_self_edges_between_distinct_files(#[case] depth: Option<usize>, #[case] expected_edges: &[(&str, &str, usize)]) {
         let fixture = file_graph_fixture();
         let (files, mut dependencies) = assert_ok!(fixture, "Self-edge fixture paths must be valid");
@@ -462,11 +481,15 @@ mod tests {
     }
 
     #[rstest]
-    #[case(1, &["src"], &[])]
-    #[case(2, &["src", "src/api", "src/body_only", "src/domain", "src/isolated", "src/storage"], &[
-        ("src/api", "src/domain", 2), ("src/api", "src/storage", 2),
-        ("src/body_only", "src/storage", 1), ("src/domain", "src/storage", 1),
-    ])]
+    #[case(
+        1, &["src"], &[],
+    )]
+    #[case(
+        2, &["src", "src/api", "src/body_only", "src/domain", "src/isolated", "src/storage"], &[
+            ("src/api", "src/domain", 2), ("src/api", "src/storage", 2),
+            ("src/body_only", "src/storage", 1), ("src/domain", "src/storage", 1),
+        ],
+    )]
     fn test_default_depth_origin(
         #[case] depth: usize,
         #[case] expected_nodes: &[&str],
@@ -503,11 +526,17 @@ mod tests {
     }
 
     #[rstest]
-    #[case(None, &[("api", "domain", 1), ("api/v1", "domain", 1)], &[
-        ("api", "domain", 1), ("api/v1", "domain", 1), ("domain", "api", 1), ("tests", "domain", 1),
-    ])]
-    #[case(Some(1), &[("api", "domain", 2)], &[("api", "domain", 2), ("domain", "api", 1), ("tests", "domain", 1)])]
-    #[case(Some(0), &[(".", ".", 2)], &[(".", ".", 4)])]
+    #[case(
+        None, &[("api", "domain", 1), ("api/v1", "domain", 1)], &[
+            ("api", "domain", 1), ("api/v1", "domain", 1), ("domain", "api", 1), ("tests", "domain", 1),
+        ],
+    )]
+    #[case(
+        Some(1), &[("api", "domain", 2)], &[("api", "domain", 2), ("domain", "api", 1), ("tests", "domain", 1)],
+    )]
+    #[case(
+        Some(0), &[(".", ".", 2)], &[(".", ".", 4)],
+    )]
     fn test_dependency_kinds_deduplication_and_depth_aggregation(
         #[case] depth: Option<usize>,
         #[case] expected_production: &[(&str, &str, usize)],
@@ -565,6 +594,7 @@ mod tests {
         let system_under_test = FileGraph::new(files, dependencies);
         let system_under_test = assert_ok!(system_under_test, "Dependency-filtering fixture must form a valid file graph");
         let expected_edges = folder_edges(&[("api", "domain", 1), ("api/v1", "domain", 1)], DependencyKind::Production);
+        let expected_nodes = folder_nodes(&["api", "api/v1", "domain", "isolated", "tests"]);
 
         let graph = system_under_test.without_test_dependencies();
         let folders = graph.folders(Path::new("src"), None, false);
@@ -573,11 +603,105 @@ mod tests {
         assert_eq!(&expected_files, graph.files(), "Excluding test dependencies removed source files");
         assert_eq!(2, graph.edges().len(), "Excluding test dependencies lost production edges or retained test edges");
         assert_eq!(&expected_edges, folders.edges(), "Excluding test dependencies changed production dependencies or counts");
-        assert_eq!(
-            &folder_nodes(&["api", "api/v1", "domain", "isolated", "tests"]),
-            folders.nodes(),
-            "Excluding test dependencies removed isolated or test-only source folders"
-        );
+        assert_eq!(&expected_nodes, folders.nodes(), "Excluding test dependencies removed isolated or test-only source folders");
+    }
+
+    fn exclusions_fixture(patterns: &[&str]) -> Result<Exclusions> {
+        Exclusions::new(&patterns.iter().map(|pattern| (*pattern).to_owned()).collect::<Vec<_>>())
+    }
+
+    #[rstest]
+    #[case(&[])]
+    #[case(&["missing/**"])]
+    fn test_file_exclusions_without_matches(#[case] patterns: &[&str]) {
+        let fixture = mixed_dependency_fixture();
+        let (files, dependencies) = assert_ok!(fixture, "Unmatched-exclusion fixture paths must be valid");
+        let system_under_test = FileGraph::new(files, dependencies);
+        let system_under_test = assert_ok!(system_under_test, "Unmatched-exclusion fixture must form a valid graph");
+        let expected = mixed_dependency_fixture();
+        let (expected_files, expected_edges) = assert_ok!(expected, "Expected unfiltered graph paths must be valid");
+        let exclusions = exclusions_fixture(patterns);
+        let exclusions = assert_ok!(exclusions, "Empty and unmatched exclusion patterns must compile");
+
+        let graph = system_under_test.excluding(&exclusions);
+        let graph = graph.excluding(&exclusions);
+
+        assert_eq!(&expected_files, graph.files(), "Unmatched exclusions changed graph nodes");
+        assert_eq!(&expected_edges, graph.edges(), "Unmatched exclusions changed graph dependencies");
+    }
+
+    #[test]
+    fn test_file_exclusions_incident_edges_and_isolates() {
+        let fixture = mixed_dependency_fixture();
+        let (files, dependencies) = assert_ok!(fixture, "Incident-edge exclusion fixture paths must be valid");
+        let system_under_test = FileGraph::new(files, dependencies);
+        let system_under_test = assert_ok!(system_under_test, "Incident-edge exclusion fixture must form a valid graph");
+        let exclusions = exclusions_fixture(&["src/domain/request.rs", "src/isolated/**"]);
+        let exclusions = assert_ok!(exclusions, "Exact-file and isolated-directory exclusions must compile");
+        let expected_paths = BTreeSet::from([
+            PathBuf::from_iter(["src", "api", "http.rs"]),
+            PathBuf::from_iter(["src", "api", "v1", "routes.rs"]),
+            PathBuf::from_iter(["src", "tests", "checks.rs"]),
+        ]);
+        let expected_nodes = folder_nodes(&["api", "api/v1", "tests"]);
+
+        let graph = system_under_test.excluding(&exclusions);
+        let paths: BTreeSet<_> = graph.files().iter().map(|file| file.path().clone()).collect();
+        let folders = graph.folders(Path::new("src"), None, false);
+        let folders = assert_ok!(folders, "Exclusions must preserve folder aggregation invariants");
+
+        assert_eq!(expected_paths, paths, "Excluded isolates must disappear while newly isolated files remain");
+        assert!(graph.edges().is_empty(), "Incident edges of both kinds must disappear without transitive reconnection");
+        assert_eq!(&expected_nodes, folders.nodes(), "Excluded files left stale folder nodes");
+        assert!(folders.edges().is_empty(), "Removed dependencies contributed folder edges");
+    }
+
+    #[rstest]
+    #[case(None, &["api/v1", "domain", "isolated"], &[("api/v1", "domain", 1)])]
+    #[case(Some(1), &["api", "domain", "isolated"], &[("api", "domain", 1)])]
+    #[case(Some(0), &["."], &[(".", ".", 1)])]
+    fn test_file_exclusions_folder_weights(
+        #[case] depth: Option<usize>,
+        #[case] expected_nodes: &[&str],
+        #[case] expected_pairs: &[(&str, &str, usize)],
+    ) {
+        let fixture = mixed_dependency_fixture();
+        let (files, dependencies) = assert_ok!(fixture, "Exclusion-weight fixture paths must be valid");
+        let system_under_test = FileGraph::new(files, dependencies);
+        let system_under_test = assert_ok!(system_under_test, "Exclusion-weight fixture must form a valid graph");
+        let exclusions = exclusions_fixture(&["src/api/http.rs", "src/tests/**"]);
+        let exclusions = assert_ok!(exclusions, "Folder-weight exclusion patterns must compile");
+        let mut expected_edges = folder_edges(expected_pairs, DependencyKind::Production);
+        expected_edges.extend(folder_edges(expected_pairs, DependencyKind::Test));
+        let expected_nodes = folder_nodes(expected_nodes);
+
+        let graph = system_under_test.excluding(&exclusions);
+        let folders = graph.folders(Path::new("src"), depth, true);
+        let folders = assert_ok!(folders, "Filtered files must aggregate at depth {depth:?}");
+
+        assert_eq!(3, graph.files().len(), "Exclusion removed unmatched files or retained matched files");
+        assert_eq!(2, graph.edges().len(), "Exclusion lost dependency kinds or retained incident edges");
+        assert_eq!(&expected_nodes, folders.nodes(), "Depth grouping retained excluded folder nodes");
+        assert_eq!(&expected_edges, folders.edges(), "Excluded file pairs still contributed to folder weights");
+    }
+
+    #[test]
+    fn test_file_exclusions_all_files() {
+        let fixture = mixed_dependency_fixture();
+        let (files, dependencies) = assert_ok!(fixture, "Full-exclusion fixture paths must be valid");
+        let system_under_test = FileGraph::new(files, dependencies);
+        let system_under_test = assert_ok!(system_under_test, "Full-exclusion fixture must form a valid graph");
+        let exclusions = exclusions_fixture(&["**"]);
+        let exclusions = assert_ok!(exclusions, "A recursive all-file exclusion must compile");
+
+        let graph = system_under_test.excluding(&exclusions);
+        let folders = graph.folders(Path::new("src"), None, true);
+        let folders = assert_ok!(folders, "An entirely excluded graph must support folder aggregation");
+
+        assert!(graph.files().is_empty(), "Recursive exclusion retained source files");
+        assert!(graph.edges().is_empty(), "An empty file graph retained dependencies");
+        assert!(folders.nodes().is_empty(), "An empty file graph retained folder nodes");
+        assert!(folders.edges().is_empty(), "An empty file graph retained folder dependencies");
     }
 
     #[rstest]

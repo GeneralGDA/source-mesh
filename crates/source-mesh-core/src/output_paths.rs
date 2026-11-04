@@ -56,20 +56,22 @@ impl fmt::Display for OutputIoError {
 
 impl Error for OutputIoError {}
 
-pub(crate) struct InputFile {
+
+pub struct InputFile {
     path: PathBuf,
     handle: Handle,
 }
 
 impl InputFile {
-    pub(crate) fn open(path: &Path) -> Result<Self> {
+    pub fn open(path: &Path) -> Result<Self> {
         let path = absolute(path).with_context(|| format!("Cannot resolve input path {}", path.display()))?;
         let file = File::open(&path).with_context(|| format!("Cannot open input file {}", path.display()))?;
         let handle = Handle::from_file(file).with_context(|| format!("Cannot identify input file {}", path.display()))?;
         Ok(Self { path, handle })
     }
 
-    pub(crate) fn read(&mut self) -> Result<Vec<u8>> {
+
+    pub fn read(&mut self) -> Result<Vec<u8>> {
         let mut contents = Vec::new();
         let read_result = self.handle.as_file_mut().read_to_end(&mut contents);
         read_result.with_context(|| format!("Cannot read input file {}", self.path.display()))?;
@@ -97,7 +99,7 @@ impl<'a> OutputFiles<'a> {
     Newly created empty files may remain on failure: removing their paths could delete replacement
     files, so no path-based rollback is attempted.
     */
-    pub(crate) fn open(outputs: &[FileOutput<'a>], inputs: &[InputFile]) -> Result<Self> {
+    pub(crate) fn open(outputs: &[FileOutput<'a>], inputs: &[&InputFile]) -> Result<Self> {
         let paths = outputs.iter().map(|output| {
             absolute(output.path).with_context(|| OutputIoError::Resolve(output.path.to_path_buf()))
         }).collect::<Result<Vec<_>>>()?;
@@ -223,7 +225,7 @@ mod tests {
 
         let contents = system_under_test.read();
         let contents = assert_ok!(contents, "The retained input handle must remain readable after path replacement");
-        let output = OutputFiles::open(&[FileOutput::new(&renamed, b"overwrite")], &[system_under_test]);
+        let output = OutputFiles::open(&[FileOutput::new(&renamed, b"overwrite")], &[&system_under_test]);
         let original = fs::read(&renamed);
         let original = assert_ok!(original, "The renamed original input must remain readable");
         let replacement = fs::read(&path);
@@ -333,7 +335,7 @@ mod tests {
         }
         let opened_input = InputFile::open(&input);
         let opened_input = assert_ok!(opened_input, "The protected input must open before validating outputs");
-        let inputs = [opened_input];
+        let inputs = [&opened_input];
 
         let outputs = [FileOutput::new(&earlier, b"new diagram"), FileOutput::new(&output, b"overwrite")];
         let system_under_test = OutputFiles::open(&outputs, &inputs).and_then(OutputFiles::write);
@@ -385,7 +387,7 @@ mod tests {
         assert_ok!(written, "The protected input fixture must be written");
         let opened_input = InputFile::open(&input);
         let opened_input = assert_ok!(opened_input, "The protected input must open before its path is renamed");
-        let inputs = [opened_input];
+        let inputs = [&opened_input];
         let moved = fs::rename(&input, &renamed);
         assert_ok!(moved, "The input must be renamed while its retained handle protects its original name");
 
@@ -544,7 +546,7 @@ mod tests {
         }
         let opened_input = InputFile::open(&input);
         let opened_input = assert_ok!(opened_input, "The protected input must open before the output plan");
-        let inputs = [opened_input];
+        let inputs = [&opened_input];
         let system_under_test = OutputFiles::open(&[FileOutput::new(&output, CONTENTS_OUTPUT)], &inputs);
         let system_under_test = assert_ok!(system_under_test, "The distinct output must open before path replacement");
 

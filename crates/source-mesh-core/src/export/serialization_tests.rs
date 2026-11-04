@@ -17,12 +17,18 @@ use crate::model::FolderGraph;
 use crate::model::FolderNode;
 
 #[rstest]
-#[case::dot(Format::Dot, "a{{ value }} {% if true %}{braces}{% endif %}\\\"'&<>\\n\\r\u{43f}\u{1f680}")]
-#[case::mermaid(Format::Mermaid, concat!(
-    "a#123;#123; value #125;#125; #123;#37; if true #37;#125;#123;braces#125;#123;#37; endif #37;#125;",
-    "#34;#39;#38;#60;#62;#10;#13;\u{43f}#128640;",
-))]
-#[case::graphml(Format::Graphml, "a{{ value }} {% if true %}{braces}{% endif %}&quot;&apos;&amp;&lt;&gt;\n&#13;\u{43f}\u{1f680}")]
+#[case::dot(
+    Format::Dot, "a{{ value }} {% if true %}{braces}{% endif %}\\\"'&<>\\n\\r\u{43f}\u{1f680}",
+)]
+#[case::mermaid(
+    Format::Mermaid, concat!(
+        "a#123;#123; value #125;#125; #123;#37; if true #37;#125;#123;braces#125;#123;#37; endif #37;#125;",
+        "#34;#39;#38;#60;#62;#10;#13;\u{43f}#128640;",
+    ),
+)]
+#[case::graphml(
+    Format::Graphml, "a{{ value }} {% if true %}{braces}{% endif %}&quot;&apos;&amp;&lt;&gt;\n&#13;\u{43f}\u{1f680}",
+)]
 fn test_template_syntax_in_folder_labels(
     #[case] format: Format,
     #[case] escaped_label: &str,

@@ -27,16 +27,22 @@ mod tests {
     use super::without_test_cfg;
 
     #[rstest]
-    #[case(json!({}), json!({"cfg": {"setTest": false}}))]
+    #[case(
+        json!({}),
+        json!({"cfg": {"setTest": false}}),
+    )]
     #[case(
         json!({"cfg": {"setTest": true, "other": 7}, "cargo": {"features": ["http"], "target": "custom"}}),
-        json!({"cfg": {"setTest": false, "other": 7}, "cargo": {"features": ["http"], "target": "custom"}})
+        json!({"cfg": {"setTest": false, "other": 7}, "cargo": {"features": ["http"], "target": "custom"}}),
     )]
     #[case(
         json!({"cargo": {"cfgs": ["test", "debug_assertions", "feature=\"test\"", "!test"]}}),
-        json!({"cfg": {"setTest": false}, "cargo": {"cfgs": ["debug_assertions", "feature=\"test\"", "!test"]}})
+        json!({"cfg": {"setTest": false}, "cargo": {"cfgs": ["debug_assertions", "feature=\"test\"", "!test"]}}),
     )]
-    #[case(json!({"cfg": {"setTest": false}, "cargo": {"cfgs": []}}), json!({"cfg": {"setTest": false}, "cargo": {"cfgs": []}}))]
+    #[case(
+        json!({"cfg": {"setTest": false}, "cargo": {"cfgs": []}}),
+        json!({"cfg": {"setTest": false}, "cargo": {"cfgs": []}}),
+    )]
     fn test_configuration_without_test(#[case] configuration: Value, #[case] expected: Value) {
         let result = without_test_cfg(configuration);
         let system_under_test = assert_ok!(result, "Valid analyzer configuration must support disabling cfg(test)");

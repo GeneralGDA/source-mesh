@@ -137,7 +137,8 @@ impl fmt::Display for ProjectValidationError {
 
 impl Error for ProjectValidationError {}
 
-fn resolve_project_directory(project: &Path) -> Result<PathBuf> {
+
+pub fn project_directory(project: &Path) -> Result<PathBuf> {
     let metadata = fs::metadata(project).with_context(|| ProjectValidationError::InspectPath(project.to_path_buf()))?;
     let directory = if metadata.is_dir() {
         project
@@ -148,9 +149,11 @@ fn resolve_project_directory(project: &Path) -> Result<PathBuf> {
         );
         project.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."))
     };
-    let directory = dunce::canonicalize(directory).with_context(|| {
-        ProjectValidationError::ResolveDirectory(directory.to_path_buf())
-    })?;
+    dunce::canonicalize(directory).with_context(|| ProjectValidationError::ResolveDirectory(directory.to_path_buf()))
+}
+
+fn resolve_project_directory(project: &Path) -> Result<PathBuf> {
+    let directory = project_directory(project)?;
     let manifest = directory.join(NAME_CARGO_MANIFEST);
     match fs::read(&manifest) {
         Ok(_) => {}
@@ -187,6 +190,7 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
+    use anyhow::Result;
     use claims::assert_ok;
     use claims::assert_some;
     use pretty_assertions::assert_eq;
@@ -201,6 +205,7 @@ mod tests {
     use super::ProjectValidationError;
     use super::ScipFile;
     use super::contains_project_file;
+    use super::project_directory;
     use super::resolve_project_directory;
     use crate::SourcePath;
     use crate::analyzer::options::Options;
@@ -306,7 +311,10 @@ mod tests {
     #[rstest]
     #[case::directory(false)]
     #[case::manifest(true)]
-    fn test_project_directory_selection(#[case] manifest_input: bool) {
+    fn test_project_directory_selection(
+        #[case] manifest_input: bool,
+        #[values(project_directory, resolve_project_directory)] resolve: fn(&Path) -> Result<PathBuf>,
+    ) {
         let (system_under_test, expected) = {
             let fixture_creation = tempdir();
             let fixture = assert_ok!(fixture_creation, "The project-directory selection fixture must be created");
@@ -314,7 +322,7 @@ mod tests {
             let manifest_write = fs::write(&manifest, "");
             assert_ok!(manifest_write, "The project-directory selection fixture must contain a Cargo manifest");
             let project = if manifest_input { &manifest } else { fixture.path() };
-            let project_resolution = resolve_project_directory(project);
+            let project_resolution = resolve(project);
             let directory = assert_ok!(project_resolution, "A project directory or its manifest must resolve successfully");
             let fixture_resolution = dunce::canonicalize(fixture.path());
             let expected = assert_ok!(fixture_resolution, "The selected project fixture must have a canonical path");
@@ -324,12 +332,34 @@ mod tests {
         assert_eq!(system_under_test, expected, "Project input must select its canonical directory");
     }
 
-    #[test]
-    fn test_project_path_io_error() {
+    #[rstest]
+    #[case::missing(None)]
+    #[case::unreadable_manifest(Some(NAME_CARGO_MANIFEST))]
+    #[case::unreadable_project_file(Some(NAME_RUST_PROJECT_FILE))]
+    fn test_project_directory_without_project_files(#[case] unreadable_file: Option<&str>) {
+        let fixture = tempdir();
+        let fixture = assert_ok!(fixture, "Project-directory discovery fixture must be created");
+        if let Some(filename) = unreadable_file {
+            let created = fs::create_dir_all(fixture.path().join(filename));
+            assert_ok!(created, "Discovery fixture must contain an unreadable project file at {filename}");
+        }
+        let expected = dunce::canonicalize(fixture.path());
+        let expected = assert_ok!(expected, "Discovery fixture must have a canonical directory");
+
+        let system_under_test = project_directory(&fixture.path().join("."));
+        let system_under_test = assert_ok!(system_under_test, "Directory discovery must not require readable project files");
+
+        assert_eq!(expected, system_under_test, "Configuration discovery must resolve the selected directory canonically");
+    }
+
+    #[rstest]
+    fn test_project_path_io_error(
+        #[values(project_directory, resolve_project_directory)] resolve: fn(&Path) -> Result<PathBuf>,
+    ) {
         let system_under_test = {
             let fixture_creation = tempdir();
             let fixture = assert_ok!(fixture_creation, "The missing-project-path fixture directory must be created");
-            resolve_project_directory(&fixture.path().join("missing"))
+            resolve(&fixture.path().join("missing"))
         };
 
         assert!(
@@ -393,15 +423,17 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_non_manifest_project_file() {
+    #[rstest]
+    fn test_non_manifest_project_file(
+        #[values(project_directory, resolve_project_directory)] resolve: fn(&Path) -> Result<PathBuf>,
+    ) {
         let fixture_creation = tempdir();
         let fixture = assert_ok!(fixture_creation, "The non-manifest project-file fixture directory must be created");
         let project = fixture.path().join("source.rs");
         let source_write = fs::write(&project, "");
         assert_ok!(source_write, "The non-manifest source file must exist before project resolution");
 
-        let system_under_test = resolve_project_directory(&project);
+        let system_under_test = resolve(&project);
 
         let error = assert_some!(system_under_test.err(), "A non-manifest project file must be rejected");
         let validation_error = error.downcast_ref::<ProjectValidationError>();
