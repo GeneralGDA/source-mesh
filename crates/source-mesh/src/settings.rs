@@ -30,7 +30,8 @@ use source_mesh_core::backend::project_directory;
 use source_mesh_core::export::Format as ExportFormat;
 use source_mesh_core::outgoing_dependencies::Mode as DependencyMode;
 
-pub(super) const SETTINGS_FILE_NAME: &str = "source-mesh.toml";
+pub(super) const SETTINGS_FILE_NAME: &str = 
+    "source-mesh.toml";
 pub(super) const BOOLEAN_OPTIONS_DEFAULT_HELP: &str =
     "Without settings, boolean options are disabled. Use --flag=false to override settings.";
 

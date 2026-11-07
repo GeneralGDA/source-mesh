@@ -29,7 +29,6 @@ use crate::scip::index::ParsedIndex;
 
 const NO_FILES_AFTER_FILTERING: &str = "No indexed Rust files remain after applying root and file filters";
 
-/// Applies independently to the file-cycle and folder-cycle reports.
 pub const DEFAULT_CYCLE_LIMIT: NonZeroUsize = match NonZeroUsize::new(10_000) {
     Some(limit) => limit,
     None => unreachable!(),
