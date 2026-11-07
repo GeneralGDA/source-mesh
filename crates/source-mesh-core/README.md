@@ -1,8 +1,7 @@
 # source-mesh-core
 
-Find dependency cycles and tightly coupled files or folders in your Rust code to make refactoring easier.
-Export DOT, Mermaid, or `GraphML` diagrams, generate cycle reports, and enforce outgoing dependency limits.
-The `source-mesh` package provides the CLI; this package exposes the same pipeline without command-line parsing.
+Dependency graphs, cycle reports, and outgoing dependency limits for Rust projects.
+Exports DOT, Mermaid, and GraphML. The `source-mesh` package provides the CLI.
 
 ```rust
 use std::path::PathBuf;
@@ -24,46 +23,30 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-To analyze project sources, use `Input::Project(Project::new(project_path, configuration))`.
-This runs rust-analyzer and requires the Rust toolchain, rust-analyzer, and rust-src;
-replaying a saved index does not. `configuration` is an optional path to rust-analyzer JSON configuration.
-All boolean options default to false. Configure reports and cycle gating through
-`CycleOptions::builder()` and pass the result to the request's `.cycles(...)`
-setter. Reports default to at most `DEFAULT_CYCLE_LIMIT` simple cycles each.
-Pass `analyzer_options::Options::new(true)` to `.analyzer(...)` for verbose diagnostics.
+`Input::Project(Project::new(project_path, configuration))` requires a Rust toolchain with rust-analyzer and rust-src.
+`configuration` is an optional path to rust-analyzer JSON configuration.
 
-`Request::builder().build()` returns a `Result`. For `Input::ScipFile`, it opens and parses the index immediately,
-rejecting missing or unreadable files, malformed indexes, and replay requests that also specify `save_scip`.
-The request retains the parsed snapshot and the opened file's identity: subsequent runs do not reopen its path,
-and output protection still applies if the input is renamed or accessed through a hard link.
-Project analysis, graph checks, filtering, and output I/O remain in `run`; successful construction does not guarantee
-that execution will succeed. Construction never writes outputs or starts rust-analyzer.
+`Input::ScipFile` loads the index during request construction and reuses it on subsequent runs. It cannot be combined with
+`save_scip`.
 
-**API migration:** callers using the previous infallible request builder must now handle `.build()` errors, usually with
-`.build()?`. The `CycleOptions` and `OutgoingDependencyOptions` builders remain infallible.
+Request options (boolean flags default to `false`):
 
-Validation and analysis errors preserve existing outputs. Cycle gating with
-`CycleOptions::builder().fail_on_cycles(true).build()` reports failure after writing requested outputs. Output I/O
-errors can leave earlier files written; output writes are not a transaction.
+- `.cycles(...)`: `CycleOptions::builder()` configures highlighting, reports, and failure on cycles.
+  Each report defaults to at most `DEFAULT_CYCLE_LIMIT` simple cycles.
+- `.outgoing_dependencies(...)`: `OutgoingDependencyOptions::builder().maximum(5).build()` sets a dependency limit.
+  The default scope is folders; `.mode(outgoing_dependencies::Mode::Files)` selects files, and `.output(path)` adds a Markdown report.
+- `.exclusions(...)`: `Exclusions::new(...)` compiles project-relative glob patterns for all graphs and checks.
+  An empty filtered graph is an error.
+- `.analyzer(analyzer_options::Options::new(true))` enables verbose diagnostics.
+- `.protected_inputs(...)`: `InputFile` values protect additional input files and their aliases from output overwrites.
 
-Configure an outgoing dependency check with `OutgoingDependencyOptions::builder().maximum(5).build()` and pass it to
-`.outgoing_dependencies(...)` on the request. The default mode is `outgoing_dependencies::Mode::Folders`; use
-`.mode(outgoing_dependencies::Mode::Files)` to check files before folder aggregation. An optional `.output(path)` writes a
-Markdown violation report. Each distinct target counts once regardless of dependency kind or folder edge weight;
-retained self-edges count as one target. Root and test filters apply in both modes, while depth folding affects only folders.
-Counts equal to the maximum pass, and zero is supported. A violation fails after outputs have been written and includes every
-violating source and count in the error; simultaneous cycle failures are included too.
+Counting and filtering rules are described under
+[outgoing dependency limits](https://github.com/GeneralGDA/source-mesh/blob/main/README.md#outgoing-dependency-limits) and
+[file exclusions](https://github.com/GeneralGDA/source-mesh/blob/main/README.md#excluding-files-and-folders).
 
-To exclude files from every graph and check, compile project-relative glob patterns with
-`Exclusions::new(&["src/generated/**".to_owned()])?` and pass them to `.exclusions(...)` on the request.
-Filtering removes matching files and all their incident edges before folder aggregation, including during saved-index replay.
-An empty filtered graph is an error. The low-level equivalent is `FileGraph::excluding(&exclusions)`.
+`run` writes requested outputs before returning cycle or dependency-limit failures. Validation and analysis errors preserve
+existing outputs; output I/O errors can leave partial results. Input files remain protected against output overwrites through
+renames and aliases.
 
-TOML discovery and CLI precedence belong to the `source-mesh` executable, not this library. Callers that load additional input
-files can retain them as `InputFile` values and pass them to `.protected_inputs(...)` so outputs cannot overwrite those files
-or their aliases. `InputFile::read` reads through the same retained handle used for output protection.
-
-The low-level analyzer, graph, cycle, outgoing dependency analysis, and exporter APIs remain available.
-
-For contributor documentation, see the
+See the [changelog](https://github.com/GeneralGDA/source-mesh/blob/main/CHANGELOG.md) and
 [development guide](https://github.com/GeneralGDA/source-mesh/blob/main/crates/source-mesh-core/DEVELOPMENT.md).

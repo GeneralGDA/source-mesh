@@ -1,5 +1,6 @@
 # Hand-written documentation only; do not scan build output or generated fixture reports.
 README.md
+CHANGELOG.md
 crates/source-mesh-core/README.md
 DEVELOPMENT.md
 crates/source-mesh-core/DEVELOPMENT.md

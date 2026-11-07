@@ -212,6 +212,7 @@ documentation links and publishes its own report; lychee is a development tool, 
 
 Save analysis with `--save-scip analysis.scip`; reuse it with `--from-scip analysis.scip` to change formats, depth, or filters without analyzing the source again.
 
+For release history and upgrade notes, see the [changelog](CHANGELOG.md).
 For contributor documentation, see the
 [development guide](https://github.com/GeneralGDA/source-mesh/blob/main/DEVELOPMENT.md).
 
