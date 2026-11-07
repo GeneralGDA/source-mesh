@@ -53,7 +53,7 @@ digraph folders {
   n8 -> n9 [label="test: 5" color="#D97706" style=dashed]
   n10 -> n3 [label="1"]
   n10 -> n9 [label="6"]
-  n10 -> n9 [label="test: 4" color="#D97706" style=dashed]
+  n10 -> n9 [label="test: 5" color="#D97706" style=dashed]
   n11 -> n1 [label="4"]
   n11 -> n1 [label="test: 2" color="#D97706" style=dashed]
   n11 -> n2 [label="1"]
