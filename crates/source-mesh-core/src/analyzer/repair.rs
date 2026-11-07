@@ -41,11 +41,13 @@ pub(crate) struct IndexRepair<'a> {
 
 impl IndexRepair<'_> {
     pub(crate) fn perform(
-        &self, index_original: ParsedIndex, index_without_test: ParsedIndex,
-    ) -> Result<(ParsedIndex, ParsedIndex)> {
-        let mut repair_symbols = colliding_symbols(&index_original, &index_without_test);
+        &self, index_original: ParsedIndex, index_without_test: Option<ParsedIndex>,
+    ) -> Result<(ParsedIndex, Option<ParsedIndex>)> {
+        let mut repair_symbols = colliding_symbols(&index_original, index_without_test.as_ref());
         repair_symbols.extend(unresolved_symbols(&index_original)?);
-        repair_symbols.extend(unresolved_symbols(&index_without_test)?);
+        if let Some(ref index) = index_without_test {
+            repair_symbols.extend(unresolved_symbols(index)?);
+        }
         if repair_symbols.is_empty() {
             return Ok((index_original, index_without_test));
         }
@@ -69,7 +71,7 @@ impl IndexRepair<'_> {
         };
         try_pair(
             || repair_pass(index_original, self.configuration_path_original),
-            || repair_pass(index_without_test, Some(self.configuration_path_without_test)),
+            || index_without_test.map(|index| repair_pass(index, Some(self.configuration_path_without_test))).transpose(),
         )
     }
 }
@@ -87,9 +89,9 @@ fn definition_target(project: &Path, files: &BTreeSet<PathBuf>, has_candidates: 
     Ok(project_files.pop_first())
 }
 #[must_use]
-fn colliding_symbols(index_original: &ParsedIndex, index_without_test: &ParsedIndex) -> BTreeSet<String> {
+fn colliding_symbols(index_original: &ParsedIndex, index_without_test: Option<&ParsedIndex>) -> BTreeSet<String> {
     let mut combined = definitions(index_original);
-    for (symbol, files) in definitions(index_without_test) {
+    for (symbol, files) in index_without_test.into_iter().flat_map(definitions) {
         match combined.entry(symbol) {
             Entry::Vacant(entry) => {
                 entry.insert(files);
@@ -205,12 +207,14 @@ fn qualified_symbol(symbols: &mut SymbolCache, symbol: &str, file: &FileNode) ->
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+    use std::num::TryFromIntError;
     use std::panic::catch_unwind;
     use std::path::Path;
     use std::path::PathBuf;
 
     use anyhow::Result;
     use claims::assert_ok;
+    use claims::assert_some;
     use pretty_assertions::assert_eq;
     use protobuf::Message as _;
     use rstest::rstest;
@@ -271,7 +275,7 @@ mod tests {
         let resolved_target = SourcePath::new(PathBuf::from(target));
         let resolved_target = assert_ok!(resolved_target, "The semantic resolution target must be a valid source path");
         let resolved_target = FileNode::new(resolved_target);
-        let collisions = colliding_symbols(&fixture, &fixture);
+        let collisions = colliding_symbols(&fixture, Some(&fixture));
         let source = SourcePath::new(PathBuf::from(caller));
         let source = assert_ok!(source, "The semantic resolution caller must be a valid source path");
         let source = FileNode::new(source);
@@ -327,7 +331,7 @@ mod tests {
         let symbol = "rust-analyzer cargo fixture 0.0.0 main().";
         let fixture = index(symbol, &[("first.rs", &[1]), ("second.rs", &[1])]);
         let fixture = assert_ok!(fixture, "The unreferenced duplicate definition fixture must parse");
-        let collisions = colliding_symbols(&fixture, &fixture);
+        let collisions = colliding_symbols(&fixture, Some(&fixture));
 
         let system_under_test = repair_occurrences(fixture, &collisions, |_| {
             unreachable!("Unreferenced definitions must not invoke semantic resolution")
@@ -341,13 +345,51 @@ mod tests {
     }
 
     #[test]
+    fn test_original_repair_without_baseline() {
+        let symbol = "rust-analyzer cargo fixture 0.0.0 main().";
+        let fixture = index(symbol, &[("first.rs", &[1]), ("second.rs", &[1])]);
+        let fixture = assert_ok!(fixture, "The original-only collision fixture must parse");
+        let options = Options::new(false);
+        let system_under_test = IndexRepair::new(Path::new("."), None, Path::new("without_test.json"), &options);
+
+        let repaired = system_under_test.perform(fixture, None);
+        let (repaired_original, repaired_without_test) = assert_ok!(repaired, "Original repair must run without a baseline");
+        let ownership = definitions(&repaired_original);
+
+        assert!(repaired_without_test.is_none(), "Repair must not synthesize a comparison baseline");
+        assert_eq!(ownership.len(), 2, "Original definition collisions must be qualified even without a baseline");
+        assert!(!ownership.contains_key(symbol), "Repair must replace the ambiguous original symbol");
+        assert_eq!(repaired_original.symbols().count(), 2, "Repair must install each qualified definition");
+    }
+
+    #[test]
+    fn test_unresolved_original_reference_without_baseline() {
+        let definition = "rust-analyzer cargo fixture 0.0.0 run().";
+        let missing = "rust-analyzer cargo fixture 0.0.0 missing().";
+        let mut fixture_index = index_fixture(definition, &[("model.rs", &[1])], &[0, 0, 3]);
+        fixture_index.documents.extend(index_fixture(missing, &[("caller.rs", &[0])], &[7, 13, -1]).documents);
+        let bytes = fixture_index.write_to_bytes();
+        let bytes = assert_ok!(bytes, "The unresolved original reference fixture must serialize");
+        let fixture = ParsedIndex::parse(&bytes);
+        let fixture = assert_ok!(fixture, "Parsing must defer reference range validation to repair");
+        let options = Options::new(false);
+        let system_under_test = IndexRepair::new(Path::new("."), None, Path::new("without_test.json"), &options);
+
+        let repaired = system_under_test.perform(fixture, None);
+
+        let error = repaired.err();
+        let error = assert_some!(error, "An unresolved original reference must reach repair without a baseline");
+        assert!(error.is::<TryFromIntError>(), "Repair must reject negative reference coordinates before lookup: {error:#}");
+    }
+
+    #[test]
     fn test_shared_qualification_test_classification() {
         let symbol = "rust-analyzer cargo fixture 0.0.0 run().";
         let index_original = index(symbol, &[("first.rs", &[1]), ("second.rs", &[1]), ("caller.rs", &[0])]);
         let index_original = assert_ok!(index_original, "The original index with colliding definitions must parse");
         let index_without_test = index(symbol, &[("first.rs", &[1]), ("caller.rs", &[0])]);
         let index_without_test = assert_ok!(index_without_test, "The index without cfg(test) must parse");
-        let collisions = colliding_symbols(&index_original, &index_without_test);
+        let collisions = colliding_symbols(&index_original, Some(&index_without_test));
         let target = SourcePath::new(PathBuf::from("first.rs"));
         let target = assert_ok!(target, "The shared definition target must be a valid source path");
         let target = FileNode::new(target);
@@ -363,7 +405,7 @@ mod tests {
             unreachable!("The unambiguous index without cfg(test) must not invoke definition resolution")
         });
         let repaired_without_test = assert_ok!(repaired_without_test, "Definition qualification must match without cfg(test)");
-        let classified = mark_test_references(repaired_original, &repaired_without_test);
+        let classified = mark_test_references(repaired_original, Some(&repaired_without_test));
         let classified = assert_ok!(classified, "Shared qualified definitions must support test-reference classification");
         let system_under_test = file_graph(&classified);
         let system_under_test = assert_ok!(system_under_test, "The classified repaired index must produce a file graph");
@@ -378,7 +420,7 @@ mod tests {
         let index_original = assert_ok!(index_original, "The original index with its test-specific target must parse");
         let index_without_test = index(symbol, &[("production.rs", &[1]), ("caller.rs", &[0])]);
         let index_without_test = assert_ok!(index_without_test, "The index with its production-specific target must parse");
-        let collisions = colliding_symbols(&index_original, &index_without_test);
+        let collisions = colliding_symbols(&index_original, Some(&index_without_test));
 
         let repaired_original = repair_occurrences(index_original, &collisions, |_| {
             unreachable!("The original configuration has an unambiguous definition target")
@@ -388,7 +430,7 @@ mod tests {
             unreachable!("The configuration without cfg(test) has an unambiguous definition target")
         });
         let repaired_without_test = assert_ok!(repaired_without_test, "The index without cfg(test) must qualify its own target");
-        let system_under_test = mark_test_references(repaired_original, &repaired_without_test);
+        let system_under_test = mark_test_references(repaired_original, Some(&repaired_without_test));
         let system_under_test = assert_ok!(system_under_test, "Configuration-specific references must be classifiable");
 
         let occurrences = system_under_test.documents().iter().flat_map(|document| &document.document().occurrences);
@@ -402,7 +444,7 @@ mod tests {
         let caller = "caller.rs";
         let fixture = index(symbol, &[("first.rs", &[1]), ("second.rs", &[1]), (caller, &[0])]);
         let fixture = assert_ok!(fixture, "The indexed definition candidates must parse");
-        let collisions = colliding_symbols(&fixture, &fixture);
+        let collisions = colliding_symbols(&fixture, Some(&fixture));
         let outside_candidate = SourcePath::new(PathBuf::from(caller));
         let outside_candidate = assert_ok!(outside_candidate, "The out-of-candidate target must still be a valid source path");
         let outside_candidate = FileNode::new(outside_candidate);
@@ -597,7 +639,7 @@ mod tests {
         let repaired_original = assert_ok!(repaired_original, "The original index must retain its generated definition");
         let repaired_without_test = repair_occurrences(index_without_test, &repair_symbols, |_| Ok(Some(target.clone())));
         let repaired_without_test = assert_ok!(repaired_without_test, "Generated definitions must be restored without cfg(test)");
-        let classified = mark_test_references(repaired_original, &repaired_without_test);
+        let classified = mark_test_references(repaired_original, Some(&repaired_without_test));
         let classified = assert_ok!(classified, "Different export metadata must still support test-reference classification");
         let system_under_test = file_graph(&classified);
         let system_under_test = assert_ok!(system_under_test, "The classified generated definition must produce a file graph");
@@ -686,7 +728,7 @@ mod tests {
         );
         let fixture = assert_ok!(fixture, "The equivalent definition path fixture must parse");
         let repair_symbols = BTreeSet::from([symbol.to_owned()]);
-        let collisions = colliding_symbols(&fixture, &fixture);
+        let collisions = colliding_symbols(&fixture, Some(&fixture));
         let target = SourcePath::new(PathBuf::from("model.rs"));
         let target = assert_ok!(target, "The normalized definition target must be a valid source path");
         let target = FileNode::new(target);
@@ -731,7 +773,7 @@ mod tests {
         let original_parse = ParsedIndex::parse(&index_original);
         let repaired = match original_parse {
             Ok(parsed_original) => {
-                let baseline_parse = ParsedIndex::parse(&index_without_test);
+                let baseline_parse = ParsedIndex::parse_baseline(&index_without_test);
                 match baseline_parse {
                     Ok(parsed_without_test) => system_under_test.perform(parsed_original, parsed_without_test),
                     Err(error) => Err(error),
@@ -771,7 +813,7 @@ mod tests {
         let symbol = "rust-analyzer cargo fixture 0.0.0 run().";
         let fixture = index(symbol, &[("first.rs", &[1]), ("second.rs", &[1]), ("caller.rs", &[0])]);
         let fixture = assert_ok!(fixture, "The resolver callback contract fixture must parse");
-        let repair_symbols = colliding_symbols(&fixture, &fixture);
+        let repair_symbols = colliding_symbols(&fixture, Some(&fixture));
 
         let system_under_test = catch_unwind(|| repair_occurrences(fixture, &repair_symbols, |_| Ok(None)));
 
@@ -807,9 +849,10 @@ mod tests {
         let options = Options::new(false);
         let repair = IndexRepair::new(Path::new("."), None, Path::new("without_test.json"), &options);
 
-        let repaired = repair.perform(index_original, index_without_test);
+        let repaired = repair.perform(index_original, Some(index_without_test));
         let (repaired_original, repaired_without_test) = assert_ok!(repaired, "Repair must accept both parsed pipeline indexes");
-        let system_under_test = mark_test_references(repaired_original, &repaired_without_test);
+        let repaired_without_test = assert_some!(repaired_without_test, "Repair must retain the nonempty baseline");
+        let system_under_test = mark_test_references(repaired_original, Some(&repaired_without_test));
         let system_under_test = assert_ok!(system_under_test, "Repaired pipeline indexes must support reference classification");
         let graph = file_graph(&system_under_test);
         let graph = assert_ok!(graph, "The classified pipeline index must produce a file graph");
@@ -831,7 +874,7 @@ mod tests {
         let fixture = assert_ok!(fixture, "The qualified symbol cache fixture must parse");
         let original_structure = fixture.symbol_cache().get(symbol).require_structure();
         let original_structure = assert_ok!(original_structure, "Original fixture symbol must have parsed structure").clone();
-        let repair_symbols = colliding_symbols(&fixture, &fixture);
+        let repair_symbols = colliding_symbols(&fixture, Some(&fixture));
         let target = SourcePath::new(PathBuf::from("first.rs"));
         let target = assert_ok!(target, "The qualified symbol target must be a valid source path");
         let target = FileNode::new(target);

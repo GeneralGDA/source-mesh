@@ -15,6 +15,7 @@ $commandPackages = [ordered]@{
     jaq        = 'jaq'
     'ast-grep' = 'ast-grep'
     'cargo-mutants' = 'cargo-mutants'
+    lychee     = 'lychee'
 }
 
 foreach ($commandName in $commandPackages.Keys) {
@@ -27,7 +28,7 @@ foreach ($commandName in $commandPackages.Keys) {
 
     $packageName = $commandPackages[$commandName]
     Write-Host "Installing $commandName from Cargo package $packageName..."
-    & cargo install --locked $packageName
+    & cargo install $packageName
     if ($LASTEXITCODE -ne 0) {
         throw "Cargo failed to install $packageName for $commandName with exit code $LASTEXITCODE."
     }

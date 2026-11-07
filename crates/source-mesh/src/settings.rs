@@ -334,7 +334,7 @@ impl LoadedSettings {
             .analyzer(AnalyzerOptions::new(verbose)).maybe_root(root).maybe_depth(depth)
             .maybe_include_self(include_self).maybe_exclude_tests(exclude_tests)
             .maybe_format(format.map(Into::into)).maybe_output(output.map(resolve)).maybe_group_folders(group_folders)
-            .cycles(cycles).maybe_outgoing_dependencies(outgoing).maybe_save_scip(save_scip.map(resolve)).build();
+            .cycles(cycles).maybe_outgoing_dependencies(outgoing).maybe_save_scip(save_scip.map(resolve)).build()?;
         Ok(Command { request, verbose })
     }
 }
@@ -420,6 +420,11 @@ save-scip = "saved.scip"
 config = "analyzer.json"
 verbose = true
 "#;
+
+    #[must_use]
+    fn saved_index_path_test_fixture() -> PathBuf {
+        PathBuf::from_iter([env!("CARGO_MANIFEST_DIR"), "..", "source-mesh-core", "src", "fixtures", "dependency-graph.scip"])
+    }
 
     fn cli_test_fixture(arguments: &[&str]) -> Result<(Cli, ArgMatches)> {
         let arguments = iter::once(env!("CARGO_PKG_NAME")).chain(arguments.iter().copied());
@@ -548,8 +553,9 @@ verbose = true
     fn test_cli_numeric_range_survives_merge() {
         let contents = "[graph]\ndepth = 1\n[cycles]\ncycle-limit = 1\n[outgoing-dependencies]\nmaximum = 1";
         let maximum = usize::MAX.to_string();
+        let saved_index_path = saved_index_path_test_fixture().display().to_string();
         let fixture = settings_merge_test_fixture(contents, &[
-            "--from-scip", "saved.scip", "--depth", &maximum, "--cycle-limit", &maximum,
+            "--from-scip", &saved_index_path, "--depth", &maximum, "--cycle-limit", &maximum,
             "--max-outgoing-dependencies", &maximum,
         ]);
         let (settings, cli, matches) = assert_ok!(fixture, "CLI numbers must support the complete native usize range");
@@ -583,16 +589,23 @@ verbose = true
     }
 
     #[cfg(any(unix, windows))]
-    #[test]
-    fn test_native_cli_paths_survive_merge_and_projection() {
+    #[rstest]
+    #[case::native_input(true)]
+    #[case::native_output(false)]
+    fn test_native_cli_paths_survive_merge_and_projection(#[case] native_input: bool) {
         use std::ffi::OsStr;
 
         let contents = b"[export]\noutput = 'file.dot'\n[analysis]\nfrom-scip = 'file.scip'";
         let fixture = settings_directory_test_fixture(Some(contents));
         let (fixture, settings_path) = assert_ok!(fixture, "Native path settings must be written");
-        let input_path = fixture.path().join(non_utf8_path_test_fixture()).with_extension("scip");
+        let input_path = if native_input {
+            fixture.path().join(non_utf8_path_test_fixture()).with_extension("scip")
+        } else {
+            saved_index_path_test_fixture()
+        };
         let output_path = fixture.path().join(non_utf8_path_test_fixture()).with_extension("dot");
-        assert!(input_path.to_str().is_none(), "The fixture must exercise a genuinely non-UTF-8 path");
+        assert!(output_path.to_str().is_none(), "The fixture must exercise a genuinely non-UTF-8 output path");
+        assert_eq!(input_path.to_str().is_none(), native_input, "Only the native-input case may use a non-UTF-8 input path");
         let arguments = [
             OsStr::new(env!("CARGO_PKG_NAME")), OsStr::new("--settings"), settings_path.as_os_str(),
             OsStr::new("--from-scip"), input_path.as_os_str(), OsStr::new("--output"), output_path.as_os_str(),
@@ -610,7 +623,13 @@ verbose = true
         let expected = [Some(input_path), Some(output_path)];
         assert_eq!(paths, expected);
         let command = system_under_test.into_command();
-        assert_ok!(command, "Builder projection must accept native paths without serialization or filesystem access");
+        if native_input {
+            let error = command.err();
+            let error = assert_some!(error, "An absent native input path must fail during request construction");
+            assert!(error.is::<io::Error>(), "Native input paths must reach file I/O without UTF-8 conversion: {error:#}");
+        } else {
+            assert_ok!(command, "Native output paths must survive builder projection without serialization or output I/O");
+        }
     }
 
     #[rstest]
@@ -1131,7 +1150,9 @@ verbose = {configured}
     #[case::missing_report_threshold("[outgoing-dependencies]\noutput = 'outgoing.md'", &[], false)]
     #[case::missing_cli_threshold("", &["--outgoing-dependencies-mode", "files"], false)]
     fn test_outgoing_validation_after_merge(#[case] contents: &str, #[case] arguments: &[&str], #[case] valid: bool) {
-        let arguments: Vec<_> = ["--from-scip", "saved.scip"].into_iter().chain(arguments.iter().copied()).collect();
+        let saved_index_path = saved_index_path_test_fixture().display().to_string();
+        let replay_arguments = ["--from-scip", &saved_index_path];
+        let arguments: Vec<_> = replay_arguments.into_iter().chain(arguments.iter().copied()).collect();
         let fixture = settings_loading_test_fixture(Some(contents.as_bytes()), &arguments);
         let (_fixture, path, mut cli, matches) = assert_ok!(fixture, "Outgoing merge-validation test fixture must be prepared");
         cli.settings = Some(path);
@@ -1150,12 +1171,31 @@ verbose = {configured}
         }
     }
 
+    #[test]
+    fn test_missing_replay_into_command() {
+        let fixture = settings_loading_test_fixture(Some(b"[analysis]\nfrom-scip = 'missing.scip'"), &[]);
+        let (fixture, _, cli, matches) = assert_ok!(fixture, "Missing replay fixture must contain valid settings");
+        let loaded = LoadedSettings::load(cli, matches);
+        let loaded = assert_ok!(loaded, "Loading settings must not require the saved analysis to exist");
+
+        let system_under_test = loaded.into_command();
+
+        let error = system_under_test.err();
+        let error = assert_some!(error, "Command construction must propagate a missing saved-analysis error");
+        let cause = error.downcast_ref::<io::Error>();
+        let cause = assert_some!(cause, "Missing saved analysis must retain its I/O cause");
+        let diagnostic = error.to_string();
+        let input_path = fixture.path().join("missing.scip").display().to_string();
+        assert_eq!(cause.kind(), io::ErrorKind::NotFound);
+        assert!(diagnostic.contains(&input_path), "Replay errors must identify the resolved input path: {diagnostic}");
+    }
+
     #[rstest]
     #[case::file_replay(
         "[analysis]\nfrom-scip = 'saved.scip'", &[], None,
     )]
     #[case::cli_replay(
-        "[graph]\ndepth = 0", &["--from-scip", "cli.scip"], None,
+        "[graph]\ndepth = 0", &["--from-scip", &saved_index_path_test_fixture().display().to_string()], None,
     )]
     #[case::filtered_replay(
         "[analysis]\nfrom-scip = 'saved.scip'", &["--root", "src", "--exclude", "src/generated/**"], None,
@@ -1184,7 +1224,9 @@ verbose = {configured}
         #[case] conflict: Option<&str>,
     ) {
         let fixture = settings_loading_test_fixture(Some(contents.as_bytes()), arguments);
-        let (_fixture, _, cli, matches) = assert_ok!(fixture, "Replay validation must have settings but no project manifest");
+        let (fixture, _, cli, matches) = assert_ok!(fixture, "Replay validation must have settings but no project manifest");
+        let written = fs::copy(saved_index_path_test_fixture(), fixture.path().join("saved.scip"));
+        assert_ok!(written, "Valid saved analysis must be available beside the replay settings");
         let loaded = LoadedSettings::load(cli, matches);
         let loaded = assert_ok!(loaded, "Replay settings must load before conflicting options are validated");
 

@@ -1,8 +1,8 @@
 # source-mesh-core
 
-Analyze Rust file and folder dependencies, export DOT, Mermaid, or `GraphML` diagrams,
-and produce file and folder cycle reports or check outgoing dependency limits. The `source-mesh` package provides the CLI;
-this package exposes the same pipeline without command-line parsing.
+Find dependency cycles and tightly coupled files or folders in your Rust code to make refactoring easier.
+Export DOT, Mermaid, or `GraphML` diagrams, generate cycle reports, and enforce outgoing dependency limits.
+The `source-mesh` package provides the CLI; this package exposes the same pipeline without command-line parsing.
 
 ```rust
 use std::path::PathBuf;
@@ -16,7 +16,7 @@ fn main() -> anyhow::Result<()> {
     let request = Request::builder()
         .input(Input::ScipFile(index))
         .format(Format::Mermaid)
-        .build();
+        .build()?;
     let mut diagram = Vec::new();
     source_mesh_core::run(&request, &mut diagram)?;
     assert!(!diagram.is_empty());
@@ -31,6 +31,16 @@ All boolean options default to false. Configure reports and cycle gating through
 `CycleOptions::builder()` and pass the result to the request's `.cycles(...)`
 setter. Reports default to at most `DEFAULT_CYCLE_LIMIT` simple cycles each.
 Pass `analyzer_options::Options::new(true)` to `.analyzer(...)` for verbose diagnostics.
+
+`Request::builder().build()` returns a `Result`. For `Input::ScipFile`, it opens and parses the index immediately,
+rejecting missing or unreadable files, malformed indexes, and replay requests that also specify `save_scip`.
+The request retains the parsed snapshot and the opened file's identity: subsequent runs do not reopen its path,
+and output protection still applies if the input is renamed or accessed through a hard link.
+Project analysis, graph checks, filtering, and output I/O remain in `run`; successful construction does not guarantee
+that execution will succeed. Construction never writes outputs or starts rust-analyzer.
+
+**API migration:** callers using the previous infallible request builder must now handle `.build()` errors, usually with
+`.build()?`. The `CycleOptions` and `OutgoingDependencyOptions` builders remain infallible.
 
 Validation and analysis errors preserve existing outputs. Cycle gating with
 `CycleOptions::builder().fail_on_cycles(true).build()` reports failure after writing requested outputs. Output I/O

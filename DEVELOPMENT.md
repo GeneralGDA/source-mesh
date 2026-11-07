@@ -24,6 +24,14 @@ For the full test run, including ignored rust-analyzer and repository integratio
 ./scripts/Test-All.ps1
 ```
 
+### Documentation links
+
+```powershell
+./scripts/Test-Links.ps1
+```
+
+Use `-Offline` to check only local links.
+
 ### Local coverage
 
 ```powershell

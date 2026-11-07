@@ -66,6 +66,14 @@ jobs:
           mkdir -p target/source-mesh
           cargo run --release --locked -p source-mesh -- . --root . --format graphml --exclude-tests --highlight-cycles --fail-on-cycles --cycles-output target/source-mesh/folder-cycles.md --file-cycles-output target/source-mesh/file-cycles.md --output target/source-mesh/folder-dependencies.graphml
 
+      - name: Publish dependency cycle summary
+        if: >-
+          ${{ always() && (steps.dependency_cycles.outcome == 'success' || steps.dependency_cycles.outcome == 'failure') }}
+        shell: pwsh
+        run: >-
+          ./scripts/Publish-CycleSummary.ps1 -SummaryPath $env:GITHUB_STEP_SUMMARY
+          -ReportPaths target/source-mesh/folder-cycles.md,target/source-mesh/file-cycles.md
+
       - name: Upload dependency cycle diagnostics
         if: ${{ always() && matrix.os == 'ubuntu-latest' && steps.dependency_cycles.outcome == 'failure' }}
         uses: actions/upload-artifact@v7.0.1
@@ -76,6 +84,28 @@ jobs:
 
       - name: Run repository integration tests
         run: cargo test --release --locked -p source-mesh --test repository -- --ignored
+
+  documentation-links:
+    name: Documentation links
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check documentation links
+        uses: lycheeverse/lychee-action@v2.9.0
+        with:
+          args: --config lychee.toml --files-from scripts/lychee-inputs.txt
+          fail: true
+          failIfEmpty: true
+          format: markdown
+          jobSummary: true
+          output: target/lychee/report.md
 
   publish-coverage:
     needs: test

@@ -48,12 +48,12 @@ fn missing_definition_scopes(
     Ok(scopes)
 }
 
-pub(crate) fn mark_test_references(mut index_original: ParsedIndex, index_without_test: &ParsedIndex) -> Result<ParsedIndex> {
-    ensure!(!index_original.documents().is_empty(), "Original SCIP index contains no source documents");
-
+pub(crate) fn mark_test_references(
+    mut index_original: ParsedIndex, index_without_test: Option<&ParsedIndex>,
+) -> Result<ParsedIndex> {
     let mut references_without_test = HashSet::new();
     let mut definitions_without_test = HashSet::new();
-    for document in index_without_test.documents() {
+    for document in index_without_test.into_iter().flat_map(ParsedIndex::documents) {
         let file = document.file();
         for occurrence in &document.document().occurrences {
             let identity = SymbolOccurrence::new(file.clone(), ScipRange::parse(&occurrence.range)?, occurrence.symbol.clone());
@@ -137,8 +137,8 @@ mod tests {
 
     fn classify(index_bytes_original: &[u8], index_bytes_without_test: &[u8]) -> Result<ParsedIndex> {
         let index_original = ParsedIndex::parse(index_bytes_original)?;
-        let index_without_test = ParsedIndex::parse(index_bytes_without_test)?;
-        mark_test_references(index_original, &index_without_test)
+        let index_without_test = ParsedIndex::parse_baseline(index_bytes_without_test)?;
+        mark_test_references(index_original, index_without_test.as_ref())
     }
 
     #[rstest]
@@ -235,20 +235,24 @@ mod tests {
         assert!(is_test_reference, "Definition from the index without cfg(test) was treated as a matching reference");
     }
 
-    #[test]
-    fn test_empty_documents_without_test() {
+    #[rstest]
+    #[case::no_documents(vec![])]
+    #[case::document_without_occurrences(vec![Document { relative_path: "caller.rs".into(), ..Document::default() }])]
+    fn test_empty_documents_without_test(#[case] documents: Vec<Document>) {
         let index_original = index_bytes("caller.rs", vec![reference("service/run().", [0, 0, 3])]);
         let index_original = assert_ok!(index_original, "The original reference fixture must serialize before classification");
-        let index_without_test = Index { metadata: Some(Metadata::default()).into(), ..Index::default() }.write_to_bytes();
-        let index_without_test = assert_ok!(index_without_test, "The baseline without documents must serialize");
+        let index_without_test = Index { metadata: Some(Metadata::default()).into(), documents, ..Index::default() };
+        let index_without_test = index_without_test.write_to_bytes();
+        let index_without_test = assert_ok!(index_without_test, "The baseline without references must serialize");
 
         let system_under_test = classify(&index_original, &index_without_test);
-        let system_under_test = assert_ok!(system_under_test, "A baseline without documents must allow classification");
+        let system_under_test = assert_ok!(system_under_test, "A reference-free baseline must allow classification");
 
         let occurrence = system_under_test.documents().first().and_then(|document| document.document().occurrences.first());
         let occurrence = assert_some!(occurrence, "{MESSAGE_MISSING_REFERENCE}");
         let is_test_reference = occurrence.symbol_roles & SymbolRole::Test as i32 != 0;
-        assert!(is_test_reference, "Reference absent from an empty index without cfg(test) was not classified");
+        assert!(is_test_reference, "Reference absent from the baseline without cfg(test) was not classified");
+        assert!(has_test_classification(&system_under_test), "An absent baseline must still record classification provenance");
     }
 
     #[rstest]
@@ -314,8 +318,10 @@ mod tests {
     #[test]
     fn test_saved_classification_provenance() {
         let fixture = ParsedIndex::parse(include_bytes!("../fixtures/dependency-graph.scip"));
-        let mut fixture = assert_ok!(fixture, "The saved classification fixture must parse before removing its documents");
-        fixture.documents_mut().clear();
+        let mut fixture = assert_ok!(fixture, "The saved classification fixture must parse before removing its occurrences");
+        for document in fixture.documents_mut() {
+            document.occurrences_mut().clear();
+        }
 
         let system_under_test = has_test_classification(&fixture);
 
@@ -483,7 +489,7 @@ mod tests {
         let invalid = assert_ok!(invalid, "Index parsing must leave reference range validation to classification");
         let (index_original, index_without_test) = if invalid_index_without_test { (valid, invalid) } else { (invalid, valid) };
 
-        let system_under_test = mark_test_references(index_original, &index_without_test);
+        let system_under_test = mark_test_references(index_original, Some(&index_without_test));
 
         assert!(system_under_test.is_err(), "Classification must reject malformed reference ranges in either index");
     }
@@ -514,15 +520,25 @@ mod tests {
     }
 
     #[rstest]
-    #[case(&[], &[0x0a, 0x00])]
-    #[case(&[0xff], &[0x0a, 0x00])]
-    #[case(&[0x0a, 0x00], &[])]
-    #[case(&[0x0a, 0x00], &[0xff])]
-    #[case(&[0x0a, 0x00], &[0x0a, 0x00])]
-    fn test_invalid_index_inputs(#[case] index_original: &[u8], #[case] index_without_test: &[u8]) {
+    #[case::original_empty(&[], false)]
+    #[case::baseline_empty(&[], true)]
+    #[case::original_malformed(&[0xff], false)]
+    #[case::baseline_malformed(&[0xff], true)]
+    #[case::original_metadata_only(&[0x0a, 0x00], false)]
+    #[case::original_truncated_metadata(&[0x0a, 0x01], false)]
+    #[case::baseline_truncated_metadata(&[0x0a, 0x01], true)]
+    fn test_invalid_index_inputs(#[case] invalid: &[u8], #[case] invalid_index_without_test: bool) {
+        let valid = index_bytes("caller.rs", vec![]);
+        let valid = assert_ok!(valid, "The valid classification input fixture must serialize");
+        let (index_original, index_without_test) = if invalid_index_without_test {
+            (valid.as_slice(), invalid)
+        } else {
+            (invalid, valid.as_slice())
+        };
+
         let system_under_test = classify(index_original, index_without_test);
 
-        assert!(system_under_test.is_err(), "Classification must reject empty, malformed, or document-free original indices");
+        assert!(system_under_test.is_err(), "Classification must reject invalid data and document-free original indexes");
     }
 
     #[rstest]

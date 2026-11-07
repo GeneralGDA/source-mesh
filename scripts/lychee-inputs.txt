@@ -1,0 +1,11 @@
+# Hand-written documentation only; do not scan build output or generated fixture reports.
+README.md
+crates/source-mesh-core/README.md
+DEVELOPMENT.md
+crates/source-mesh-core/DEVELOPMENT.md
+crates/source-mesh-core/src/fixtures/README.md
+crates/source-mesh/tests/expected/README.md
+AGENTS.md
+.github/copilot-instructions.md
+.agents/skills/mutation-testing/SKILL.md
+.agents/skills/mutation-testing/runner-protocol.md

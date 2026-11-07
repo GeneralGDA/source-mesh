@@ -7,6 +7,7 @@ use anyhow::anyhow;
 use anyhow::ensure;
 use getset::Getters;
 use getset::MutGetters;
+use protobuf::CodedInputStream;
 use protobuf::Message as _;
 use protobuf::MessageField;
 use protobuf::SpecialFields;
@@ -26,7 +27,7 @@ use crate::scip::path::source_path;
 pub(crate) struct ParsedIndex {
     #[getset(get = "pub(crate)", get_mut = "pub(crate)")]
     metadata: MessageField<Metadata>,
-    #[getset(get = "pub(crate)", get_mut = "pub(crate)")]
+    #[getset(get = "pub(crate)")]
     documents: Vec<ParsedDocument>,
     external_symbols: Vec<SymbolInformation>,
     special_fields: SpecialFields,
@@ -36,9 +37,21 @@ pub(crate) struct ParsedIndex {
 
 impl ParsedIndex {
     pub(crate) fn parse(bytes: &[u8]) -> Result<Self> {
+        Self::parse_baseline(bytes)?.context("SCIP index contains no source documents")
+    }
+
+    pub(crate) fn parse_baseline(bytes: &[u8]) -> Result<Option<Self>> {
         ensure!(!bytes.is_empty(), "SCIP index is empty");
-        let index = Index::parse_from_bytes(bytes).context("Cannot parse SCIP protobuf index")?;
+        let mut input = CodedInputStream::from_bytes(bytes);
+        let input_length = u64::try_from(bytes.len()).context("SCIP index exceeds the protobuf input size limit")?;
+        // The protobuf decoder needs an explicit limit to reject nested messages extending beyond the input.
+        input.push_limit(input_length).context("Cannot parse SCIP protobuf index")?;
+        let index = Index::parse_from(&mut input).context("Cannot parse SCIP protobuf index")?;
+        input.check_eof().context("Cannot parse SCIP protobuf index")?;
         let Index { metadata, documents, external_symbols, special_fields } = index;
+        if documents.is_empty() {
+            return Ok(None);
+        }
         let documents = documents.into_iter().map(|document| {
             Ok(ParsedDocument { file: source_path(&document.relative_path)?, document })
         });
@@ -50,11 +63,15 @@ impl ParsedIndex {
         });
         let external_symbol_names = external_symbols.iter().map(|information| information.symbol.as_str());
         let symbol_cache = SymbolCache::parse(document_symbols.chain(external_symbol_names));
-        Ok(Self { metadata, documents, external_symbols, special_fields, symbol_cache })
+        Ok(Some(Self { metadata, documents, external_symbols, special_fields, symbol_cache }))
     }
 
-    pub(crate) fn documents_with_symbols_mut(&mut self) -> (&mut [ParsedDocument], &mut SymbolCache) {
-        (&mut self.documents, &mut self.symbol_cache)
+    pub(crate) const fn documents_mut(&mut self) -> &mut [ParsedDocument] {
+        self.documents.as_mut_slice()
+    }
+
+    pub(crate) const fn documents_with_symbols_mut(&mut self) -> (&mut [ParsedDocument], &mut SymbolCache) {
+        (self.documents.as_mut_slice(), &mut self.symbol_cache)
     }
 
     pub(crate) fn symbols(&self) -> impl Iterator<Item = &SymbolInformation> {
@@ -143,12 +160,105 @@ impl ParsedSymbol {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use claims::assert_ok;
     use claims::assert_some;
     use pretty_assertions::assert_eq;
+    use protobuf::Message as _;
     use rstest::rstest;
+    use scip::types::Document;
+    use scip::types::Index;
+    use scip::types::Metadata;
+    use scip::types::SymbolInformation;
 
+    use super::ParsedIndex;
     use super::SymbolCache;
+
+    #[rstest]
+    #[case::empty(Index::default())]
+    #[case::metadata_only(Index { metadata: Some(Metadata::default()).into(), ..Index::default() })]
+    #[case::external_symbols_only(Index { external_symbols: vec![SymbolInformation::default()], ..Index::default() })]
+    fn test_source_document_requirement(#[case] mut fixture: Index, #[values(false, true)] has_document: bool) {
+        if has_document {
+            fixture.documents.push(Document { relative_path: "isolated.rs".into(), ..Document::default() });
+        }
+        let bytes = fixture.write_to_bytes();
+        let bytes = assert_ok!(bytes, "The source-document boundary fixture must serialize");
+
+        let system_under_test = ParsedIndex::parse(&bytes);
+
+        if has_document {
+            let system_under_test = assert_ok!(system_under_test, "Adding a source document must make the index acceptable");
+            assert_eq!(system_under_test.into_index(), fixture, "Accepted index data must be preserved");
+        } else {
+            assert!(system_under_test.is_err(), "An index without source documents must be rejected");
+        }
+    }
+
+    #[rstest]
+    #[case::metadata_only(Index { metadata: Some(Metadata::default()).into(), ..Index::default() })]
+    #[case::external_symbols_only(Index { external_symbols: vec![SymbolInformation::default()], ..Index::default() })]
+    fn test_document_free_baselines(#[case] fixture: Index) {
+        let bytes = fixture.write_to_bytes();
+        let bytes = assert_ok!(bytes, "The document-free baseline fixture must serialize");
+        assert!(!bytes.is_empty(), "The baseline must have a nonzero protobuf encoding");
+
+        let system_under_test = ParsedIndex::parse_baseline(&bytes);
+        let system_under_test = assert_ok!(system_under_test, "A valid document-free baseline must decode successfully");
+
+        assert!(system_under_test.is_none(), "A document-free baseline must not construct an empty ParsedIndex");
+    }
+
+    #[rstest]
+    #[case::empty(&[])]
+    #[case::malformed(&[0xff])]
+    #[case::truncated_metadata(&[0x0a, 0x01])]
+    #[case::metadata_with_malformed_trailing_field(&[0x0a, 0x00, 0xff])]
+    fn test_invalid_baseline_data(#[case] bytes: &[u8]) {
+        let system_under_test = ParsedIndex::parse_baseline(bytes);
+
+        assert!(system_under_test.is_err(), "Empty or malformed baseline bytes must not become an absent baseline");
+    }
+
+    #[rstest]
+    #[case("")]
+    #[case("src/..")]
+    #[case("../outside.rs")]
+    fn test_invalid_baseline_document_paths(#[case] path: &str) {
+        let fixture = Index {
+            documents: vec![Document { relative_path: path.into(), ..Document::default() }],
+            ..Index::default()
+        };
+        let bytes = fixture.write_to_bytes();
+        let bytes = assert_ok!(bytes, "The invalid baseline document path fixture must serialize");
+
+        let system_under_test = ParsedIndex::parse_baseline(&bytes);
+
+        assert!(system_under_test.is_err(), "An invalid document path must not become an absent baseline: {path:?}");
+    }
+
+    #[rstest]
+    #[case::original(false)]
+    #[case::baseline(true)]
+    fn test_isolated_document(#[case] baseline: bool) {
+        let path = "isolated.rs";
+        let fixture = Index {
+            documents: vec![Document { relative_path: path.into(), ..Document::default() }],
+            ..Index::default()
+        };
+        let bytes = fixture.write_to_bytes();
+        let bytes = assert_ok!(bytes, "The isolated document fixture must serialize");
+
+        let system_under_test = if baseline { ParsedIndex::parse_baseline(&bytes) } else { ParsedIndex::parse(&bytes).map(Some) };
+        let system_under_test = assert_ok!(system_under_test, "A source document needs neither occurrences nor symbols");
+        let system_under_test = assert_some!(system_under_test, "An occurrence-free document is still a nonempty index");
+
+        let document = system_under_test.documents().first();
+        let document = assert_some!(document, "Parsing must retain the isolated document");
+        assert_eq!(document.file().path(), Path::new(path), "The isolated document must have its parsed file identity");
+        assert_eq!(system_under_test.into_index(), fixture, "Parsing must preserve an occurrence-free document");
+    }
 
     #[rstest]
     #[case::structured("rust-analyzer cargo fixture 0.0.0 run().", true)]

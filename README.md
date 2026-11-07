@@ -6,7 +6,8 @@
 ![Windows CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.svg?nameFilter=windows-latest&style=for-the-badge&label=Windows)
 [![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fgeneralgda.github.io%2Fsource-mesh%2Fcoverage.json&style=for-the-badge&logo=rust&logoColor=white)](https://generalgda.github.io/source-mesh/)
 
-Draw dependencies between physical folders in a Rust project. Export **GraphML for yEd**, **Mermaid**, or **DOT**, highlight cycles, and check cycles or outgoing dependency limits between folders or files.
+See how the files and folders in your Rust project depend on each other, spot dependency cycles, and find code that is hard to change in isolation.
+Export **GraphML**, **Mermaid**, or **DOT** diagrams, and enforce cycle checks or outgoing dependency limits in CI.
 
 ## Install
 
@@ -33,7 +34,8 @@ From the Rust project you want to analyze:
 source-mesh . --root src --format graphml --exclude-tests --output folders.graphml
 ```
 
-Open `folders.graphml` in yEd and apply a layout. To find and highlight cycles:
+Open `folders.graphml` in [yEd](https://www.yworks.com/products/yed), a free desktop graph editor, and apply a layout.
+To find and highlight cycles:
 
 ```console
 source-mesh . --root src --format graphml --exclude-tests --highlight-cycles --cycles-output folder-cycles.md --file-cycles-output file-cycles.md --output folders.graphml
@@ -131,9 +133,29 @@ On a violation, source-mesh writes the diagram and requested reports, then exits
 file or folder with its count and the threshold. The optional Markdown report lists the same violations, or explicitly states
 that none were found. When combined with `--fail-on-cycles`, diagnostics include both kinds of failure.
 
+### Example check output
+
+For a folder with three outgoing dependencies and a limit of two, stderr looks like this
+(captured from the bundled dependency-graph fixture):
+
+```text
+error: Outgoing dependency threshold exceeded (mode: folders, maximum: 2, violating sources: 1).
+- "api": 3 outgoing dependencies (maximum: 2)
+```
+
+The command exits with code `1`, but the diagram and requested Markdown reports are still available.
+Cycle reports explicitly say `No cycles found.` when the selected graph is acyclic.
+
 ## GitHub Actions
 
-`--fail-on-cycles` turns file or folder dependency cycles into a failing CI step. The diagram and requested reports are written before the failure, so the artifact is available for diagnosis. Adjust `--root src` for the source layout of the repository being checked.
+`--fail-on-cycles` turns file or folder dependency cycles into a failing CI step. The diagram and requested reports are
+written before the failure. Publish those Markdown reports in the workflow run's **Summary** tab on both passing and failing
+checks, and retain the diagram as a downloadable artifact on failure. Adjust `--root src` for your repository's source layout.
+
+For the summary step below, copy [the summary helper](scripts/Publish-CycleSummary.ps1) into your repository at
+`scripts/Publish-CycleSummary.ps1`; installing the CLI does not install this helper.
+It writes its step's summary and notes missing reports. If the combined reports exceed GitHub's size limit,
+it writes a notice directing readers to the diagnostic artifact instead.
 
 ```yaml
 jobs:
@@ -148,17 +170,28 @@ jobs:
       - name: Install source-mesh
         run: cargo install --git https://github.com/GeneralGDA/source-mesh --locked source-mesh
       - name: Check dependency cycles
+        id: dependency_cycles
         run: |
           mkdir -p target/source-mesh
           source-mesh . --root src --format graphml --exclude-tests --highlight-cycles --fail-on-cycles --cycles-output target/source-mesh/folder-cycles.md --file-cycles-output target/source-mesh/file-cycles.md --output target/source-mesh/folder-dependencies.graphml
+      - name: Publish cycle summary
+        if: >-
+          ${{ always() && (steps.dependency_cycles.outcome == 'success' || steps.dependency_cycles.outcome == 'failure') }}
+        shell: pwsh
+        run: >-
+          ./scripts/Publish-CycleSummary.ps1 -SummaryPath $env:GITHUB_STEP_SUMMARY
+          -ReportPaths target/source-mesh/folder-cycles.md,target/source-mesh/file-cycles.md
       - name: Upload cycle diagnostics
-        if: ${{ failure() }}
+        if: ${{ always() && steps.dependency_cycles.outcome == 'failure' }}
         uses: actions/upload-artifact@v7.0.1
         with:
           name: source-mesh-cycle-diagnostics
           path: target/source-mesh
           if-no-files-found: warn
 ```
+
+This repository uses the same summary publishing in CI. A separate [lychee](https://github.com/lycheeverse/lychee) job checks
+documentation links and publishes its own report; lychee is a development tool, not a dependency of the CLI or core library.
 
 ## Reusing analysis
 

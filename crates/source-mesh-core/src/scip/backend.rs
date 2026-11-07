@@ -1,12 +1,15 @@
+use std::collections::BTreeMap;
+
 use anyhow::Result;
 use anyhow::bail;
-use anyhow::ensure;
+use scip::types::Occurrence;
 use scip::types::SymbolRole;
 
 use crate::diagnostics::emit;
 use crate::model::DependencyKind;
 use crate::model::FileEdge;
 use crate::model::FileGraph;
+use crate::model::FileNode;
 use crate::scip::definitions::DefinitionFiles;
 use crate::scip::definitions::definitions;
 use crate::scip::index::ParsedIndex;
@@ -21,7 +24,6 @@ pub fn parse_scip(bytes: &[u8]) -> Result<FileGraph> {
 }
 
 pub(crate) fn file_graph(index: &ParsedIndex) -> Result<FileGraph> {
-    ensure!(!index.documents().is_empty(), "SCIP index contains no source documents");
     if !has_test_classification(index) {
         emit(format_args!("{MISSING_CLASSIFICATION_WARNING}"));
     }
@@ -29,39 +31,48 @@ pub(crate) fn file_graph(index: &ParsedIndex) -> Result<FileGraph> {
     let mut graph = FileGraph::from_files(source_files);
     let definitions = definitions(index);
     for document in index.documents() {
-        let source = document.file();
         for occurrence in &document.document().occurrences {
-            if occurrence.symbol_roles & SymbolRole::Definition as i32 == 0
-                && let Some(candidates) = definitions.get(occurrence.symbol.as_str())
-            {
-                let target = match *candidates {
-                    DefinitionFiles::Unique(ref target) => target,
-                    DefinitionFiles::Ambiguous(ref files) => {
-                        let paths: Vec<_> = files.iter().map(|file| file.path().display().to_string()).collect();
-                        bail!(
-                            "Cannot resolve reference to SCIP symbol {:?} in {} at {:?}: \
-                             rust-analyzer assigned it to multiple files ({}). Run source-mesh on the original project \
-                             to resolve Cargo target collisions; an offline index cannot recover the missing target identity.",
-                            occurrence.symbol,
-                            source.path().display(),
-                            occurrence.range,
-                            paths.join(", ")
-                        );
-                    }
-                };
-                if source == target {
-                    continue;
-                }
-                let kind = if occurrence.symbol_roles & SymbolRole::Test as i32 != 0 {
-                    DependencyKind::Test
-                } else {
-                    DependencyKind::Production
-                };
-                graph.insert_dependency(FileEdge::new(source.clone(), target.clone(), kind));
+            if let Some(dependency) = reference_dependency(document.file(), occurrence, &definitions)? {
+                graph.insert_dependency(dependency);
             }
         }
     }
     Ok(graph)
+}
+
+fn reference_dependency(
+    source: &FileNode, occurrence: &Occurrence, definitions: &BTreeMap<&str, DefinitionFiles>,
+) -> Result<Option<FileEdge>> {
+    if occurrence.symbol_roles & SymbolRole::Definition as i32 != 0 {
+        return Ok(None);
+    }
+    let Some(candidates) = definitions.get(occurrence.symbol.as_str()) else {
+        return Ok(None);
+    };
+    let target = match *candidates {
+        DefinitionFiles::Unique(ref target) => target,
+        DefinitionFiles::Ambiguous(ref files) => {
+            let paths: Vec<_> = files.iter().map(|file| file.path().display().to_string()).collect();
+            bail!(
+                "Cannot resolve reference to SCIP symbol {:?} in {} at {:?}: \
+                 rust-analyzer assigned it to multiple files ({}). Run source-mesh on the original project \
+                 to resolve Cargo target collisions; an offline index cannot recover the missing target identity.",
+                occurrence.symbol,
+                source.path().display(),
+                occurrence.range,
+                paths.join(", ")
+            );
+        }
+    };
+    if source == target {
+        return Ok(None);
+    }
+    let kind = if occurrence.symbol_roles & SymbolRole::Test as i32 != 0 {
+        DependencyKind::Test
+    } else {
+        DependencyKind::Production
+    };
+    Ok(Some(FileEdge::new(source.clone(), target.clone(), kind)))
 }
 
 #[cfg(test)]
@@ -349,12 +360,13 @@ mod tests {
     }
 
     #[rstest]
-    #[case(&[0xff])]
-    #[case(&[])]
+    #[case::malformed(&[0xff])]
+    #[case::empty(&[])]
+    #[case::metadata_only(&[0x0a, 0x00])]
     fn test_invalid_index_data(#[case] index: &[u8]) {
         let system_under_test = parse_scip(index);
 
-        assert!(system_under_test.is_err(), "Empty or malformed SCIP bytes must not produce a graph");
+        assert!(system_under_test.is_err(), "Empty, malformed, or document-free SCIP data must not produce a graph");
     }
 
     #[rstest]
@@ -513,9 +525,9 @@ mod tests {
             let bytes = assert_ok!(bytes, "The classification warning fixture must serialize before classification");
             let original = ParsedIndex::parse(&bytes);
             let original = assert_ok!(original, "The original classification warning index must parse");
-            let baseline = ParsedIndex::parse(&bytes);
+            let baseline = ParsedIndex::parse_baseline(&bytes);
             let baseline = assert_ok!(baseline, "The baseline classification warning index must parse");
-            let classified = mark_test_references(original, &baseline);
+            let classified = mark_test_references(original, baseline.as_ref());
             let classified = assert_ok!(classified, "The warning fixture must accept classification metadata");
             index = classified.into_index();
         }
@@ -559,31 +571,24 @@ mod tests {
         assert_eq!(system_under_test.files().len(), 1, "Warning emission must not discard the source graph");
     }
 
-    #[rstest]
-    #[case::no_documents(false)]
-    #[case::document_without_occurrences(true)]
-    fn test_source_document_graph_boundary(#[case] has_document: bool) {
-        let documents = if has_document { vec![document("isolated.rs", vec![])] } else { vec![] };
-        let fixture = Index { metadata: Some(Metadata::default()).into(), documents, ..Index::default() }.write_to_bytes();
-        let fixture = assert_ok!(fixture, "The source document boundary fixture must serialize");
+    #[test]
+    fn test_isolated_source_document() {
+        let path = "isolated.rs";
+        let fixture = index_bytes(vec![document(path, vec![])]);
+        let fixture = assert_ok!(fixture, "The isolated source document fixture must serialize");
         let parsed = ParsedIndex::parse(&fixture);
-        let parsed = assert_ok!(parsed, "Parsing must accept an index regardless of source document presence");
-        let expected_file = SourcePath::new(PathBuf::from("isolated.rs")).map(FileNode::new);
+        let parsed = assert_ok!(parsed, "Parsing must accept an occurrence-free source document");
+        let expected_file = SourcePath::new(PathBuf::from(path)).map(FileNode::new);
         let expected_file = assert_ok!(expected_file, "The isolated document path must be valid");
         let expected_files = BTreeSet::from([expected_file]);
 
         let system_under_test = file_graph(&parsed);
+        let system_under_test = assert_ok!(system_under_test, "Graph construction requires documents, not occurrences");
         let public_graph = parse_scip(&fixture);
+        let public_graph = assert_ok!(public_graph, "The public byte adapter must accept an occurrence-free document");
 
-        assert_eq!(parsed.documents().len(), usize::from(has_document), "Parsing must preserve document presence");
-        if has_document {
-            let graph = assert_ok!(system_under_test, "Graph construction requires documents, not occurrences");
-            assert_ok!(public_graph, "The public byte adapter must accept an occurrence-free document");
-            assert_eq!(graph.files(), &expected_files, "An occurrence-free source file must remain in the graph");
-            assert!(graph.edges().is_empty(), "An occurrence-free document cannot introduce dependencies");
-        } else {
-            assert!(system_under_test.is_err(), "Graph construction must reject an index without source documents");
-            assert!(public_graph.is_err(), "The public byte adapter must reject an index without source documents");
-        }
+        assert_eq!(system_under_test.files(), &expected_files, "An occurrence-free source file must remain in the graph");
+        assert!(system_under_test.edges().is_empty(), "An occurrence-free document cannot introduce dependencies");
+        assert!(public_graph == system_under_test, "The byte adapter and parsed index must produce the same isolated file");
     }
 }

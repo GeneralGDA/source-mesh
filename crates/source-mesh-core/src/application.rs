@@ -46,6 +46,27 @@ pub enum Input {
     ScipFile(PathBuf),
 }
 
+enum PreparedInput {
+    Project(Project),
+    ScipFile { index: ParsedIndex, protected_input: InputFile },
+}
+
+impl TryFrom<Input> for PreparedInput {
+    type Error = anyhow::Error;
+
+    fn try_from(input: Input) -> Result<Self> {
+        match input {
+            Input::Project(project) => Ok(Self::Project(project)),
+            Input::ScipFile(path) => {
+                let mut protected_input = InputFile::open(&path)?;
+                let bytes = protected_input.read()?;
+                let index = ParsedIndex::parse(&bytes).context("Cannot load saved dependency analysis")?;
+                Ok(Self::ScipFile { index, protected_input })
+            }
+        }
+    }
+}
+
 #[derive(Builder)]
 pub struct CycleOptions {
     #[builder(default)]
@@ -66,48 +87,56 @@ pub struct OutgoingDependencyOptions {
     output: Option<PathBuf>,
 }
 
-#[derive(Builder)]
 pub struct Request {
-    input: Input,
-    #[builder(default = PathBuf::from("."))]
+    input: PreparedInput,
     root: PathBuf,
-    #[builder(default = Format::Dot)]
     format: Format,
     output: Option<PathBuf>,
     depth: Option<usize>,
-    #[builder(default)]
     include_self: bool,
-    #[builder(default)]
     group_folders: bool,
-    #[builder(default)]
     exclude_tests: bool,
-    #[builder(default)]
     exclusions: Exclusions,
-    #[builder(default = CycleOptions::builder().build())]
     cycles: CycleOptions,
     outgoing_dependencies: Option<OutgoingDependencyOptions>,
     save_scip: Option<PathBuf>,
-    #[builder(default)]
     protected_inputs: Vec<InputFile>,
-    #[builder(default = AnalyzerOptions::new(false))]
     analyzer: AnalyzerOptions,
 }
 
+#[bon::bon]
+impl Request {
+    #[builder]
+    pub fn new(
+        input: Input,
+        #[builder(default = PathBuf::from("."))] root: PathBuf,
+        #[builder(default = Format::Dot)] format: Format,
+        output: Option<PathBuf>,
+        depth: Option<usize>,
+        #[builder(default)] include_self: bool,
+        #[builder(default)] group_folders: bool,
+        #[builder(default)] exclude_tests: bool,
+        #[builder(default)] exclusions: Exclusions,
+        #[builder(default = CycleOptions::builder().build())] cycles: CycleOptions,
+        outgoing_dependencies: Option<OutgoingDependencyOptions>,
+        save_scip: Option<PathBuf>,
+        #[builder(default)] protected_inputs: Vec<InputFile>,
+        #[builder(default = AnalyzerOptions::new(false))] analyzer: AnalyzerOptions,
+    ) -> Result<Self> {
+        ensure!(!matches!(input, Input::ScipFile(_)) || save_scip.is_none(), "Cannot save analysis when replaying a SCIP file");
+        let input = PreparedInput::try_from(input)?;
+        Ok(Self {
+            input, root, format, output, depth, include_self, group_folders, exclude_tests, exclusions,
+            cycles, outgoing_dependencies, save_scip, protected_inputs, analyzer,
+        })
+    }
+}
 
 pub fn run(request: &Request, diagram_output: &mut dyn Write) -> Result<()> {
-    ensure!(
-        !matches!(request.input, Input::ScipFile(_)) || request.save_scip.is_none(),
-        "Cannot save analysis when replaying a SCIP file"
-    );
     let mut retained_inputs = Vec::new();
-    let index = match request.input {
-        Input::ScipFile(ref path) => {
-            let mut input = InputFile::open(path)?;
-            let bytes = input.read()?;
-            retained_inputs.push(input);
-            ParsedIndex::parse(&bytes).context("Cannot load saved dependency analysis")?
-        }
-        Input::Project(ref project) => {
+    let (file_graph, saved_index, replay_input) = match request.input {
+        PreparedInput::ScipFile { ref index, ref protected_input } => (file_graph(index)?, None, Some(protected_input)),
+        PreparedInput::Project(ref project) => {
             let configuration = project.rust_analyzer_configuration.as_deref().map(|path| -> Result<_> {
                 let mut input = InputFile::open(path)?;
                 let mut snapshot = NamedTempFile::new().context("Cannot create analysis configuration snapshot")?;
@@ -117,10 +146,15 @@ pub fn run(request: &Request, diagram_output: &mut dyn Write) -> Result<()> {
             });
             let configuration = configuration.transpose()?;
             let configuration_path = configuration.as_ref().map(NamedTempFile::path);
-            RustAnalyzer::new(&project.path, configuration_path, &request.analyzer).index_parsed()?
+            let index = RustAnalyzer::new(&project.path, configuration_path, &request.analyzer).index_parsed()?;
+            let graph = file_graph(&index)?;
+            let saved_index = request.save_scip.as_ref().map(|path| {
+                let serialized = index.into_index().write_to_bytes().context("Cannot serialize dependency analysis");
+                serialized.map(|bytes| (path, bytes))
+            }).transpose()?;
+            (graph, saved_index, None)
         }
     };
-    let file_graph = file_graph(&index)?;
     let file_graph = if request.exclude_tests { file_graph.without_test_dependencies() } else { file_graph };
     let file_graph = file_graph.within_root(&request.root)?.excluding(&request.exclusions);
     let folder_graph = file_graph.folders(&request.root, request.depth, request.include_self)?;
@@ -163,11 +197,7 @@ pub fn run(request: &Request, diagram_output: &mut dyn Write) -> Result<()> {
     let exporter = request.format.exporter();
     let options = ExportOptions::builder().group_folders(request.group_folders).maybe_cycles(highlight_analysis.as_ref()).build();
     exporter.write_with_options(&folder_graph, &options, &mut diagram_bytes)?;
-    let saved_index = request.save_scip.as_ref().map(|path| {
-        let serialized = index.into_index().write_to_bytes().context("Cannot serialize dependency analysis");
-        serialized.map(|bytes| (path, bytes))
-    });
-    let saved_index = saved_index.transpose()?;
+
     let mut outputs = Vec::new();
     if let Some((path, ref bytes)) = saved_index {
         outputs.push(FileOutput::new(path, bytes));
@@ -184,7 +214,7 @@ pub fn run(request: &Request, diagram_output: &mut dyn Write) -> Result<()> {
     if let Some(path) = request.output.as_deref() {
         outputs.push(FileOutput::new(path, &diagram_bytes));
     }
-    let protected_inputs: Vec<_> = retained_inputs.iter().chain(&request.protected_inputs).collect();
+    let protected_inputs: Vec<_> = retained_inputs.iter().chain(&request.protected_inputs).chain(replay_input).collect();
     OutputFiles::open(&outputs, &protected_inputs)?.write()?;
     if request.output.is_none() {
         diagram_output.write_all(&diagram_bytes)?;
@@ -248,7 +278,7 @@ mod tests {
         outgoing_report: PathBuf,
     }
 
-    fn replay_bytes_test_fixture(index_bytes: Vec<u8>) -> Result<(ReplayTestFixture, Request)> {
+    fn replay_bytes_test_fixture(index_bytes: Vec<u8>) -> Result<ReplayTestFixture> {
         let directory = tempdir()?;
         let fixture = ReplayTestFixture {
             index: directory.path().join("index.scip"),
@@ -259,12 +289,13 @@ mod tests {
             directory, index_bytes,
         };
         fs::write(&fixture.index, &fixture.index_bytes)?;
-        let request = Request::builder().input(Input::ScipFile(fixture.index.clone())).root(PathBuf::from("src")).build();
-        Ok((fixture, request))
+        Ok(fixture)
     }
 
     fn replay_test_fixture(index: &Index) -> Result<(ReplayTestFixture, Request)> {
-        replay_bytes_test_fixture(index.write_to_bytes()?)
+        let fixture = replay_bytes_test_fixture(index.write_to_bytes()?)?;
+        let request = Request::builder().input(Input::ScipFile(fixture.index.clone())).root(PathBuf::from("src")).build()?;
+        Ok((fixture, request))
     }
 
     #[must_use]
@@ -330,6 +361,7 @@ mod tests {
         assert_ok!(export, "Expected grouped Mermaid diagram must render successfully");
         let request = Request::builder().input(Input::ScipFile(fixture)).root(root).format(Format::Mermaid);
         let system_under_test = request.depth(1).group_folders(true).build();
+        let system_under_test = assert_ok!(system_under_test, "Saved analysis must load during request construction");
         let mut diagram = Vec::new();
 
         let result = run(&system_under_test, &mut diagram);
@@ -664,24 +696,95 @@ mod tests {
         assert!(diagram.is_empty(), "An empty filtered graph wrote diagram bytes");
     }
 
+    #[rstest]
+    #[case::readable_input(false)]
+    #[case::missing_input(true)]
+    fn test_replay_cannot_save_analysis(#[case] missing_input: bool) {
+        let fixture = replay_test_fixture(&two_file_index_fixture(false));
+        let (fixture, _request) = assert_ok!(fixture, "Replay without saving must accept the valid input");
+        let output = fixture.directory.path().join("saved.scip");
+        let initialized = fs::write(&output, b"preserved");
+        assert_ok!(initialized, "Existing analysis output must be initialized separately from the replay input");
+        let input = if missing_input { fixture.directory.path().join("missing.scip") } else { fixture.index.clone() };
+        let system_under_test = Request::builder().input(Input::ScipFile(input)).save_scip(output.clone());
+
+        let request = system_under_test.build();
+        let preserved = fs::read(&output);
+        let input_bytes = fs::read(&fixture.index);
+
+        let error = assert_some!(request.err(), "Request construction must reject saving replayed analysis");
+        assert!(!error.is::<std::io::Error>(), "Conflicting options must be rejected before input I/O: {error:#}");
+        let preserved = assert_ok!(preserved, "Rejected replay must leave the existing analysis output readable");
+        let input_bytes = assert_ok!(input_bytes, "Rejected replay must leave the source index readable");
+        assert_eq!(preserved, b"preserved", "Rejected replay must preserve the existing output");
+        assert_eq!(input_bytes, fixture.index_bytes, "Rejected replay must preserve its source index");
+    }
+
+    #[rstest]
+    #[case::missing(false)]
+    #[case::directory(true)]
+    fn test_replay_input_io_at_construction(#[case] directory_input: bool) {
+        let fixture = tempdir();
+        let fixture = assert_ok!(fixture, "The request construction fixture must be created");
+        let path = if directory_input { fixture.path().to_path_buf() } else { fixture.path().join("missing.scip") };
+        let system_under_test = Request::builder().input(Input::ScipFile(path.clone()));
+
+        let error = system_under_test.build().err();
+        let error = assert_some!(error, "An unreadable saved index must fail before execution");
+        let diagnostic = format!("{error:#}");
+
+        assert!(error.is::<std::io::Error>(), "Input failure must preserve its I/O cause: {diagnostic}");
+        assert!(diagnostic.contains(&path.to_string_lossy().into_owned()), "Input failure must identify its path: {diagnostic}");
+    }
+
+    #[rstest]
+    #[case::overwrite_contents(false)]
+    #[case::replace_path(true)]
+    fn test_replay_snapshot_at_construction(#[case] replace_path: bool) {
+        let fixture = replay_test_fixture(&two_file_index_fixture(false));
+        let (fixture, system_under_test) = assert_ok!(fixture, "The snapshot request must load before modifying its input");
+        if replace_path {
+            let renamed = fs::rename(&fixture.index, fixture.directory.path().join("retained.scip"));
+            assert_ok!(renamed, "The loaded index must be renamed before replacing its path");
+        }
+        let changed = fs::write(&fixture.index, b"\xff");
+        assert_ok!(changed, "The index path must contain malformed data before the first run");
+        let mut diagram = Vec::new();
+        let mut repeated_diagram = Vec::new();
+
+        let result = run(&system_under_test, &mut diagram);
+        let repeated = run(&system_under_test, &mut repeated_diagram);
+        let reloaded = Request::builder().input(Input::ScipFile(fixture.index)).build();
+
+        assert_ok!(result, "Execution must use the snapshot captured by build, not the changed file");
+        assert_ok!(repeated, "The same request must support repeated execution without rereading the file");
+        assert!(!diagram.is_empty(), "The parsed snapshot must still produce a diagram");
+        assert_eq!(diagram, repeated_diagram, "Repeated execution must use the same saved analysis");
+        assert!(reloaded.is_err(), "A new request must load the changed file instead of reusing another request's snapshot");
+    }
+
     #[test]
-    fn test_replay_cannot_save_analysis() {
-        const CONTENTS_EXISTING: &str = "preserved";
-        let fixture = replay_bytes_test_fixture(CONTENTS_EXISTING.as_bytes().to_vec());
-        let (fixture, mut system_under_test) = assert_ok!(fixture, "Existing analysis output must be initialized");
-        system_under_test.input = Input::ScipFile(fixture.directory.path().join("missing.scip"));
-        system_under_test.save_scip = Some(fixture.index.clone());
+    fn test_renamed_replay_input_protection() {
+        let fixture = replay_test_fixture(&two_file_index_fixture(false));
+        let (fixture, mut system_under_test) = assert_ok!(fixture, "The protected request must load before renaming its input");
+        let retained = fixture.directory.path().join("retained.scip");
+        let renamed = fs::rename(&fixture.index, &retained);
+        assert_ok!(renamed, "The loaded index must be renamed while its identity is retained");
+        let replaced = fs::write(&fixture.index, b"replacement");
+        assert_ok!(replaced, "The original input path must contain a different file before execution");
+        system_under_test.output = Some(retained.clone());
         let mut diagram = Vec::new();
 
-        let error = run(&system_under_test, &mut diagram).err();
-        let error = assert_some!(error, "Replay must reject saving a new analysis");
-        let diagnostic = error.to_string();
-        let preserved = fs::read_to_string(&fixture.index);
-        let preserved = assert_ok!(preserved, "Rejected replay must leave the existing analysis output readable");
+        let result = run(&system_under_test, &mut diagram);
+        let preserved = fs::read(&retained);
+        let replacement = fs::read(&fixture.index);
 
-        assert!(diagnostic.contains("Cannot save analysis"), "Unexpected replay failure: {diagnostic}");
-        assert_eq!(preserved, CONTENTS_EXISTING);
-        assert_eq!(diagram, [] as [u8; 0]);
+        assert!(result.as_ref().is_err_and(Error::is::<OutputPathConflict>), "The retained input must be protected: {result:?}");
+        let preserved = assert_ok!(preserved, "The renamed index must remain readable after rejecting output");
+        let replacement = assert_ok!(replacement, "The replacement file must remain readable after rejecting output");
+        assert_eq!(preserved, fixture.index_bytes, "Output protection must follow the original file's identity");
+        assert_eq!(replacement, b"replacement", "Output protection must not modify the replacement file");
+        assert!(diagram.is_empty(), "An input conflict must not write a diagram");
     }
 
     #[rstest]
@@ -767,20 +870,20 @@ mod tests {
     #[rstest]
     #[case::empty(b"")]
     #[case::malformed(b"\xff")]
+    #[case::metadata_without_documents(b"\x0a\x00")]
     fn test_invalid_index_preserves_outputs(#[case] bytes: &[u8], #[values(false, true)] existing_report: bool) {
         const CONTENTS_EXISTING: &str = "preserved";
         let fixture = replay_bytes_test_fixture(bytes.to_vec());
-        let (fixture, mut system_under_test) = assert_ok!(fixture, "Invalid-index replay fixture must be created");
+        let fixture = assert_ok!(fixture, "Invalid-index replay fixture must be created");
         let mut existing_outputs = vec![fixture.diagram.as_path()];
         if existing_report { existing_outputs.push(&fixture.outgoing_report); }
         let initialized = write_outputs_test_fixture(&existing_outputs, CONTENTS_EXISTING);
         assert_ok!(initialized, "Existing outputs must be initialized before invalid-index replay");
-        system_under_test.output = Some(fixture.diagram.clone());
-        system_under_test.cycles = cycle_reports_test_fixture(&fixture.file_report, &fixture.folder_report);
-        system_under_test.outgoing_dependencies = Some(outgoing_options_test_fixture(Some(&fixture.outgoing_report), 0, None));
-        let mut diagram = Vec::new();
+        let system_under_test = Request::builder().input(Input::ScipFile(fixture.index.clone()))
+            .output(fixture.diagram.clone()).cycles(cycle_reports_test_fixture(&fixture.file_report, &fixture.folder_report))
+            .outgoing_dependencies(outgoing_options_test_fixture(Some(&fixture.outgoing_report), 0, None));
 
-        let result = run(&system_under_test, &mut diagram);
+        let result = system_under_test.build();
         let preserved = read_outputs_test_fixture(&existing_outputs);
         let preserved = assert_ok!(preserved, "Existing outputs must remain readable after invalid-index rejection");
         let expected = vec![CONTENTS_EXISTING; existing_outputs.len()];
@@ -790,10 +893,9 @@ mod tests {
             assert_ok!(exists, "Report path must be inspectable: {}", path.display())
         });
 
-        assert!(result.is_err(), "Malformed external analysis must return an error");
+        assert!(result.is_err(), "Malformed external analysis must fail during request construction");
         assert_eq!(preserved, expected, "Invalid input must not replace an existing output");
         assert_eq!(reports_exist, [false, false, existing_report], "Invalid input must not create any report");
-        assert_eq!(diagram, [] as [u8; 0]);
     }
 
     #[rstest]
@@ -802,20 +904,18 @@ mod tests {
     #[case::absolute("/absolute.rs")]
     fn test_invalid_source_path_preserves_outputs(#[case] path: &str) {
         let index = Index { documents: vec![Document { relative_path: path.into(), ..Document::default() }], ..Index::default() };
-        let fixture = replay_test_fixture(&index);
-        let (fixture, mut system_under_test) = assert_ok!(fixture, "Invalid-source-path replay fixture must be created");
-        /* Root filtering must not conceal missing source-path validation. */
-        system_under_test.root = PathBuf::from(".");
-        system_under_test.output = Some(fixture.diagram.clone());
-        let mut diagram = Vec::new();
+        let bytes = index.write_to_bytes();
+        let bytes = assert_ok!(bytes, "The invalid-source-path index must serialize");
+        let fixture = replay_bytes_test_fixture(bytes);
+        let fixture = assert_ok!(fixture, "Invalid-source-path replay fixture must be created");
+        let system_under_test = Request::builder().input(Input::ScipFile(fixture.index.clone())).output(fixture.diagram.clone());
 
-        let result = run(&system_under_test, &mut diagram);
+        let result = system_under_test.build();
 
-        assert!(result.is_err(), "Malformed external source paths must return an error");
+        assert!(result.is_err(), "Malformed external source paths must fail during request construction");
         let output_exists = fixture.diagram.try_exists();
         let output_exists = assert_ok!(output_exists, "Diagram output path must be inspectable");
         assert!(!output_exists, "Invalid input created a diagram");
-        assert_eq!(diagram, [] as [u8; 0]);
     }
 
     #[rstest]

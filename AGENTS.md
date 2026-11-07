@@ -50,8 +50,9 @@
 - Keep every type's API surface minimal: derive or implement only traits and expose only methods and accessors that are
   required by the code at the present time. Do not add capabilities speculatively.
 - Prefer local `use` imports over long fully-qualified paths when they improve readability, especially in tests.
-- Avoid duplicating string literals. If the same message or label is used in production code and tests,
-  extract it into a named constant and reuse that constant.
+- Preserve the existing style for diagnostic messages and test text. Do not introduce isolated string constants
+  into code that otherwise uses inline literals, including solely to share a message between production code and a test.
+  Treat a file-wide conversion as a separate refactoring, not part of unrelated changes.
 - Inline a function that has a single call site unless it establishes a meaningful domain or responsibility boundary,
   such as a named task called by a general-purpose entry point. A single caller alone is not a reason to erase that
   context. For one-off computations that do not need such a boundary, use a block expression (`let value = { ... };`)
@@ -140,9 +141,10 @@
   `pretty_assertions::assert_eq!` where a diff helps diagnosis. Do not use `anyhow::ensure!` for expectations.
 - Cohesive fallible fixture helpers may return `Result`; assert their outcome at the test boundary. Helpers that perform
   test assertions must not return `Result`. Do not move a test body into a fallible closure or wrapper just to preserve `?`.
-- Assert the observable contract at its actual boundary: capture the output stream when testing diagnostic emission,
-  inspect the complete exchange when checking message counts, and distinguish the intended failure from setup or transport
-  errors. Do not derive expected results with the same algorithm or fixture helper that the test is meant to validate.
+- Assert observable behavior and semantic error categories, not cosmetic diagnostic wording. Use typed causes or controlled
+  fixtures to distinguish the intended failure from setup or transport errors. Check paths, option names, or other diagnostic
+  context only when their presence is part of the contract; capture the actual output when testing diagnostic emission.
+  Inspect complete exchanges when checking message counts. Do not derive expected results with the algorithm or helper under test.
 - Name test functions after the behaviour or property under test, not the expected result
   (e.g. `selection_key`, not `source_returns_original_format`).
 - Prefix all test function names with `test_` (e.g. `test_selection_key`).
@@ -225,6 +227,13 @@
 
 ## Workflow
 
+- Keep development documentation concise and focused on local tasks. Show how to run checks; do not narrate CI automation
+  or repeat tool internals and settings already captured in scripts and configuration files.
+- Before documenting manual development setup, inspect the existing automation. Add new tools to
+  `scripts/Install-DevTools.ps1` instead of adding per-tool installation instructions to documentation.
+- Provide a focused script under `scripts/` for recurring checks that require fixed configuration paths or argument lists.
+  Reuse an existing runner when available, keep those details inside the script, and document its invocation.
+  Do not wrap already simple commands without a concrete benefit.
 - Keep GitHub Actions workflow files as thin declarative wrappers: configure jobs, environment, and action/script calls
   in YAML. Put nontrivial shell or PowerShell logic (conditionals, loops, validation, downloads, installation) in separate
   files under `scripts/`, not inline `run` blocks. Simple script or tool invocations may remain in YAML.

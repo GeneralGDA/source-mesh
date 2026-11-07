@@ -86,7 +86,7 @@ impl RustAnalyzer<'_> {
             },
             || {
                 let index = analyzer_without_test.generate_index(&index_file_without_test, Phase::WithoutTest)?;
-                ParsedIndex::parse(&index).context("Cannot decode dependency index without cfg(test)")
+                ParsedIndex::parse_baseline(&index).context("Cannot decode dependency index without cfg(test)")
             },
         )?;
         if self.options.verbose() {
@@ -100,7 +100,7 @@ impl RustAnalyzer<'_> {
             emit(format_args!("Comparing SCIP references to classify test dependencies..."));
         }
         let classification_started = Instant::now();
-        let classified = mark_test_references(index_original, &index_without_test)?;
+        let classified = mark_test_references(index_original, index_without_test.as_ref())?;
         if self.options.verbose() {
             emit(format_args!("Test classification completed in {:.2}s.", classification_started.elapsed().as_secs_f64()));
         }
