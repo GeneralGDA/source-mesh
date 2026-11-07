@@ -1,7 +1,7 @@
 # source-mesh-core
 
 Dependency graphs, cycle reports, and outgoing dependency limits for Rust projects.
-Exports DOT, Mermaid, and GraphML. The `source-mesh` package provides the CLI.
+Exports DOT, Mermaid, and `GraphML`. The `source-mesh` package provides the CLI.
 
 ```rust
 use std::path::PathBuf;
