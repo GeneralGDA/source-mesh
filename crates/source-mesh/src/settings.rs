@@ -362,6 +362,7 @@ mod tests {
     use std::path::PathBuf;
 
     use anyhow::Context as _;
+    use anyhow::Error;
     use anyhow::Result;
     use claims::assert_ok;
     use claims::assert_some;
@@ -426,33 +427,77 @@ verbose = true
         PathBuf::from_iter([env!("CARGO_MANIFEST_DIR"), "..", "source-mesh-core", "src", "fixtures", "dependency-graph.scip"])
     }
 
-    fn cli_test_fixture(arguments: &[&str]) -> Result<(Cli, ArgMatches)> {
-        let arguments = iter::once(env!("CARGO_PKG_NAME")).chain(arguments.iter().copied());
-        let matches = Cli::command().try_get_matches_from(arguments)?;
-        let cli = Cli::from_arg_matches(&matches)?;
-        Ok((cli, matches))
+    struct CliTestFixture {
+        cli: Cli,
+        matches: ArgMatches,
     }
 
-    fn settings_merge_test_fixture(contents: &str, arguments: &[&str]) -> Result<(Settings, Cli, ArgMatches)> {
-        let settings = Settings::parse(contents).context("Settings merge test fixture must contain valid settings")?;
-        let (cli, matches) = cli_test_fixture(arguments).context("Settings merge test fixture arguments must parse")?;
-        Ok((settings, cli, matches))
-    }
-
-    fn settings_directory_test_fixture(contents: Option<&[u8]>) -> Result<(TempDir, PathBuf)> {
-        let fixture = tempdir()?;
-        let path = fixture.path().join(SETTINGS_FILE_NAME);
-        if let Some(contents) = contents {
-            fs::write(&path, contents)?;
+    impl CliTestFixture {
+        fn new(cli_arguments: &[&str]) -> Result<Self> {
+            let arguments = iter::once(env!("CARGO_PKG_NAME")).chain(cli_arguments.iter().copied());
+            let matches = Cli::command().try_get_matches_from(arguments)?;
+            let cli = Cli::from_arg_matches(&matches)?;
+            Ok(Self { cli, matches })
         }
-        Ok((fixture, path))
     }
 
-    fn settings_loading_test_fixture(contents: Option<&[u8]>, arguments: &[&str]) -> Result<(TempDir, PathBuf, Cli, ArgMatches)> {
-        let (fixture, path) = settings_directory_test_fixture(contents).context("Settings loading test files must be prepared")?;
-        let (mut cli, matches) = cli_test_fixture(arguments).context("Settings loading test fixture arguments must parse")?;
-        cli.path = fixture.path().to_path_buf();
-        Ok((fixture, path, cli, matches))
+    struct SettingsMergeTestFixture {
+        settings: Settings,
+        cli: Cli,
+        matches: ArgMatches,
+    }
+
+    impl SettingsMergeTestFixture {
+        fn new(contents: &str, cli_arguments: &[&str]) -> Result<Self> {
+            let settings = Settings::parse(contents).context("Settings merge test fixture must contain valid settings")?;
+            let fixture = CliTestFixture::new(cli_arguments);
+            let CliTestFixture { cli, matches } = fixture.context("Settings merge test fixture arguments must parse")?;
+            Ok(Self { settings, cli, matches })
+        }
+    }
+
+    struct SettingsDirectoryTestFixture {
+        directory: TempDir,
+        settings_path: PathBuf,
+    }
+
+    impl SettingsDirectoryTestFixture {
+        fn new(contents: Option<&[u8]>) -> Result<Self> {
+            let directory = tempdir()?;
+            let settings_path = directory.path().join(SETTINGS_FILE_NAME);
+            if let Some(contents) = contents {
+                fs::write(&settings_path, contents)?;
+            }
+            Ok(Self { directory, settings_path })
+        }
+    }
+
+    struct SettingsLoadingTestFixture {
+        directory: TempDir,
+        settings_path: PathBuf,
+        cli: Cli,
+        matches: ArgMatches,
+    }
+
+    impl SettingsLoadingTestFixture {
+        fn new(settings_file_contents: Option<&[u8]>, cli_arguments: &[&str]) -> Result<Self> {
+            let files = SettingsDirectoryTestFixture::new(settings_file_contents);
+            let files = files.context("Settings loading test files must be prepared")?;
+            let fixture = CliTestFixture::new(cli_arguments);
+            let CliTestFixture { mut cli, matches } = fixture.context("Settings loading test fixture arguments must parse")?;
+            cli.path = files.directory.path().to_path_buf();
+            Ok(Self { directory: files.directory, settings_path: files.settings_path, cli, matches })
+        }
+    }
+
+    #[track_caller]
+    fn assert_missing_file_error(error: &Error, expected_path: &Path) {
+        let cause = error.downcast_ref::<io::Error>();
+        let cause = assert_some!(cause, "Missing-file errors must retain their I/O cause: {error:#}");
+        let diagnostic = error.to_string();
+        let path = expected_path.display().to_string();
+        assert_eq!(cause.kind(), io::ErrorKind::NotFound, "Missing-file errors must retain their I/O kind");
+        assert!(diagnostic.contains(&path), "Missing-file errors must identify {path}: {diagnostic}");
     }
 
     #[test]
@@ -554,13 +599,13 @@ verbose = true
         let contents = "[graph]\ndepth = 1\n[cycles]\ncycle-limit = 1\n[outgoing-dependencies]\nmaximum = 1";
         let maximum = usize::MAX.to_string();
         let saved_index_path = saved_index_path_test_fixture().display().to_string();
-        let fixture = settings_merge_test_fixture(contents, &[
+        let fixture = SettingsMergeTestFixture::new(contents, &[
             "--from-scip", &saved_index_path, "--depth", &maximum, "--cycle-limit", &maximum,
             "--max-outgoing-dependencies", &maximum,
         ]);
-        let (settings, cli, matches) = assert_ok!(fixture, "CLI numbers must support the complete native usize range");
+        let fixture = assert_ok!(fixture, "CLI numbers must support the complete native usize range");
 
-        let system_under_test = settings.merge(cli, matches);
+        let system_under_test = fixture.settings.merge(fixture.cli, fixture.matches);
         let system_under_test = assert_ok!(system_under_test, "Native CLI numbers must merge without narrowing their range");
 
         let options = &system_under_test.options;
@@ -596,18 +641,18 @@ verbose = true
         use std::ffi::OsStr;
 
         let contents = b"[export]\noutput = 'file.dot'\n[analysis]\nfrom-scip = 'file.scip'";
-        let fixture = settings_directory_test_fixture(Some(contents));
-        let (fixture, settings_path) = assert_ok!(fixture, "Native path settings must be written");
+        let fixture = SettingsDirectoryTestFixture::new(Some(contents));
+        let fixture = assert_ok!(fixture, "Native path settings must be written");
         let input_path = if native_input {
-            fixture.path().join(non_utf8_path_test_fixture()).with_extension("scip")
+            fixture.directory.path().join(non_utf8_path_test_fixture()).with_extension("scip")
         } else {
             saved_index_path_test_fixture()
         };
-        let output_path = fixture.path().join(non_utf8_path_test_fixture()).with_extension("dot");
+        let output_path = fixture.directory.path().join(non_utf8_path_test_fixture()).with_extension("dot");
         assert!(output_path.to_str().is_none(), "The fixture must exercise a genuinely non-UTF-8 output path");
         assert_eq!(input_path.to_str().is_none(), native_input, "Only the native-input case may use a non-UTF-8 input path");
         let arguments = [
-            OsStr::new(env!("CARGO_PKG_NAME")), OsStr::new("--settings"), settings_path.as_os_str(),
+            OsStr::new(env!("CARGO_PKG_NAME")), OsStr::new("--settings"), fixture.settings_path.as_os_str(),
             OsStr::new("--from-scip"), input_path.as_os_str(), OsStr::new("--output"), output_path.as_os_str(),
         ];
         let matches = Cli::command().try_get_matches_from(arguments);
@@ -668,10 +713,10 @@ verbose = true
                 "--outgoing-dependencies-mode", "folders", "--verbose=false",
             ]
         } else { &[] };
-        let fixture = settings_merge_test_fixture(CONTENTS_COMPLETE_SETTINGS_TEST_FIXTURE, arguments);
-        let (settings, cli, matches) = assert_ok!(fixture, "Complete settings and CLI arguments must parse before merging");
+        let fixture = SettingsMergeTestFixture::new(CONTENTS_COMPLETE_SETTINGS_TEST_FIXTURE, arguments);
+        let fixture = assert_ok!(fixture, "Complete settings and CLI arguments must parse before merging");
 
-        let system_under_test = settings.merge(cli, matches);
+        let system_under_test = fixture.settings.merge(fixture.cli, fixture.matches);
         let system_under_test = assert_ok!(system_under_test, "CLI options must merge independently per field");
 
         assert_eq!(system_under_test.path, Path::new("."), "Settings must not change the selected project");
@@ -680,7 +725,7 @@ verbose = true
 
     #[test]
     fn test_explicit_cli_values_override_settings() {
-        let fixture = settings_merge_test_fixture(CONTENTS_COMPLETE_SETTINGS_TEST_FIXTURE, &[
+        let fixture = SettingsMergeTestFixture::new(CONTENTS_COMPLETE_SETTINGS_TEST_FIXTURE, &[
             "--root", ".", "--depth", "0", "--include-self=false", "--exclude-tests=false",
             "--exclude", "cli/**", "--exclude", "**/*.generated.rs", "--format", "dot", "--output", "cli.dot",
             "--group-folders=false", "--highlight-cycles=false", "--fail-on-cycles=false", "--cycle-limit", "1",
@@ -689,9 +734,9 @@ verbose = true
             "--outgoing-dependencies-output", "cli-outgoing.md", "--from-scip", "cli-input.scip",
             "--save-scip", "cli-saved.scip", "--config", "cli-analyzer.json", "--verbose=false",
         ]);
-        let (settings, cli, matches) = assert_ok!(fixture, "Explicit CLI values must parse before cross-field validation");
+        let fixture = assert_ok!(fixture, "Explicit CLI values must parse before cross-field validation");
 
-        let system_under_test = settings.merge(cli, matches);
+        let system_under_test = fixture.settings.merge(fixture.cli, fixture.matches);
         let system_under_test = assert_ok!(system_under_test, "Explicit CLI values must replace their file settings");
 
         let expected = Settings {
@@ -748,12 +793,13 @@ verbose = {configured}
             flags.map(|flag| if value.is_empty() { flag.to_owned() } else { format!("{flag}={value}") })
         }).collect();
         let arguments: Vec<_> = arguments.iter().map(String::as_str).collect();
-        let fixture = settings_merge_test_fixture(&contents, &arguments);
-        let (settings, cli, matches) = assert_ok!(fixture, "Boolean settings and CLI flags must parse before merging");
+        let fixture = SettingsMergeTestFixture::new(&contents, &arguments);
+        let fixture = assert_ok!(fixture, "Boolean settings and CLI flags must parse before merging");
 
-        assert_eq!(cli.options.cycles.fail_on_cycles, explicit, "CLI cycle-failure flags must preserve the supplied value");
+        let fail_on_cycles = fixture.cli.options.cycles.fail_on_cycles;
+        assert_eq!(fail_on_cycles, explicit, "CLI cycle-failure flags must preserve the supplied value");
 
-        let system_under_test = settings.merge(cli, matches);
+        let system_under_test = fixture.settings.merge(fixture.cli, fixture.matches);
         let system_under_test = assert_ok!(system_under_test, "Boolean precedence must follow explicit CLI values");
 
         let enabled = Some(explicit.unwrap_or(configured));
@@ -771,10 +817,10 @@ verbose = {configured}
     #[case::single(&["--exclude", "cli/**"], &["cli/**"])]
     #[case::duplicates(&["--exclude", "cli/**", "--exclude", "cli/**"], &["cli/**", "cli/**"])]
     fn test_exclusion_list_replacement(#[case] arguments: &[&str], #[case] expected: &[&str]) {
-        let fixture = settings_merge_test_fixture("[graph]\nexclude = ['file/**', '**/tests/**']", arguments);
-        let (settings, cli, matches) = assert_ok!(fixture, "Settings and CLI exclusion lists must parse before merging");
+        let fixture = SettingsMergeTestFixture::new("[graph]\nexclude = ['file/**', '**/tests/**']", arguments);
+        let fixture = assert_ok!(fixture, "Settings and CLI exclusion lists must parse before merging");
 
-        let system_under_test = settings.merge(cli, matches);
+        let system_under_test = fixture.settings.merge(fixture.cli, fixture.matches);
         let system_under_test = assert_ok!(system_under_test, "Explicit CLI exclusions must replace the file list");
 
         let exclusions = system_under_test.options.graph.exclude;
@@ -846,15 +892,15 @@ verbose = {configured}
     #[case::duplicate("[graph]\ndepth = 1\ndepth = 2")]
     #[case::syntax("[graph")]
     fn test_settings_validation(#[case] contents: &str) {
-        let fixture = settings_loading_test_fixture(Some(contents.as_bytes()), &[]);
-        let (_fixture, path, mut cli, matches) = assert_ok!(fixture, "Invalid settings fixture must be prepared successfully");
-        cli.settings = Some(path.clone());
+        let fixture = SettingsLoadingTestFixture::new(Some(contents.as_bytes()), &[]);
+        let mut fixture = assert_ok!(fixture, "Invalid settings fixture must be prepared successfully");
+        fixture.cli.settings = Some(fixture.settings_path.clone());
 
-        let system_under_test = LoadedSettings::load(cli, matches).err();
+        let system_under_test = LoadedSettings::load(fixture.cli, fixture.matches).err();
         let error = assert_some!(system_under_test, "Malformed settings were accepted: {contents}");
         let cause = error.downcast_ref::<io::Error>();
         let diagnostic = error.to_string();
-        let file_name = path.display().to_string();
+        let file_name = fixture.settings_path.display().to_string();
 
         assert!(cause.is_none(), "Validation failed for an unrelated filesystem reason: {error:#}");
         assert!(diagnostic.contains(&file_name), "Settings errors must identify their file: {diagnostic}");
@@ -869,11 +915,11 @@ verbose = {configured}
     #[case::list_date("[graph]\nexclude = [2026-11-04]", &["--exclude", "cli/**"])]
     #[case::choice_table("[export]\nformat = { dot = {} }", &["--format", "dot"])]
     fn test_cli_overrides_do_not_hide_invalid_settings(#[case] contents: &str, #[case] arguments: &[&str]) {
-        let fixture = settings_loading_test_fixture(Some(contents.as_bytes()), arguments);
-        let (_fixture, path, mut cli, matches) = assert_ok!(fixture, "Invalid settings and valid CLI overrides must be prepared");
-        cli.settings = Some(path);
+        let fixture = SettingsLoadingTestFixture::new(Some(contents.as_bytes()), arguments);
+        let mut fixture = assert_ok!(fixture, "Invalid settings and valid CLI overrides must be prepared");
+        fixture.cli.settings = Some(fixture.settings_path);
 
-        let system_under_test = LoadedSettings::load(cli, matches).err();
+        let system_under_test = LoadedSettings::load(fixture.cli, fixture.matches).err();
         let error = assert_some!(system_under_test, "An override must not conceal an invalid lower-priority value");
         let diagnostic = error.to_string();
 
@@ -883,10 +929,10 @@ verbose = {configured}
     #[test]
     fn test_empty_settings_sections() {
         let contents = "[graph]\n[export]\n[cycles]\n[outgoing-dependencies]\n[analysis]";
-        let fixture = settings_merge_test_fixture(contents, &[]);
-        let (settings, cli, matches) = assert_ok!(fixture, "Empty settings sections and default CLI arguments must parse");
+        let fixture = SettingsMergeTestFixture::new(contents, &[]);
+        let fixture = assert_ok!(fixture, "Empty settings sections and default CLI arguments must parse");
 
-        let system_under_test = settings.merge(cli, matches);
+        let system_under_test = fixture.settings.merge(fixture.cli, fixture.matches);
         let system_under_test = assert_ok!(system_under_test, "Empty sections must not introduce settings values");
 
         let expected = Settings::default();
@@ -897,9 +943,9 @@ verbose = {configured}
     #[case::directory(false)]
     #[case::manifest(true)]
     fn test_automatic_discovery_uses_selected_project(#[case] manifest: bool) {
-        let fixture = settings_directory_test_fixture(Some(b"[graph]\ndepth = 99"));
-        let (fixture, _) = assert_ok!(fixture, "An ancestor settings file must be created");
-        let selected = fixture.path().join("selected");
+        let fixture = SettingsDirectoryTestFixture::new(Some(b"[graph]\ndepth = 99"));
+        let fixture = assert_ok!(fixture, "An ancestor settings file must be created");
+        let selected = fixture.directory.path().join("selected");
         let created = fs::create_dir_all(&selected);
         assert_ok!(created, "The selected project directory must be created");
         let contents = "[graph]\ndepth = 2\n[export]\nformat = 'mermaid'\noutput = 'selected.md'";
@@ -915,11 +961,11 @@ verbose = {configured}
         };
         let directory = project_directory(&selected);
         let directory = assert_ok!(directory, "The selected project must have a canonical directory");
-        let cli = cli_test_fixture(&["--from-scip", "saved.scip"]);
-        let (mut cli, matches) = assert_ok!(cli, "Replay arguments must parse independently of project discovery");
-        cli.path = project.clone();
+        let cli_fixture = CliTestFixture::new(&["--from-scip", "saved.scip"]);
+        let mut cli_fixture = assert_ok!(cli_fixture, "Replay arguments must parse independently of project discovery");
+        cli_fixture.cli.path = project.clone();
 
-        let system_under_test = LoadedSettings::load(cli, matches);
+        let system_under_test = LoadedSettings::load(cli_fixture.cli, cli_fixture.matches);
         let system_under_test = assert_ok!(system_under_test, "Selected project or manifest parent settings must load");
 
         let options = system_under_test.cli.options;
@@ -935,16 +981,16 @@ verbose = {configured}
 
     #[test]
     fn test_absent_automatic_settings_do_not_search_ancestors() {
-        let fixture = settings_directory_test_fixture(Some(b"this is malformed TOML"));
-        let (fixture, _) = assert_ok!(fixture, "A malformed ancestor settings file must be written");
-        let selected = fixture.path().join("selected");
+        let fixture = SettingsDirectoryTestFixture::new(Some(b"this is malformed TOML"));
+        let fixture = assert_ok!(fixture, "A malformed ancestor settings file must be written");
+        let selected = fixture.directory.path().join("selected");
         let created = fs::create_dir_all(&selected);
         assert_ok!(created, "The selected directory without settings must be created");
-        let cli = cli_test_fixture(&["--from-scip", "saved.scip", "--depth", "0"]);
-        let (mut cli, matches) = assert_ok!(cli, "Replay with explicit CLI settings must parse");
-        cli.path = selected;
+        let cli_fixture = CliTestFixture::new(&["--from-scip", "saved.scip", "--depth", "0"]);
+        let mut cli_fixture = assert_ok!(cli_fixture, "Replay with explicit CLI settings must parse");
+        cli_fixture.cli.path = selected;
 
-        let system_under_test = LoadedSettings::load(cli, matches);
+        let system_under_test = LoadedSettings::load(cli_fixture.cli, cli_fixture.matches);
         let system_under_test = assert_ok!(system_under_test, "Absent automatic settings must not read ancestor files");
 
         let options = system_under_test.cli.options;
@@ -956,20 +1002,21 @@ verbose = {configured}
 
     #[rstest]
     fn test_explicit_settings_override_discovery(#[values(false, true)] missing_project: bool) {
-        let fixture = settings_directory_test_fixture(Some(b"malformed automatic settings"));
-        let (fixture, _) = assert_ok!(fixture, "Malformed automatic settings must exist before explicit selection");
-        let directory = fixture.path().join("configuration");
+        let fixture = SettingsDirectoryTestFixture::new(Some(b"malformed automatic settings"));
+        let fixture = assert_ok!(fixture, "Malformed automatic settings must exist before explicit selection");
+        let directory = fixture.directory.path().join("configuration");
         let created = fs::create_dir_all(&directory);
         assert_ok!(created, "The explicitly selected settings directory must be created");
         let path = directory.join("custom.toml");
         let written = fs::write(&path, "[graph]\ndepth = 4\n[export]\noutput = 'custom.dot'");
         assert_ok!(written, "Explicit settings must be written separately from the automatic file");
-        let cli = cli_test_fixture(&[]);
-        let (mut cli, matches) = assert_ok!(cli, "Explicit settings selection must start with valid arguments");
-        cli.path = if missing_project { fixture.path().join("missing") } else { fixture.path().to_path_buf() };
-        cli.settings = Some(path);
+        let cli_fixture = CliTestFixture::new(&[]);
+        let mut cli_fixture = assert_ok!(cli_fixture, "Explicit settings selection must start with valid arguments");
+        let project = fixture.directory.path();
+        cli_fixture.cli.path = if missing_project { project.join("missing") } else { project.to_path_buf() };
+        cli_fixture.cli.settings = Some(path);
 
-        let system_under_test = LoadedSettings::load(cli, matches);
+        let system_under_test = LoadedSettings::load(cli_fixture.cli, cli_fixture.matches);
         let system_under_test = assert_ok!(system_under_test, "Explicit settings must bypass automatic discovery");
 
         let options = system_under_test.cli.options;
@@ -1023,10 +1070,10 @@ verbose = {configured}
         #[values(SettingsPathTestSource::RelativeFile, SettingsPathTestSource::AbsoluteFile, SettingsPathTestSource::CommandLine)]
         source: SettingsPathTestSource,
     ) {
-        let fixture = settings_directory_test_fixture(None);
-        let (fixture, path) = assert_ok!(fixture, "File-path settings fixture directory must be created");
+        let fixture = SettingsDirectoryTestFixture::new(None);
+        let fixture = assert_ok!(fixture, "File-path settings fixture directory must be created");
         let configured = match source {
-            SettingsPathTestSource::AbsoluteFile => fixture.path().join("absolute-file"),
+            SettingsPathTestSource::AbsoluteFile => fixture.directory.path().join("absolute-file"),
             SettingsPathTestSource::RelativeFile | SettingsPathTestSource::CommandLine => {
                 Path::new("nested").join("from-settings")
             }
@@ -1034,23 +1081,23 @@ verbose = {configured}
         let encoded = serde_json::to_string(&configured);
         let encoded = assert_ok!(encoded, "Fixture paths must be representable as escaped TOML strings");
         let contents = format!("[graph]\nroot = 'src'\nexclude = ['src/generated/**']\n[{section}]\n{key} = {encoded}");
-        let written = fs::write(&path, contents);
+        let written = fs::write(&fixture.settings_path, contents);
         assert_ok!(written, "File-path settings must be written before resolution");
         let arguments: &[&str] = match source {
             SettingsPathTestSource::CommandLine => &[argument, "from-cli"],
             SettingsPathTestSource::RelativeFile | SettingsPathTestSource::AbsoluteFile => &[],
         };
-        let cli = cli_test_fixture(arguments);
-        let (mut cli, matches) = assert_ok!(cli, "CLI file-path overrides must parse");
-        cli.path = fixture.path().join("different-project");
-        cli.settings = Some(path);
+        let cli_fixture = CliTestFixture::new(arguments);
+        let mut cli_fixture = assert_ok!(cli_fixture, "CLI file-path overrides must parse");
+        cli_fixture.cli.path = fixture.directory.path().join("different-project");
+        cli_fixture.cli.settings = Some(fixture.settings_path);
 
-        let system_under_test = LoadedSettings::load(cli, matches);
+        let system_under_test = LoadedSettings::load(cli_fixture.cli, cli_fixture.matches);
         let system_under_test = assert_ok!(system_under_test, "Path resolution must not require referenced files to exist");
 
         let expected = match source {
-            SettingsPathTestSource::RelativeFile => fixture.path().join("nested").join("from-settings"),
-            SettingsPathTestSource::AbsoluteFile => fixture.path().join("absolute-file"),
+            SettingsPathTestSource::RelativeFile => fixture.directory.path().join("nested").join("from-settings"),
+            SettingsPathTestSource::AbsoluteFile => fixture.directory.path().join("absolute-file"),
             SettingsPathTestSource::CommandLine => PathBuf::from("from-cli"),
         };
         let graph = &system_under_test.cli.options.graph;
@@ -1070,13 +1117,13 @@ verbose = {configured}
     #[case::missing_project(None, true)]
     fn test_no_settings_bypasses_loading(#[case] contents: Option<&[u8]>, #[case] missing_project: bool) {
         let arguments = ["--no-settings", "--depth", "0", "--format", "dot", "--from-scip", "saved.scip"];
-        let fixture = settings_loading_test_fixture(contents, &arguments);
-        let (fixture, _, mut cli, matches) = assert_ok!(fixture, "Settings bypass test fixture must be prepared");
+        let fixture = SettingsLoadingTestFixture::new(contents, &arguments);
+        let mut fixture = assert_ok!(fixture, "Settings bypass test fixture must be prepared");
         if missing_project {
-            cli.path = fixture.path().join("missing");
+            fixture.cli.path = fixture.directory.path().join("missing");
         }
 
-        let system_under_test = LoadedSettings::load(cli, matches);
+        let system_under_test = LoadedSettings::load(fixture.cli, fixture.matches);
         let system_under_test = assert_ok!(system_under_test, "Bypass must skip settings discovery and loading");
 
         let options = system_under_test.cli.options;
@@ -1089,21 +1136,16 @@ verbose = {configured}
 
     #[rstest]
     fn test_missing_settings_file(#[values(false, true)] explicit: bool) {
-        let fixture = settings_loading_test_fixture(None, &[]);
-        let (_fixture, path, mut cli, matches) = assert_ok!(fixture, "Missing-settings test fixture must be prepared");
-        cli.settings = explicit.then(|| path.clone());
+        let fixture = SettingsLoadingTestFixture::new(None, &[]);
+        let mut fixture = assert_ok!(fixture, "Missing-settings test fixture must be prepared");
+        fixture.cli.settings = explicit.then(|| fixture.settings_path.clone());
 
-        let system_under_test = LoadedSettings::load(cli, matches);
+        let system_under_test = LoadedSettings::load(fixture.cli, fixture.matches);
 
         if explicit {
             let error = system_under_test.err();
             let error = assert_some!(error, "Explicitly selected missing settings must fail");
-            let cause = error.downcast_ref::<io::Error>();
-            let cause = assert_some!(cause, "Missing settings must retain their I/O cause");
-            let diagnostic = error.to_string();
-            let file_name = path.display().to_string();
-            assert_eq!(cause.kind(), io::ErrorKind::NotFound);
-            assert!(diagnostic.contains(&file_name), "Missing settings errors must identify the file: {diagnostic}");
+            assert_missing_file_error(&error, &fixture.settings_path);
         } else {
             let loaded = assert_ok!(system_under_test, "Absent automatic settings must be optional");
             let expected = Settings::default();
@@ -1119,15 +1161,15 @@ verbose = {configured}
     #[case::automatic_non_utf8(Some(b"\xff".as_slice()), false)]
     #[case::explicit_non_utf8(Some(b"\xff".as_slice()), true)]
     fn test_settings_loading_errors(#[case] contents: Option<&[u8]>, #[case] explicit: bool) {
-        let fixture = settings_loading_test_fixture(contents, &[]);
-        let (_fixture, path, mut cli, matches) = assert_ok!(fixture, "Settings loading-error test fixture must be prepared");
+        let fixture = SettingsLoadingTestFixture::new(contents, &[]);
+        let mut fixture = assert_ok!(fixture, "Settings loading-error test fixture must be prepared");
         if contents.is_none() {
-            let created = fs::create_dir_all(&path);
+            let created = fs::create_dir_all(&fixture.settings_path);
             assert_ok!(created, "Unreadable settings fixture must place a directory at the settings path");
         }
-        cli.settings = explicit.then(|| path.clone());
+        fixture.cli.settings = explicit.then(|| fixture.settings_path.clone());
 
-        let system_under_test = LoadedSettings::load(cli, matches).err();
+        let system_under_test = LoadedSettings::load(fixture.cli, fixture.matches).err();
         let error = assert_some!(system_under_test, "Malformed or unreadable settings must not be treated as absent");
         let diagnostic = error.to_string();
 
@@ -1153,10 +1195,10 @@ verbose = {configured}
         let saved_index_path = saved_index_path_test_fixture().display().to_string();
         let replay_arguments = ["--from-scip", &saved_index_path];
         let arguments: Vec<_> = replay_arguments.into_iter().chain(arguments.iter().copied()).collect();
-        let fixture = settings_loading_test_fixture(Some(contents.as_bytes()), &arguments);
-        let (_fixture, path, mut cli, matches) = assert_ok!(fixture, "Outgoing merge-validation test fixture must be prepared");
-        cli.settings = Some(path);
-        let loaded = LoadedSettings::load(cli, matches);
+        let fixture = SettingsLoadingTestFixture::new(Some(contents.as_bytes()), &arguments);
+        let mut fixture = assert_ok!(fixture, "Outgoing merge-validation test fixture must be prepared");
+        fixture.cli.settings = Some(fixture.settings_path);
+        let loaded = LoadedSettings::load(fixture.cli, fixture.matches);
         let loaded = assert_ok!(loaded, "Outgoing settings must load before cross-field validation");
 
         let system_under_test = loaded.into_command();
@@ -1173,21 +1215,20 @@ verbose = {configured}
 
     #[test]
     fn test_missing_replay_into_command() {
-        let fixture = settings_loading_test_fixture(Some(b"[analysis]\nfrom-scip = 'missing.scip'"), &[]);
-        let (fixture, _, cli, matches) = assert_ok!(fixture, "Missing replay fixture must contain valid settings");
-        let loaded = LoadedSettings::load(cli, matches);
+        const INPUT_FILE_NAME: &str = "missing.scip";
+        let contents = format!("[analysis]\nfrom-scip = '{INPUT_FILE_NAME}'");
+        let fixture = SettingsLoadingTestFixture::new(Some(contents.as_bytes()), &[]);
+        let fixture = assert_ok!(fixture, "Missing replay fixture must contain valid settings");
+        let loaded = LoadedSettings::load(fixture.cli, fixture.matches);
         let loaded = assert_ok!(loaded, "Loading settings must not require the saved analysis to exist");
 
         let system_under_test = loaded.into_command();
 
         let error = system_under_test.err();
         let error = assert_some!(error, "Command construction must propagate a missing saved-analysis error");
-        let cause = error.downcast_ref::<io::Error>();
-        let cause = assert_some!(cause, "Missing saved analysis must retain its I/O cause");
-        let diagnostic = error.to_string();
-        let input_path = fixture.path().join("missing.scip").display().to_string();
-        assert_eq!(cause.kind(), io::ErrorKind::NotFound);
-        assert!(diagnostic.contains(&input_path), "Replay errors must identify the resolved input path: {diagnostic}");
+        let directory = project_directory(fixture.directory.path());
+        let directory = assert_ok!(directory, "Missing replay fixture must have a canonical directory");
+        assert_missing_file_error(&error, &directory.join(INPUT_FILE_NAME));
     }
 
     #[rstest]
@@ -1223,11 +1264,11 @@ verbose = {configured}
         #[case] arguments: &[&str],
         #[case] conflict: Option<&str>,
     ) {
-        let fixture = settings_loading_test_fixture(Some(contents.as_bytes()), arguments);
-        let (fixture, _, cli, matches) = assert_ok!(fixture, "Replay validation must have settings but no project manifest");
-        let written = fs::copy(saved_index_path_test_fixture(), fixture.path().join("saved.scip"));
+        let fixture = SettingsLoadingTestFixture::new(Some(contents.as_bytes()), arguments);
+        let fixture = assert_ok!(fixture, "Replay validation must have settings but no project manifest");
+        let written = fs::copy(saved_index_path_test_fixture(), fixture.directory.path().join("saved.scip"));
         assert_ok!(written, "Valid saved analysis must be available beside the replay settings");
-        let loaded = LoadedSettings::load(cli, matches);
+        let loaded = LoadedSettings::load(fixture.cli, fixture.matches);
         let loaded = assert_ok!(loaded, "Replay settings must load before conflicting options are validated");
 
         let system_under_test = loaded.into_command();

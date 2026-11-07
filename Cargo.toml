@@ -31,7 +31,7 @@ petgraph = { version = "0.8.3", default-features = false, features = ["std"] }
 same-file = "1.0.6"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-toml = { version = "0.9", default-features = false, features = ["parse", "serde", "std"] }
+toml = { version = "1.2.1", default-features = false, features = ["parse", "serde", "std"] }
 tempfile = "3.27.0"
 typed-path = "0.13.0"
 lsp-server = "0.10.0"
