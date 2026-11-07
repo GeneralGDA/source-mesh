@@ -9,6 +9,21 @@
 See how the files and folders in your Rust project depend on each other, spot dependency cycles, and find code that is hard to change in isolation.
 Export **GraphML**, **Mermaid**, or **DOT** diagrams, and enforce cycle checks or outgoing dependency limits in CI.
 
+## Example
+
+Folder dependencies in this repository's `crates/source-mesh-core/src`, with test-only dependencies excluded and no folder grouping.
+The `.` node represents files directly in `src`.
+
+![Folder dependency graph for source-mesh-core/src](docs/source-mesh-core.png)
+
+Generate the GraphML from the repository root:
+
+```console
+source-mesh . --no-settings --root crates/source-mesh-core/src --format graphml --exclude-tests --output source-mesh-core.graphml
+```
+
+Open the result in [yEd](https://www.yworks.com/products/yed) and apply a layout before exporting an image.
+
 ## Install
 
 Install the analysis components, then install the latest published release:
