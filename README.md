@@ -6,15 +6,15 @@
 ![Windows CI](https://img.shields.io/github/check-runs/GeneralGDA/source-mesh/main.svg?nameFilter=windows-latest&style=for-the-badge&label=Windows)
 [![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fgeneralgda.github.io%2Fsource-mesh%2Fcoverage.json&style=for-the-badge&logo=rust&logoColor=white)](https://generalgda.github.io/source-mesh/)
 
-See how the files and folders in your Rust project depend on each other, spot dependency cycles, and find code that is hard to change in isolation.
-Export **GraphML**, **Mermaid**, or **DOT** diagrams, and enforce cycle checks or outgoing dependency limits in CI.
+Dependency graphs, cycle reports, and outgoing dependency limits for Rust projects.
+Exports **GraphML**, **Mermaid**, and **DOT**.
 
 ## Example
 
 Folder dependencies in this repository's `crates/source-mesh-core/src`, with test-only dependencies excluded and no folder grouping.
 The `.` node represents files directly in `src`.
 
-![Folder dependency graph for source-mesh-core/src](docs/source-mesh-core.png)
+![Folder dependency graph for source-mesh-core/src](https://raw.githubusercontent.com/GeneralGDA/source-mesh/main/docs/source-mesh-core.png)
 
 Generate the GraphML from the repository root:
 
@@ -33,13 +33,7 @@ rustup component add rust-analyzer rust-src
 cargo install source-mesh --locked
 ```
 
-Before the first crates.io release, install directly from GitHub:
-
-```console
-cargo install --git https://github.com/GeneralGDA/source-mesh --locked source-mesh
-```
-
-Cargo installs an optimized release build. Keep Cargo and rust-analyzer on `PATH`; install rust-analyzer and rust-src for the toolchain selected by the project you analyze. source-mesh checks both prerequisites before starting analysis.
+Keep Cargo and rust-analyzer on `PATH`. Install rust-analyzer and rust-src for the toolchain selected by the project you analyze.
 
 ## Run
 
@@ -150,8 +144,7 @@ that none were found. When combined with `--fail-on-cycles`, diagnostics include
 
 ### Example check output
 
-For a folder with three outgoing dependencies and a limit of two, stderr looks like this
-(captured from the bundled dependency-graph fixture):
+For a folder with three outgoing dependencies and a limit of two, stderr contains:
 
 ```text
 error: Outgoing dependency threshold exceeded (mode: folders, maximum: 2, violating sources: 1).
@@ -163,14 +156,11 @@ Cycle reports explicitly say `No cycles found.` when the selected graph is acycl
 
 ## GitHub Actions
 
-`--fail-on-cycles` turns file or folder dependency cycles into a failing CI step. The diagram and requested reports are
-written before the failure. Publish those Markdown reports in the workflow run's **Summary** tab on both passing and failing
-checks, and retain the diagram as a downloadable artifact on failure. Adjust `--root src` for your repository's source layout.
+`--fail-on-cycles` makes cycle detection fail the CI step after writing the requested outputs.
+The workflow below publishes reports in the run summary and uploads diagnostics when the cycle check fails.
 
-For the summary step below, copy [the summary helper](scripts/Publish-CycleSummary.ps1) into your repository at
-`scripts/Publish-CycleSummary.ps1`; installing the CLI does not install this helper.
-It writes its step's summary and notes missing reports. If the combined reports exceed GitHub's size limit,
-it writes a notice directing readers to the diagnostic artifact instead.
+Copy [the summary helper](https://github.com/GeneralGDA/source-mesh/blob/main/scripts/Publish-CycleSummary.ps1)
+to `scripts/Publish-CycleSummary.ps1` in your repository.
 
 ```yaml
 jobs:
@@ -183,7 +173,7 @@ jobs:
       - run: rustup component add rust-analyzer rust-src
       - uses: Swatinem/rust-cache@v2.9.2
       - name: Install source-mesh
-        run: cargo install --git https://github.com/GeneralGDA/source-mesh --locked source-mesh
+        run: cargo install source-mesh --locked
       - name: Check dependency cycles
         id: dependency_cycles
         run: |
@@ -205,14 +195,12 @@ jobs:
           if-no-files-found: warn
 ```
 
-This repository uses the same summary publishing in CI. A separate [lychee](https://github.com/lycheeverse/lychee) job checks
-documentation links and publishes its own report; lychee is a development tool, not a dependency of the CLI or core library.
-
 ## Reusing analysis
 
 Save analysis with `--save-scip analysis.scip`; reuse it with `--from-scip analysis.scip` to change formats, depth, or filters without analyzing the source again.
 
-For release history and upgrade notes, see the [changelog](CHANGELOG.md).
+For release history and upgrade notes, see the
+[changelog](https://github.com/GeneralGDA/source-mesh/blob/main/CHANGELOG.md).
 For contributor documentation, see the
 [development guide](https://github.com/GeneralGDA/source-mesh/blob/main/DEVELOPMENT.md).
 
