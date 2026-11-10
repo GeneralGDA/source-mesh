@@ -2,6 +2,15 @@
 
 Release history for `source-mesh` and `source-mesh-core`.
 
+## 1.2.1 - 2026-11-10
+
+Housekeeping release focused on documentation and development tooling, with no changes to the CLI or core library code.
+
+### Changed
+
+- Reworked documentation.
+- Moved coverage tool installation to development setup and CI; coverage runs now check prerequisites without installing tools.
+
 ## 1.2.0 - 2026-11-07
 
 ### Added

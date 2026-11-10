@@ -16,24 +16,22 @@ The `.` node represents files directly in `src`.
 
 ![Folder dependency graph for source-mesh-core/src](https://raw.githubusercontent.com/GeneralGDA/source-mesh/main/docs/source-mesh-core.png)
 
-Generate the GraphML from the repository root:
+To recreate the diagram above, export the graph as GraphML from the root of this repository:
 
 ```console
 source-mesh . --no-settings --root crates/source-mesh-core/src --format graphml --exclude-tests --output source-mesh-core.graphml
 ```
 
-Open the result in [yEd](https://www.yworks.com/products/yed) and apply a layout before exporting an image.
+Then open `source-mesh-core.graphml` in [yEd](https://www.yworks.com/products/yed).
 
 ## Install
 
-Install the analysis components, then install the latest published release:
+From the project you want to analyze, install the analysis components and the latest release:
 
 ```console
 rustup component add rust-analyzer rust-src
 cargo install source-mesh --locked
 ```
-
-Keep Cargo and rust-analyzer on `PATH`. Install rust-analyzer and rust-src for the toolchain selected by the project you analyze.
 
 ## Run
 
@@ -43,12 +41,23 @@ From the Rust project you want to analyze:
 source-mesh . --root src --format graphml --exclude-tests --output folders.graphml
 ```
 
-Open `folders.graphml` in [yEd](https://www.yworks.com/products/yed), a free desktop graph editor, and apply a layout.
+View the output with a tool for its format:
+
+- **DOT**: [Graphviz](https://graphviz.org/).
+- **GraphML**: [yEd](https://www.yworks.com/products/yed); apply a layout after opening the file.
+- **Mermaid**: [Mermaid Live Editor](https://mermaid.live/).
+
+Arrows show dependency direction: `A → B` means code in folder A uses code from folder B. Edge labels count distinct file pairs. Folder aggregation can introduce cycles even when the file graph is acyclic.
+
+Analysis of large projects can take several minutes. Use `--verbose` for diagnostic details and `source-mesh --help` for all options.
+
 To find and highlight cycles:
 
 ```console
 source-mesh . --root src --format graphml --exclude-tests --highlight-cycles --cycles-output folder-cycles.md --file-cycles-output file-cycles.md --output folders.graphml
 ```
+
+### Available options
 
 | Option | Effect |
 |---|---|
@@ -68,11 +77,7 @@ source-mesh . --root src --format graphml --exclude-tests --highlight-cycles --c
 | `--outgoing-dependencies-output FILE` | Write outgoing dependency violations to Markdown; requires a threshold |
 | `--verbose` / `-v` | Include diagnostic details and timings |
 
-`A → B` means a file in A refers to a symbol defined in B. Edge labels count distinct file pairs. Folder aggregation can introduce cycles even when the file graph is acyclic.
-
-Analysis of large projects can take several minutes. Use `--verbose` for diagnostic details and `source-mesh --help` for all options.
-
-## Project configuration
+## Configuration file
 
 `source-mesh.toml` is loaded automatically from the selected project directory (current directory by default).
 Use `--settings FILE` to choose another file or `--no-settings` to skip it. All settings are optional:
@@ -128,31 +133,10 @@ Limit each folder to at most five distinct dependency targets:
 source-mesh . --root src --exclude-tests --max-outgoing-dependencies 5 --outgoing-dependencies-output dependencies.md --output folders.dot
 ```
 
-To check individual files instead, add `--outgoing-dependencies-mode files`. The default mode, `folders`, checks the final
-folder graph after `--root` filtering and `--depth` folding. File mode checks the file graph before folder aggregation, so
-folder depth does not affect its counts. Both modes respect `--root`, `--exclude-tests`, and `--exclude`.
-`--group-folders` only changes diagram presentation, not dependency counts.
+Use `--outgoing-dependencies-mode files` to check files instead of folders. A limit of `0` forbids outgoing dependencies.
+Both modes respect `--root`, `--exclude-tests`, and `--exclude`.
 
-Each distinct target counts once, even if referenced repeatedly or by both production and test code. Folder edge weights
-(the number of file pairs) are not summed. A retained folder self-edge counts as one target when `--include-self` is enabled.
-`N` must be a non-negative integer: equality passes, and `0` forbids any outgoing dependencies. Without a threshold, no check runs;
-an explicit mode or report path requires `--max-outgoing-dependencies`.
-
-On a violation, source-mesh writes the diagram and requested reports, then exits with code `1`. Stderr lists every violating
-file or folder with its count and the threshold. The optional Markdown report lists the same violations, or explicitly states
-that none were found. When combined with `--fail-on-cycles`, diagnostics include both kinds of failure.
-
-### Example check output
-
-For a folder with three outgoing dependencies and a limit of two, stderr contains:
-
-```text
-error: Outgoing dependency threshold exceeded (mode: folders, maximum: 2, violating sources: 1).
-- "api": 3 outgoing dependencies (maximum: 2)
-```
-
-The command exits with code `1`, but the diagram and requested Markdown reports are still available.
-Cycle reports explicitly say `No cycles found.` when the selected graph is acyclic.
+On a violation, source-mesh writes the diagram and requested reports, lists violations in stderr, and exits with code `1`.
 
 ## GitHub Actions
 
@@ -166,19 +150,28 @@ to `scripts/Publish-CycleSummary.ps1` in your repository.
 jobs:
   dependency-cycles:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+
       - run: rustup component add rust-analyzer rust-src
-      - uses: Swatinem/rust-cache@v2.9.2
+
       - name: Install source-mesh
         run: cargo install source-mesh --locked
+
       - name: Check dependency cycles
         id: dependency_cycles
         run: |
           mkdir -p target/source-mesh
-          source-mesh . --root src --format graphml --exclude-tests --highlight-cycles --fail-on-cycles --cycles-output target/source-mesh/folder-cycles.md --file-cycles-output target/source-mesh/file-cycles.md --output target/source-mesh/folder-dependencies.graphml
+          source-mesh . \
+            --root src --format graphml --exclude-tests \
+            --highlight-cycles --fail-on-cycles \
+            --cycles-output target/source-mesh/folder-cycles.md \
+            --file-cycles-output target/source-mesh/file-cycles.md \
+            --output target/source-mesh/folder-dependencies.graphml
+
       - name: Publish cycle summary
         if: >-
           ${{ always() && (steps.dependency_cycles.outcome == 'success' || steps.dependency_cycles.outcome == 'failure') }}
@@ -186,6 +179,7 @@ jobs:
         run: >-
           ./scripts/Publish-CycleSummary.ps1 -SummaryPath $env:GITHUB_STEP_SUMMARY
           -ReportPaths target/source-mesh/folder-cycles.md,target/source-mesh/file-cycles.md
+
       - name: Upload cycle diagnostics
         if: ${{ always() && steps.dependency_cycles.outcome == 'failure' }}
         uses: actions/upload-artifact@v7.0.1
@@ -199,11 +193,11 @@ jobs:
 
 Save analysis with `--save-scip analysis.scip`; reuse it with `--from-scip analysis.scip` to change formats, depth, or filters without analyzing the source again.
 
-For release history and upgrade notes, see the
-[changelog](https://github.com/GeneralGDA/source-mesh/blob/main/CHANGELOG.md).
-For contributor documentation, see the
-[development guide](https://github.com/GeneralGDA/source-mesh/blob/main/DEVELOPMENT.md).
+## Further reading
+
+- [Changelog](https://github.com/GeneralGDA/source-mesh/blob/main/CHANGELOG.md)
+- [Development guide](https://github.com/GeneralGDA/source-mesh/blob/main/DEVELOPMENT.md)
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE)

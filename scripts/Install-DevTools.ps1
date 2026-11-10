@@ -8,6 +8,9 @@ $PSNativeCommandUseErrorActionPreference = $false
 if ($null -eq (Get-Command -Name cargo -ErrorAction Ignore)) {
     throw 'Cargo is required to install development tools. Install Rust with rustup, then run this script again.'
 }
+if ($null -eq (Get-Command -Name rustup -ErrorAction Ignore)) {
+    throw 'Rustup is required to install development tools. Install Rust with rustup, then run this script again.'
+}
 
 $commandPackages = [ordered]@{
     rg         = 'ripgrep'
@@ -15,6 +18,7 @@ $commandPackages = [ordered]@{
     jaq        = 'jaq'
     'ast-grep' = 'ast-grep'
     'cargo-mutants' = 'cargo-mutants'
+    'cargo-llvm-cov' = 'cargo-llvm-cov'
     lychee     = 'lychee'
 }
 
@@ -28,7 +32,7 @@ foreach ($commandName in $commandPackages.Keys) {
 
     $packageName = $commandPackages[$commandName]
     Write-Host "Installing $commandName from Cargo package $packageName..."
-    & cargo install $packageName
+    & cargo install --locked $packageName
     if ($LASTEXITCODE -ne 0) {
         throw "Cargo failed to install $packageName for $commandName with exit code $LASTEXITCODE."
     }
@@ -38,6 +42,16 @@ foreach ($commandName in $commandPackages.Keys) {
     if ($null -eq $installedCommand) {
         throw "$commandName was installed but is not available on PATH. Restart PowerShell and run this script again."
     }
+}
+
+Push-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
+try {
+    & rustup component add llvm-tools-preview
+    if ($LASTEXITCODE -ne 0) {
+        throw "Rustup failed to install llvm-tools-preview with exit code $LASTEXITCODE."
+    }
+} finally {
+    Pop-Location
 }
 
 Write-Host 'All development tools are available.'

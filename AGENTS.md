@@ -18,25 +18,20 @@
   `#[must_use]` (e.g. `Result` and `Iterator` already carry that contract). Do not duplicate the attribute on such functions.
 - Use only the bare `#[must_use]` attribute, without a custom message (`#[must_use = "..."]`) or an explanatory comment.
 - Use the `const` qualifier on functions wherever possible.
-- Do not use abbreviations in identifiers (e.g. use `destination` not `dest`, `directory` not `dir`,
-  `source` not `src`, `buffer` not `buf`, `length` not `len`, `index` not `idx`, `capabilities` not `caps`).
-  Acronyms that are widely understood as standalone terms (e.g. `url`, `json`, `api`) are fine.
-  This also applies to parameter names in implementations of external traits. Keep `clippy::renamed_function_params`
-  disabled so external trait parameter names cannot force local abbreviations. For other lint conflicts, ask the user
-  rather than shortening identifiers.
+- Do not abbreviate identifiers, including parameters in external trait implementations (e.g. use `destination`, not `dest`).
+  Widely understood standalone acronyms such as `url`, `json`, and `api` are fine. Keep `clippy::renamed_function_params`
+  disabled so external trait parameter names cannot force abbreviations. For other lint conflicts, ask the user rather than
+  shortening identifiers.
 - Name related constants from general to specific: put the shared semantic family first and the variant last, so names
   group by prefix (e.g. `PHASE_LABEL_ORIGINAL`, `PHASE_LABEL_WITHOUT_TEST`, not `ORIGINAL_PHASE_LABEL`). Apply the same order
   in production code and tests. Preserve external names and values; do not mechanically reverse unrelated standalone names.
-- Name values by the domain entity and semantic kind they represent, not just their temporary role in an operation.
-  Preserve meaningful type vocabulary without mechanically repeating type names (e.g. `cargo_build_output_directory`,
-  not `output_directory`). Use terms that match what the code actually does: a downloaded and extracted directory is
-  not an unexplained `installation_root` that implies a separate installation process. Do not invent a domain concept
-  merely to group test steps or helper code; name that code after its existing owner and the behavior it supports.
-- Judge whether a name has enough context from its enclosing function or type, not from the file's current sole task.
-  General-purpose entry points such as `main` and build scripts do not provide dependency-specific context. Give cohesive
-  domain-specific tasks a named scope and still keep the values within it clear.
-  Short role names such as `source_directory` and `destination_directory` are appropriate in a generic copy helper whose
-  contract makes their meaning explicit; do not add redundant domain prefixes where the context is already unambiguous.
+- Name values by their domain entity and semantic kind, not merely their temporary role. Preserve meaningful type vocabulary
+  without mechanically repeating type names (e.g. `cargo_build_output_directory`, not `output_directory`). Use domain terms
+  that match actual behavior; do not invent concepts merely to group code.
+- Judge naming context from the enclosing function or type, not the file's current sole task. Give cohesive domain-specific
+  tasks in general-purpose entry points such as `main` and build scripts named scopes, with clear names inside. Short role
+  names such as `source_directory` are appropriate when the enclosing contract makes their meaning explicit; do not add
+  redundant domain prefixes.
 - Prefer boilerplate-reduction crates such as `getset`, `bon`, and `derive_new` for new Rust types, reusing existing
   project dependencies where available.
 - When a function has enough required parameters that its positional call sites are hard to scan or easy to misuse,
@@ -112,21 +107,19 @@
 
 ## Tests
 
-- Keep unit and component tests under `src`, near the implementation they exercise, including synthetic graphs,
-  SCIP fixtures, argument validation, and application pipeline checks. Co-locate feature-specific fixtures, test doubles,
-  helper programs, and their setup code with the owning feature. Reserve `src/fixtures` for shared fixture projects and data.
+- Keep unit and component tests under `src`, including synthetic graphs, SCIP fixtures, argument validation, and application
+  pipeline checks. Reserve `src/fixtures` for shared fixture projects and data.
 - By default, place tests for a single type or module in an inline `#[cfg(test)]` test module in the same ordinary `.rs`
   file as the implementation. Do not create sibling `*_tests.rs` files solely to separate test code from production code.
   File length, complex fixture setup, subprocesses, message exchanges, or application pipeline calls alone do not justify
   splitting a single owner's tests into another file.
 - Use separate test suites only for checks genuinely spanning multiple implementations or when the user explicitly approves
-  a split. Attach them to the owning feature, and keep shared suites and fixtures at their closest common owner.
-  Keep `mod.rs` and `lib.rs` organizational-only; do not move inline test bodies into them.
-- A standalone test helper executable may have its own source under the owner's `test_fixtures` directory; this is not a
-  reason to move the owning tests out of their implementation file. Gate both its Rust source and its build/launch helpers
-  with `#[cfg(test)]`. Enable that configuration explicitly when compiling a standalone test executable; do not add a libtest
-  harness when the double must accept the external program's command-line arguments. Reference helper sources relative to
-  their owner, preferably through `include_str!`, rather than searching a repository-wide fixtures directory at runtime.
+  a split.
+- A standalone test helper executable may have its own source under the owner's `test_fixtures` directory. Gate both its
+  Rust source and its build/launch helpers with `#[cfg(test)]`. Enable that configuration explicitly when compiling a standalone
+  test executable; do not add a libtest harness when the double must accept the external program's command-line arguments.
+  Reference helper sources relative to their owner, preferably through `include_str!`, rather than searching a repository-wide
+  fixtures directory at runtime.
 - Reserve `tests` for repository-level checks that launch the compiled application on this repository and compare
   its output with expected output files under `tests/expected` or enforce repository architecture constraints.
   Do not call production library APIs from these tests. A fresh temporary index may be shared between executable runs
@@ -171,11 +164,8 @@
   parent module's private fields directly. Put genuinely useful test helpers in the tests that use them or in shared
   test utility modules.
 - Put setup that every test of a type needs into the fixture constructor instead of repeating it in each test.
-- When a fixture owns a resource that a test has to consume while immutable borrows of the fixture are alive,
-  store it as `RefCell<Option<...>>` and `take()` it, instead of taking `&mut self` — a `&mut self` method would
-  conflict with borrows handed out by the fixture's methods.
-- Share test setup through a plain function returning a tuple, not through a helper that takes the test body as a closure.
-  Test bodies must stay flat.
+- Share test setup through fixture constructors or plain functions returning a value, tuple, or named fixture. Do not pass
+  the test body as a closure to a setup helper; test bodies must stay flat.
 - Extract repeated construction of test input data into a named helper, but do not use such a helper in the tests of the
   very type it builds — there the construction is the subject under test.
 - Group shared test utilities into several modules by topic rather than one catch-all `test_utils`. Do not split down to
@@ -184,9 +174,10 @@
 ## Architecture
 
 - Organize directories by feature or domain, not by artifact kind. Co-locate each feature's implementation, templates,
-  feature-specific tests, and supporting files; for example, keep DOT and GraphML in separate format directories.
-  Do not create cross-feature collections such as "all templates" or "all controllers". Keep genuinely shared code
-  and cross-feature tests at the closest common owner instead of duplicating them into feature directories.
+  tests, and supporting files, including fixtures, test doubles, helper programs, and their setup code. For example, keep
+  DOT and GraphML in separate format directories. Do not create cross-feature collections such as "all templates" or
+  "all controllers". Keep genuinely shared code, tests, and supporting files at their closest common owner instead of
+  duplicating them into feature directories.
 
 - Keep CLI help, normal output, and the README focused on dependency graphs and cycle checks. Backend formats and
   internal diagnostics are implementation details; expose raw backend output only with `--verbose`. Errors must explain
@@ -209,12 +200,9 @@
   boundary instead of scattering them through common code. Common code must express the platform capabilities it needs
   through the abstraction and delegate OS-specific operations to it. Treat minimizing target-specific `#[cfg]` sites as an
   architectural requirement, not merely a cosmetic cleanup.
-- Do not treat generated files as the source of truth. If a requested change affects generated code, prefer updating
-  the generator and/or its templates rather than editing generated files directly.
-- Direct edits in generated files are acceptable only as a temporary inspection aid or when the user explicitly asks
-  for them; otherwise, make the durable change in the generator or its templates.
-- Never format generated files, including indirectly through workspace-wide formatting commands. Generated files may
-  change only through the generation pipeline.
+- Treat generators and their templates as the source of truth: update them and regenerate affected files. Direct edits to
+  generated files are exceptions allowed only as a temporary inspection aid or at the user's explicit request.
+- Never format generated files, including indirectly through workspace-wide formatting commands.
 
 ## Agent Tools
 
@@ -240,8 +228,9 @@
 - Prefer explicit command-line arguments and script/function parameters over environment variables whenever practical.
   Do not introduce intermediary environment variables merely to forward values. Use environment variables when required by an
   external tool or when necessary for secure handling of secrets or untrusted input.
-- Before introducing a constant, path, helper, or abstraction, search the repository for the same knowledge and
-  identify its current owner. Extend the owning abstraction instead of creating a second source of truth.
+- Before introducing domain knowledge or a potentially shared constant, path, helper, or abstraction, search the repository
+  for an existing owner. Extend that abstraction instead of creating a second source of truth; incidental local values, such
+  as constants for a single test scenario, do not require this search.
 - After centralizing knowledge, search for the original literals and symbols again. Verify that every remaining occurrence
   is intentional and that consumers use the owning abstraction.
 - Before adding logic to an existing type, state that type's current responsibility. If the new logic performs unrelated
@@ -266,8 +255,9 @@
 - After a refactoring, run `cargo test -p <crate>`.
 - Never run `rustfmt`, `cargo fmt`, editor formatting actions, or any other formatting command.
   Leave automatic formatting to the user or their editor; make requested style changes through explicit code edits.
-- Never suppress Clippy lints with `#[allow]`, `#[expect]`, crate- or module-level lint overrides, or command-line flags.
-  Rewrite code to satisfy every lint using safe or checked operations and explicit error handling or test assertions.
-  If no compliant solution is available, stop and ask the user instead of suppressing the lint.
+- Follow the project's Clippy configuration, including existing exceptions. Do not add suppressions (`#[allow]`, `#[expect]`,
+  lint overrides, or command-line flags) or weaken lint configuration without the user's approval. Satisfy enabled lints using
+  safe or checked operations and explicit error handling or test assertions. If no compliant solution is available, stop and
+  ask the user.
 - If `cargo clippy --all-targets` is already failing before the change, report that as a pre-existing state instead of
   mixing it into the results of the refactoring.

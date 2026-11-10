@@ -9,6 +9,14 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Install coverage tool
+      shell: pwsh
+      run: cargo install --locked cargo-llvm-cov
+
+    - name: Install coverage component
+      shell: pwsh
+      run: rustup component add llvm-tools-preview
+
     - name: Run unit and component tests with coverage
       shell: pwsh
       run: ./scripts/Test-Coverage.ps1 -OutputDirectory '${{ inputs.output-directory }}'

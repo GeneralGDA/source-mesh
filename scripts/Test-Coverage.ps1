@@ -7,17 +7,22 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 
+if ($null -eq (Get-Command -Name cargo-llvm-cov -CommandType Application -ErrorAction Ignore)) {
+    throw 'cargo-llvm-cov is required. Run scripts/Install-DevTools.ps1, then run this script again.'
+}
+if ($null -eq (Get-Command -Name rustup -CommandType Application -ErrorAction Ignore)) {
+    throw 'Rustup is required to check coverage tools. Install Rust with rustup, then run scripts/Install-DevTools.ps1.'
+}
+
 $OutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 Push-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
 try {
-    & cargo install --locked cargo-llvm-cov
+    $installedComponents = & rustup component list --installed
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
-
-    & rustup component add llvm-tools-preview
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+    if (-not ($installedComponents -match '^llvm-tools(?:-|$)')) {
+        throw 'llvm-tools-preview is required. Run scripts/Install-DevTools.ps1, then run this script again.'
     }
 
     $reportArguments = @('--release', '--ignore-filename-regex', '[/\\](fixtures|test_fixtures)[/\\]')

@@ -33,8 +33,7 @@ The four ignored backend tests call `RustAnalyzer` to launch the installed rust-
 and index fixture projects during execution. They verify dependency extraction with
 the actual analyzer and are excluded from normal test runs because indexing is slow.
 The `dependency-graph` test compares the complete parsed file graph with the saved index
-loaded through `ScipFile`. Export and command-line behavior are covered by the repository
-integration tests.
+loaded through `ScipFile`.
 
 Resolver component tests exercise finite message exchanges with a subprocess of the test executable, without requiring
 rust-analyzer. Their ignored peer entry point is launched explicitly by the ordinary component tests; it is not an additional
