@@ -44,7 +44,7 @@ source-mesh . --root src --format graphml --exclude-tests --output folders.graph
 View the output with a tool for its format:
 
 - **DOT**: [Graphviz](https://graphviz.org/).
-- **GraphML**: [yEd](https://www.yworks.com/products/yed); apply a layout after opening the file.
+- **GraphML**: [yEd](https://www.yworks.com/products/yed).
 - **Mermaid**: [Mermaid Live Editor](https://mermaid.live/).
 
 Arrows show dependency direction: `A → B` means code in folder A uses code from folder B. Edge labels count distinct file pairs. Folder aggregation can introduce cycles even when the file graph is acyclic.
