@@ -16,7 +16,7 @@ clap.workspace = true
 getset.workspace = true
 serde.workspace = true
 toml.workspace = true
-source-mesh-core = { version = "1.2.0", path = "../source-mesh-core" }
+source-mesh-core = { version = "1.2.1", path = "../source-mesh-core" }
 
 [dev-dependencies]
 claims.workspace = true
