@@ -9,6 +9,8 @@
 Dependency graphs, cycle reports, and outgoing dependency limits for Rust projects.
 Exports **GraphML**, **Mermaid**, and **DOT**.
 
+[Changelog](https://github.com/GeneralGDA/source-mesh/blob/main/CHANGELOG.md)
+
 ## Example
 
 Folder dependencies in this repository's `crates/source-mesh-core/src`, with test-only dependencies excluded and no folder grouping.

@@ -619,7 +619,7 @@ mod tests {
             let contents = assert_ok!(unplanned_contents, "The unplanned output must remain readable after rejection");
             assert_eq!(contents, CONTENTS_EXISTING, "Rejecting an unplanned output must preserve its contents");
         } else {
-            let missing = unplanned_contents.is_err_and(|error| error.kind() == ErrorKind::NotFound);
+            let missing = unplanned_contents.is_err_and(|read_error| read_error.kind() == ErrorKind::NotFound);
             assert!(missing, "Rejecting an unplanned output must not create it");
         }
     }
