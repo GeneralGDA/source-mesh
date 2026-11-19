@@ -2,6 +2,14 @@
 
 Release history for `source-mesh` and `source-mesh-core`.
 
+## 1.2.2 - 2026-11-19
+
+### Fixed
+
+- Missing dependency edges from `==` and `!=` comparisons, including derived `PartialEq` implementations.
+- Diagram and cycle-report generation failed when cycle listings exceeded their limit.
+- Completed dependency analysis was not saved when subsequent graph filtering or rendering failed.
+
 ## 1.2.1 - 2026-11-10
 
 Housekeeping release focused on documentation and development tooling, with no changes to the CLI or core library code.

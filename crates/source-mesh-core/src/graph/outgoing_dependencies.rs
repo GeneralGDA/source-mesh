@@ -121,6 +121,8 @@ mod tests {
 
     use anyhow::Error;
     use anyhow::Result;
+    use assertables::assert_contains;
+    use assertables::assert_not_contains;
     use claims::assert_ok;
     use claims::assert_some;
     use pretty_assertions::assert_eq;
@@ -230,11 +232,11 @@ mod tests {
         let markdown = system_under_test.markdown();
 
         assert!(!system_under_test.has_violations(), "An empty outgoing target set must satisfy a zero maximum");
-        assert!(diagnostic.contains(NO_VIOLATIONS_FOUND), "Diagnostic must explicitly state that no sources violate");
-        assert!(diagnostic.contains(&format!("Mode: {}; maximum: 0", mode.label())), "Diagnostic must identify its scope");
+        assert_contains!(diagnostic, NO_VIOLATIONS_FOUND, "Diagnostic must explicitly state that no sources violate");
+        assert_contains!(diagnostic, &format!("Mode: {}; maximum: 0", mode.label()), "Diagnostic must identify its scope");
         assert_eq!(Some(NO_VIOLATIONS_FOUND), markdown.lines().last(), "Markdown must explicitly state that no sources violate");
-        assert!(markdown.contains(&format!("Mode: {}", mode.label())), "Markdown must identify the analysis mode");
-        assert!(markdown.contains("Maximum: 0"), "Markdown must include the configured zero maximum");
+        assert_contains!(markdown, &format!("Mode: {}", mode.label()), "Markdown must identify the analysis mode");
+        assert_contains!(markdown, "Maximum: 0", "Markdown must include the configured zero maximum");
         assert!(!diagnostic.lines().any(|line| line.starts_with("- ")), "Diagnostic must not list isolated nodes");
         assert!(!markdown.lines().any(|line| line.starts_with("- ")), "Markdown must not list isolated nodes");
     }
@@ -295,9 +297,9 @@ mod tests {
             "- <code>zebra</code>: 2 outgoing dependencies (maximum: 1)",
         ], markdown_lines, "Markdown must list every source with its actual count and maximum");
         let summary = format!("mode: {}, maximum: 1, violating sources: 3", mode.label());
-        assert!(diagnostic.contains(&summary), "The error summary must identify the mode, maximum, and violation total");
-        assert!(markdown.contains(&format!("Mode: {}", mode.label())), "Markdown must identify the analysis mode");
-        assert!(markdown.contains("Maximum: 1"), "Markdown must include the configured maximum");
+        assert_contains!(diagnostic, &summary, "The error summary must identify the mode, maximum, and violation total");
+        assert_contains!(markdown, &format!("Mode: {}", mode.label()), "Markdown must identify the analysis mode");
+        assert_contains!(markdown, "Maximum: 1", "Markdown must include the configured maximum");
     }
 
     #[test]
@@ -323,7 +325,7 @@ mod tests {
         let expected_folders = BTreeMap::from([(String::from("api"), 1)]);
         assert_eq!(expected_folders, folder_analysis.violations, "Folder labels must come from the final aggregated graph");
         let diagnostic_path = format!("{service_path:?}");
-        assert!(system_under_test.diagnostic().contains(&diagnostic_path), "Diagnostic must retain the complete file path");
+        assert_contains!(system_under_test.diagnostic(), &diagnostic_path, "Diagnostic must retain the complete file path");
     }
 
     #[rstest]
@@ -384,7 +386,7 @@ mod tests {
 
         assert_eq!(vec![expected_diagnostic.as_str()], diagnostic_lines, "Diagnostic labels must remain quoted on one line");
         assert_eq!(vec![expected_markdown.as_str()], markdown_lines, "Markdown must preserve inline-code escaping");
-        assert!(!markdown.contains("<script>"), "A graph label must not inject HTML into the report");
+        assert_not_contains!(markdown, "<script>", "A graph label must not inject HTML into the report");
         assert!(!markdown.lines().any(|line| line.starts_with("## ")), "A graph label must not inject a report heading");
     }
 
@@ -410,7 +412,7 @@ mod tests {
 
         assert_eq!(Some(expected.as_str()), diagnostic.lines().last(), "Diagnostic labels must be quoted and control-safe");
         assert!(diagnostic.chars().all(|character| character == '\n' || !character.is_control()), "Unsafe diagnostic control");
-        assert!(!diagnostic.contains('\u{202e}'), "A graph label must not change the diagnostic text direction");
+        assert_not_contains!(diagnostic, '\u{202e}', "A graph label must not change the diagnostic text direction");
     }
 
     #[cfg(any(unix, windows))]

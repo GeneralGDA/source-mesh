@@ -84,13 +84,13 @@ enum InitializationStatus<'a> {
 }
 
 struct AnalyzerProcess {
-    child: Child,
-    diagnostics: NamedTempFile,
-    verbose: bool,
+    process: Child,
+    diagnostics_file: NamedTempFile,
+    verbose_diagnostics: bool,
 }
 
 impl DefinitionResolver {
-    pub(crate) fn start(project: &Path, configuration_path: Option<&Path>, verbose: bool) -> Result<Self> {
+    pub(crate) fn start(project: &Path, configuration_path: Option<&Path>, verbose_diagnostics: bool) -> Result<Self> {
         let project = dunce::canonicalize(project).context("Cannot resolve definition lookup project")?;
         let configuration = definition_configuration(configuration_path)?;
         let diagnostics = NamedTempFile::new().context("Cannot capture rust-analyzer definition diagnostics")?;
@@ -108,12 +108,12 @@ impl DefinitionResolver {
                 )
             })?
         };
-        let mut process = AnalyzerProcess { child, diagnostics, verbose };
-        let Some(input) = process.child.stdin.take() else {
+        let mut process = AnalyzerProcess { process: child, diagnostics_file: diagnostics, verbose_diagnostics };
+        let Some(input) = process.process.stdin.take() else {
             unreachable!("A successfully spawned child with piped stdin must own its input stream");
         };
         let mut resolver = Self { process, input, output: BufReader::new(output), configuration, next_request: 0 };
-        if verbose {
+        if verbose_diagnostics {
             emit(format_args!("Loading rust-analyzer semantic definitions for {}...", project.display()));
         }
         resolver.initialize(&project).with_context(|| resolver.process.failure_context())?;
@@ -126,7 +126,7 @@ impl DefinitionResolver {
         }
         let url = Url::from_file_path(file).map_err(|()| anyhow!("Cannot encode source path {} as a file URI", file.display()))?;
         let started = Instant::now();
-        if self.process.verbose {
+        if self.process.verbose_diagnostics {
             emit(format_args!(
                 "Looking up definition at {}:{}:{}...", file.display(), u64::from(line) + 1, u64::from(column) + 1
             ));
@@ -134,7 +134,7 @@ impl DefinitionResolver {
         let parameters = json!({"textDocument": {"uri": url.as_str()}, "position": {"line": line, "character": column}});
         let result = self.request("textDocument/definition", parameters, TIMEOUT_DEFINITION);
         let result = result.with_context(|| self.process.failure_context())?;
-        if self.process.verbose {
+        if self.process.verbose_diagnostics {
             emit(format_args!("Definition lookup completed in {:.2}s.", started.elapsed().as_secs_f64()));
         }
         definition_locations(&result).with_context(|| self.process.failure_context())
@@ -170,7 +170,7 @@ impl DefinitionResolver {
                     InitializationStatus::Loading => {}
                     InitializationStatus::Ready => return Ok(()),
                     InitializationStatus::Warning(warning) => {
-                        if self.process.verbose {
+                        if self.process.verbose_diagnostics {
                             let warning = warning.split_whitespace().collect::<Vec<_>>().join(" ");
                             let warning: String = warning.chars().take(512).collect();
                             emit(format_args!("warning: Project loading: {warning}"));
@@ -196,7 +196,7 @@ impl DefinitionResolver {
     }
 
     fn receive(&mut self, deadline: Instant) -> Result<Message> {
-        let has_exited = || self.process.child.try_wait().map(|status| status.is_some());
+        let has_exited = || self.process.process.try_wait().map(|status| status.is_some());
         let mut reader = DefinitionReader::new(&mut self.output, has_exited, deadline);
         let message = reader.receive()?;
         if let Message::Request(ref request) = message {
@@ -267,11 +267,11 @@ impl<R: BufRead, F: FnMut() -> io::Result<bool>> BufRead for DefinitionReader<'_
 impl AnalyzerProcess {
     #[must_use]
     fn failure_context(&self) -> String {
-        if !self.verbose {
+        if !self.verbose_diagnostics {
             return format!("{MESSAGE_DEPENDENCY_RESOLUTION_FAILURE}. {MESSAGE_VERBOSE_DIAGNOSTICS_HINT}");
         }
         let details = (|| -> Result<String> {
-            let mut file = self.diagnostics.reopen()?;
+            let mut file = self.diagnostics_file.reopen()?;
             let length = file.metadata()?.len();
             file.seek(SeekFrom::Start(length.saturating_sub(MAXIMUM_DIAGNOSTIC_BYTES)))?;
             let mut output = Vec::new();
@@ -293,22 +293,22 @@ impl AnalyzerProcess {
 
 impl Drop for AnalyzerProcess {
     fn drop(&mut self) {
-        if !matches!(self.child.try_wait(), Ok(Some(_))) {
-            match self.child.kill() {
+        if !matches!(self.process.try_wait(), Ok(Some(_))) {
+            match self.process.kill() {
                 Ok(()) => {
-                    if let Err(error) = self.child.wait() {
+                    if let Err(error) = self.process.wait() {
                         emit(format_args!("warning: Cannot collect rust-analyzer definition lookup process: {error}"));
                     }
                 }
                 Err(error) => {
-                    if let Err(error) = reconcile_analyzer_kill_error(error, &self.child.try_wait()) {
+                    if let Err(error) = reconcile_analyzer_kill_error(error, &self.process.try_wait()) {
                         emit(format_args!("warning: Cannot stop rust-analyzer definition lookup: {error}"));
                     }
                 }
             }
         }
-        if self.verbose {
-            let output = self.diagnostics.reopen().and_then(|mut file| copy(&mut file, &mut stderr().lock()));
+        if self.verbose_diagnostics {
+            let output = self.diagnostics_file.reopen().and_then(|mut file| copy(&mut file, &mut stderr().lock()));
             if let Err(error) = output {
                 emit(format_args!("warning: Cannot display rust-analyzer definition diagnostics: {error}"));
             }
@@ -459,6 +459,7 @@ mod tests {
     use anyhow::Context as _;
     use anyhow::Result;
     use anyhow::bail;
+    use assertables::assert_contains;
     use claims::assert_ok;
     use claims::assert_some;
     use lsp_server::Message;
@@ -567,10 +568,10 @@ mod tests {
             command.env(ENV_PEER_TRANSCRIPT, fixture.transcript.path());
             let peer_spawn = command.spawn();
             let child = assert_ok!(peer_spawn, "The resolver fixture peer must start");
-            fixture.process = Some(AnalyzerProcess { child, diagnostics, verbose: false });
+            fixture.process = Some(AnalyzerProcess { process: child, diagnostics_file: diagnostics, verbose_diagnostics: false });
             let peer = fixture.process.as_mut();
             let peer = assert_some!(peer, "The fixture must own its newly spawned peer");
-            let input = peer.child.stdin.take();
+            let input = peer.process.stdin.take();
             let input = assert_some!(input, "A successfully spawned peer with piped stdin must own its input stream");
             let (process, output) = (fixture.process.take(), fixture.output.take());
             let process = assert_some!(process, "The fixture must retain its process until resolver construction");
@@ -594,7 +595,7 @@ mod tests {
             let process = self.process.as_mut();
             let process = assert_some!(process, "The fixture must retain its peer while collecting its exit status");
             let status = loop {
-                let status_query = process.child.try_wait();
+                let status_query = process.process.try_wait();
                 let status = assert_ok!(status_query, "The resolver fixture peer exit status must be collected");
                 if let Some(status) = status {
                     break status;
@@ -604,7 +605,7 @@ mod tests {
                 thread::sleep(POLL_INTERVAL_PROCESS.min(remaining));
             };
             if !status.success() {
-                let diagnostics_read = fs::read(process.diagnostics.path());
+                let diagnostics_read = fs::read(process.diagnostics_file.path());
                 let diagnostics = assert_ok!(diagnostics_read, "Diagnostics must be readable after peer failure ({status})");
                 let diagnostics = String::from_utf8_lossy(&diagnostics);
                 assert!(status.success(), "The resolver fixture peer must exit successfully ({status}):\n{diagnostics}");
@@ -651,10 +652,10 @@ mod tests {
     impl Drop for ResolverFixture {
         fn drop(&mut self) {
             if let Some(resolver) = self.resolver.as_mut() {
-                stop_peer(&mut resolver.process.child);
+                stop_peer(&mut resolver.process.process);
             }
             if let Some(process) = self.process.as_mut() {
-                stop_peer(&mut process.child);
+                stop_peer(&mut process.process);
             }
         }
     }
@@ -999,13 +1000,13 @@ mod tests {
             let error = response.response_result.as_ref().err();
             let error = assert_some!(error, "An unsupported method must receive an error response");
             assert_eq!(error.code, -32_601, "Unsupported requests must use the JSON-RPC method-not-found code");
-            assert!(error.message.contains(method), "The response must identify the unsupported method");
+            assert_contains!(error.message, method, "The response must identify the unsupported method");
         }
     }
 
     fn diagnostic_fixture(diagnostics: &[u8]) -> Result<ResolverFixture> {
         let mut fixture = ResolverFixture::new(json!({}), Vec::new());
-        fs::write(fixture.resolver_mut().process.diagnostics.path(), diagnostics)?;
+        fs::write(fixture.resolver_mut().process.diagnostics_file.path(), diagnostics)?;
         Ok(fixture)
     }
 
@@ -1016,12 +1017,16 @@ mod tests {
     #[case::trimmed(b" \r\nbackend: first\nbackend: last\t\n", "backend: first\nbackend: last")]
     #[case::unicode_whitespace("\u{2003}backend: detail\u{2003}".as_bytes(), "backend: detail")]
     #[case::invalid_utf8(b"backend: \xff detail", "backend: \u{fffd} detail")]
-    fn test_failure_context_visibility(#[case] diagnostics: &[u8], #[case] details: &str, #[values(false, true)] verbose: bool) {
+    fn test_failure_context_visibility(
+        #[case] diagnostics: &[u8],
+        #[case] details: &str,
+        #[values(false, true)] verbose_diagnostics: bool,
+    ) {
         let result = diagnostic_fixture(diagnostics);
         let mut fixture = assert_ok!(result, "The resolver diagnostic visibility fixture must be prepared");
         let system_under_test = &mut fixture.resolver_mut().process;
-        system_under_test.verbose = verbose;
-        let expected = if !verbose {
+        system_under_test.verbose_diagnostics = verbose_diagnostics;
+        let expected = if !verbose_diagnostics {
             format!("{MESSAGE_DEPENDENCY_RESOLUTION_FAILURE}. {MESSAGE_VERBOSE_DIAGNOSTICS_HINT}")
         } else if details.is_empty() {
             MESSAGE_DEFINITION_FAILURE.into()
@@ -1030,7 +1035,7 @@ mod tests {
         };
 
         let context = system_under_test.failure_context();
-        system_under_test.verbose = false;
+        system_under_test.verbose_diagnostics = false;
         fixture.finish();
 
         assert_eq!(context, expected, "Failure context must respect verbosity, trim diagnostics, and omit empty headers");
@@ -1054,10 +1059,10 @@ mod tests {
         let fixture_preparation = diagnostic_fixture(&diagnostics);
         let mut fixture = assert_ok!(fixture_preparation, "The oversized resolver diagnostic fixture must be prepared");
         let system_under_test = &mut fixture.resolver_mut().process;
-        system_under_test.verbose = true;
+        system_under_test.verbose_diagnostics = true;
 
         let context = system_under_test.failure_context();
-        system_under_test.verbose = false;
+        system_under_test.verbose_diagnostics = false;
         fixture.finish();
 
         assert_eq!(context, expected, "Only the last diagnostic bytes may be read, even across a UTF-8 boundary");
@@ -1066,25 +1071,25 @@ mod tests {
     #[rstest]
     #[cfg_attr(unix, case::replaced_capture(&Path::new("/").join("dev").join("null")))]
     #[cfg_attr(windows, case::replaced_capture(Path::new("NUL")))]
-    fn test_failure_context_unavailable_diagnostics(#[case] device: &Path, #[values(false, true)] verbose: bool) {
+    fn test_failure_context_unavailable_diagnostics(#[case] device: &Path, #[values(false, true)] verbose_diagnostics: bool) {
         let fixture_preparation = diagnostic_fixture(b"unavailable backend detail");
         let mut fixture = assert_ok!(fixture_preparation, "The resolver fixture must be ready before replacing its capture");
         let system_under_test = &mut fixture.resolver_mut().process;
         /* Windows reopens the handle, not the pathname; a device cannot supply captured regular-file metadata. */
         let device_open = File::open(device);
         let device_file = assert_ok!(device_open, "The device replacing the regular-file diagnostic capture must open");
-        *system_under_test.diagnostics.as_file_mut() = device_file;
-        let captured_metadata = system_under_test.diagnostics.reopen().and_then(|file| file.metadata());
+        *system_under_test.diagnostics_file.as_file_mut() = device_file;
+        let captured_metadata = system_under_test.diagnostics_file.reopen().and_then(|file| file.metadata());
         assert!(captured_metadata.is_err(), "The fixture must make the diagnostic capture unavailable");
-        system_under_test.verbose = verbose;
-        let expected = if verbose {
+        system_under_test.verbose_diagnostics = verbose_diagnostics;
+        let expected = if verbose_diagnostics {
             MESSAGE_DEFINITION_FAILURE.into()
         } else {
             format!("{MESSAGE_DEPENDENCY_RESOLUTION_FAILURE}. {MESSAGE_VERBOSE_DIAGNOSTICS_HINT}")
         };
 
         let context = system_under_test.failure_context();
-        system_under_test.verbose = false;
+        system_under_test.verbose_diagnostics = false;
         fixture.finish();
 
         assert_eq!(context, expected, "Unavailable extra diagnostics must not replace the original lookup failure");
@@ -1099,7 +1104,7 @@ mod tests {
         let readiness_receive = fixture.resolver_mut().receive(deadline);
         let ready = assert_ok!(readiness_receive, "The peer must send its readiness notification before the drop probe");
         assert!(matches!(ready, Message::Notification(notification) if notification.method == READY));
-        let status_query = fixture.resolver_mut().process.child.try_wait();
+        let status_query = fixture.resolver_mut().process.process.try_wait();
         let running = assert_ok!(status_query, "The live peer status must be available before the drop probe");
         assert!(running.is_none(), "The drop test must start with a live peer");
         let resolver = fixture.resolver.take();

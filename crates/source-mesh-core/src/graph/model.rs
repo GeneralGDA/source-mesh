@@ -227,6 +227,7 @@ mod tests {
     use std::path::PathBuf;
 
     use anyhow::Result;
+    use assertables::assert_not_contains;
     use claims::assert_ok;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
@@ -366,7 +367,7 @@ mod tests {
 
         assert_eq!(&expected_nodes, graph.nodes(), "Physical directory nodes differ");
         assert_eq!(&expected_edges, graph.edges(), "Physical directory dependencies differ");
-        assert!(!graph.nodes().contains(&FolderNode::new("persistence".into())), "Module name replaced physical folder");
+        assert_not_contains!(graph.nodes(), &FolderNode::new("persistence".into()), "Module name replaced physical folder");
     }
 
     #[rstest]
@@ -476,7 +477,7 @@ mod tests {
 
         assert_eq!(&folder_nodes(&[".", "v1"]), api_graph.nodes(), "API scope contains unexpected folders");
         assert_eq!(&folder_edges(&[(".", "v1", 1)], DependencyKind::Production), api_graph.edges(), "API scope edges differ");
-        assert!(!source_graph.nodes().contains(&FolderNode::new("src2".into())), "Scope included a shared-prefix sibling");
+        assert_not_contains!(source_graph.nodes(), &FolderNode::new("src2".into()), "Scope included a shared-prefix sibling");
         assert_eq!(7, source_graph.edges().len(), "Scope changed the seven dependencies internal to the source tree");
     }
 

@@ -13,6 +13,7 @@ use anyhow::Context as _;
 use anyhow::Result;
 use anyhow::ensure;
 use derive_new::new;
+use getset::CopyGetters;
 use same_file::Handle;
 
 const OUTPUT_PATH_CONFLICT: &str = "Output files must use distinct paths and must not overwrite input files";
@@ -79,8 +80,9 @@ impl InputFile {
     }
 }
 
-#[derive(new)]
+#[derive(Clone, Copy, CopyGetters, new)]
 pub(crate) struct FileOutput<'a> {
+    #[getset(get_copy = "pub(crate)")]
     path: &'a Path,
     contents: &'a [u8],
 }
@@ -88,6 +90,16 @@ pub(crate) struct FileOutput<'a> {
 struct OpenedOutput<'a> {
     output: FileOutput<'a>,
     handle: Handle,
+}
+
+impl OpenedOutput<'_> {
+    fn write(&mut self, contents: &[u8]) -> Result<()> {
+        let path = self.output.path;
+        let output = self.handle.as_file_mut();
+        output.set_len(0).with_context(|| OutputIoError::Truncate(path.to_path_buf()))?;
+        output.rewind().with_context(|| OutputIoError::Seek(path.to_path_buf()))?;
+        output.write_all(contents).with_context(|| OutputIoError::Write(path.to_path_buf()))
+    }
 }
 
 pub(crate) struct OutputFiles<'a> {
@@ -121,18 +133,20 @@ impl<'a> OutputFiles<'a> {
                 let distinct = &handle != other_handle;
                 ensure!(distinct, OutputPathConflict::new(output.path.to_path_buf(), other_path.to_path_buf()));
             }
-            files.push(OpenedOutput { output: FileOutput::new(output.path, output.contents), handle });
+            files.push(OpenedOutput { output: *output, handle });
         }
         Ok(Self { files })
     }
 
+    pub(crate) fn write_output(&mut self, output: &FileOutput<'_>) -> Result<()> {
+        let file = self.files.iter_mut().find(|file| file.output.path == output.path);
+        let file = file.with_context(|| format!("Output file was not opened and validated: {}", output.path.display()))?;
+        file.write(output.contents)
+    }
+
     pub(crate) fn write(self) -> Result<()> {
         for mut file in self.files {
-            let output = file.handle.as_file_mut();
-            output.set_len(0).with_context(|| OutputIoError::Truncate(file.output.path.to_path_buf()))?;
-            output.rewind().with_context(|| OutputIoError::Seek(file.output.path.to_path_buf()))?;
-            let write_result = output.write_all(file.output.contents);
-            write_result.with_context(|| OutputIoError::Write(file.output.path.to_path_buf()))?;
+            file.write(file.output.contents)?;
         }
         Ok(())
     }
@@ -149,11 +163,13 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
+    use assertables::assert_contains;
     use claims::assert_ok;
     use claims::assert_some;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use same_file::Handle;
+    use tempfile::TempDir;
     use tempfile::tempdir;
 
     use super::FileOutput;
@@ -163,6 +179,21 @@ mod tests {
     use super::OutputFiles;
     use super::OutputIoError;
     use super::OutputPathConflict;
+
+    fn output_paths_test_fixture() -> TempDir {
+        let directory = tempdir();
+        assert_ok!(directory, "Failed to create the output-path fixture directory")
+    }
+
+    fn write_file_test_fixture(path: &Path, contents: &[u8]) {
+        let written = fs::write(path, contents);
+        assert_ok!(written, "Failed to write fixture file {}", path.display());
+    }
+
+    fn read_file_test_fixture(path: &Path) -> Vec<u8> {
+        let contents = fs::read(path);
+        assert_ok!(contents, "Failed to read fixture file {}", path.display())
+    }
 
     #[test]
     fn test_output_path_conflict_diagnostic() {
@@ -192,11 +223,9 @@ mod tests {
     #[test]
     fn test_input_read() {
         const CONTENTS: &[u8] = b"input\0bytes";
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "The input fixture directory must be created");
+        let fixture = output_paths_test_fixture();
         let path = fixture.path().join("index.scip");
-        let written = fs::write(&path, CONTENTS);
-        assert_ok!(written, "The input fixture bytes must be written");
+        write_file_test_fixture(&path, CONTENTS);
         let system_under_test = InputFile::open(&path);
         let mut system_under_test = assert_ok!(system_under_test, "The input fixture must open for reading");
 
@@ -210,26 +239,21 @@ mod tests {
     fn test_retained_input_identity() {
         const CONTENTS_ORIGINAL: &[u8] = b"original input";
         const CONTENTS_REPLACEMENT: &[u8] = b"replacement input";
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "The input identity fixture directory must be created");
+        let fixture = output_paths_test_fixture();
         let path = fixture.path().join("index.scip");
         let renamed = fixture.path().join("renamed.scip");
-        let original_write = fs::write(&path, CONTENTS_ORIGINAL);
-        assert_ok!(original_write, "The original input bytes must be written");
+        write_file_test_fixture(&path, CONTENTS_ORIGINAL);
         let system_under_test = InputFile::open(&path);
         let mut system_under_test = assert_ok!(system_under_test, "The original input must open before renaming");
         let moved = fs::rename(&path, &renamed);
         assert_ok!(moved, "The opened input must be renamed while its handle is retained");
-        let replacement_write = fs::write(&path, CONTENTS_REPLACEMENT);
-        assert_ok!(replacement_write, "Replacement bytes must be written at the original input path");
+        write_file_test_fixture(&path, CONTENTS_REPLACEMENT);
 
         let contents = system_under_test.read();
         let contents = assert_ok!(contents, "The retained input handle must remain readable after path replacement");
         let output = OutputFiles::open(&[FileOutput::new(&renamed, b"overwrite")], &[&system_under_test]);
-        let original = fs::read(&renamed);
-        let original = assert_ok!(original, "The renamed original input must remain readable");
-        let replacement = fs::read(&path);
-        let replacement = assert_ok!(replacement, "The replacement input must remain readable");
+        let original = read_file_test_fixture(&renamed);
+        let replacement = read_file_test_fixture(&path);
 
         assert_eq!(contents, CONTENTS_ORIGINAL, "Reading reopened the input path");
         let conflict = output.is_err_and(|error| error.is::<OutputPathConflict>());
@@ -244,8 +268,7 @@ mod tests {
     #[case::missing_parent(Path::new("missing").join("index.scip"))]
     #[case::invalid(PathBuf::from("\0"))]
     fn test_input_io_errors(#[case] name: PathBuf) {
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "The input I/O failure fixture directory must be created");
+        let fixture = output_paths_test_fixture();
         let path = fixture.path().join(name);
 
         let system_under_test = InputFile::open(&path).and_then(|mut input| input.read());
@@ -258,8 +281,7 @@ mod tests {
 
     #[test]
     fn test_input_read_error() {
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "The input read failure fixture directory must be created");
+        let fixture = output_paths_test_fixture();
         let path = fixture.path().join("write-only.scip");
         let file = File::create(&path);
         let file = assert_ok!(file, "The write-only input fixture must be created");
@@ -280,15 +302,12 @@ mod tests {
     #[case::hard_link(true)]
     fn test_output_aliases(#[case] hard_link: bool) {
         const CONTENTS_EXISTING: &[u8] = b"original";
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "The output alias fixture directory must be created");
+        let fixture = output_paths_test_fixture();
         let earlier = fixture.path().join("diagram.md");
         let first = fixture.path().join("cycles.md");
         let second = if hard_link { fixture.path().join("alias.md") } else { fixture.path().join(".").join("cycles.md") };
-        let earlier_write = fs::write(&earlier, CONTENTS_EXISTING);
-        assert_ok!(earlier_write, "The earlier output fixture must be written");
-        let aliased_write = fs::write(&first, CONTENTS_EXISTING);
-        assert_ok!(aliased_write, "The aliased output fixture must be written");
+        write_file_test_fixture(&earlier, CONTENTS_EXISTING);
+        write_file_test_fixture(&first, CONTENTS_EXISTING);
         if hard_link {
             let linked = fs::hard_link(&first, &second);
             assert_ok!(linked, "The second output path must be a hard link to the first");
@@ -300,12 +319,9 @@ mod tests {
             FileOutput::new(&second, b"new alias"),
         ];
         let system_under_test = OutputFiles::open(&outputs, &[]).and_then(OutputFiles::write);
-        let earlier_contents = fs::read(&earlier);
-        let earlier_contents = assert_ok!(earlier_contents, "The earlier output must remain readable after alias rejection");
-        let first_contents = fs::read(&first);
-        let first_contents = assert_ok!(first_contents, "The first aliased output must remain readable");
-        let second_contents = fs::read(&second);
-        let second_contents = assert_ok!(second_contents, "The second aliased output must remain readable");
+        let earlier_contents = read_file_test_fixture(&earlier);
+        let first_contents = read_file_test_fixture(&first);
+        let second_contents = read_file_test_fixture(&second);
 
         let conflict = system_under_test.is_err_and(|error| error.is::<OutputPathConflict>());
         assert!(conflict, "Aliased outputs were accepted");
@@ -320,15 +336,12 @@ mod tests {
     fn test_input_overwrite(#[case] hard_link: bool) {
         const CONTENTS_INPUT: &[u8] = b"protected input";
         const CONTENTS_OUTPUT_EXISTING: &[u8] = b"existing diagram";
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "The input protection fixture directory must be created");
+        let fixture = output_paths_test_fixture();
         let input = fixture.path().join("index.scip");
         let earlier = fixture.path().join("diagram.md");
         let output = if hard_link { fixture.path().join("report.md") } else { fixture.path().join(".").join("index.scip") };
-        let input_write = fs::write(&input, CONTENTS_INPUT);
-        assert_ok!(input_write, "The protected input fixture must be written");
-        let earlier_write = fs::write(&earlier, CONTENTS_OUTPUT_EXISTING);
-        assert_ok!(earlier_write, "The earlier output fixture must be written");
+        write_file_test_fixture(&input, CONTENTS_INPUT);
+        write_file_test_fixture(&earlier, CONTENTS_OUTPUT_EXISTING);
         if hard_link {
             let linked = fs::hard_link(&input, &output);
             assert_ok!(linked, "The output path must be a hard link to the protected input");
@@ -339,10 +352,8 @@ mod tests {
 
         let outputs = [FileOutput::new(&earlier, b"new diagram"), FileOutput::new(&output, b"overwrite")];
         let system_under_test = OutputFiles::open(&outputs, &inputs).and_then(OutputFiles::write);
-        let input_contents = fs::read(&input);
-        let input_contents = assert_ok!(input_contents, "The protected input must remain readable after conflict rejection");
-        let earlier_contents = fs::read(&earlier);
-        let earlier_contents = assert_ok!(earlier_contents, "The earlier output must remain readable after conflict rejection");
+        let input_contents = read_file_test_fixture(&input);
+        let earlier_contents = read_file_test_fixture(&earlier);
 
         let conflict = system_under_test.is_err_and(|error| error.is::<OutputPathConflict>());
         assert!(conflict, "An output could overwrite a protected input");
@@ -352,8 +363,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_names_before_creation() {
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "The duplicate output name fixture directory must be created");
+        let fixture = output_paths_test_fixture();
         let earlier = fixture.path().join("diagram.md");
         let first = fixture.path().join("report.md");
         let second = fixture.path().join(".").join("report.md");
@@ -378,13 +388,11 @@ mod tests {
     #[test]
     fn test_protected_input_name_before_creation() {
         const CONTENTS: &[u8] = b"protected input";
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "The protected input name fixture directory must be created");
+        let fixture = output_paths_test_fixture();
         let input = fixture.path().join("index.scip");
         let renamed = fixture.path().join("renamed.scip");
         let earlier = fixture.path().join("diagram.md");
-        let written = fs::write(&input, CONTENTS);
-        assert_ok!(written, "The protected input fixture must be written");
+        write_file_test_fixture(&input, CONTENTS);
         let opened_input = InputFile::open(&input);
         let opened_input = assert_ok!(opened_input, "The protected input must open before its path is renamed");
         let inputs = [&opened_input];
@@ -395,8 +403,7 @@ mod tests {
         let system_under_test = OutputFiles::open(&outputs, &inputs);
         let earlier_contents = fs::read(&earlier);
         let input_contents = fs::read(&input);
-        let renamed_contents = fs::read(&renamed);
-        let renamed_contents = assert_ok!(renamed_contents, "The renamed protected input must remain readable");
+        let renamed_contents = read_file_test_fixture(&renamed);
 
         let conflict = system_under_test.is_err_and(|error| error.is::<OutputPathConflict>());
         assert!(conflict, "The lexical input name was not protected after renaming");
@@ -411,8 +418,7 @@ mod tests {
     #[case::case_variant("report.md", "REPORT.md")]
     #[case::distinct("folders.md", "files.md")]
     fn test_new_output_identity(#[case] first_name: &str, #[case] second_name: &str) {
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "The new output identity fixture directory must be created");
+        let fixture = output_paths_test_fixture();
         let first = fixture.path().join(first_name);
         let second = fixture.path().join(second_name);
 
@@ -426,10 +432,8 @@ mod tests {
         let second_file = assert_ok!(second_file, "The second output path must be readable after opening");
         let second_handle = Handle::from_file(second_file);
         let second_handle = assert_ok!(second_handle, "The second output must have a readable identity handle");
-        let first_contents = fs::read(&first);
-        let first_contents = assert_ok!(first_contents, "The first new output must remain readable");
-        let second_contents = fs::read(&second);
-        let second_contents = assert_ok!(second_contents, "The second new output must remain readable");
+        let first_contents = read_file_test_fixture(&first);
+        let second_contents = read_file_test_fixture(&second);
 
         let aliases = first_handle == second_handle;
         if aliases {
@@ -448,13 +452,11 @@ mod tests {
     #[case::file_parent(Path::new("existing.md").join("report.md"))]
     fn test_output_open_failure(#[case] name: PathBuf) {
         const CONTENTS: &[u8] = b"existing output";
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "The output opening failure fixture directory must be created");
+        let fixture = output_paths_test_fixture();
         let existing = fixture.path().join("existing.md");
         let created = fixture.path().join("created.md");
         let invalid = fixture.path().join(name);
-        let written = fs::write(&existing, CONTENTS);
-        assert_ok!(written, "The existing output fixture must be written before opening the output plan");
+        write_file_test_fixture(&existing, CONTENTS);
 
         let outputs = [
             FileOutput::new(&existing, b"overwrite"),
@@ -462,10 +464,8 @@ mod tests {
             FileOutput::new(&invalid, b"invalid output"),
         ];
         let system_under_test = OutputFiles::open(&outputs, &[]);
-        let existing_contents = fs::read(&existing);
-        let existing_contents = assert_ok!(existing_contents, "The existing output must remain readable after opening fails");
-        let created_contents = fs::read(&created);
-        let created_contents = assert_ok!(created_contents, "The newly created output must remain after opening fails");
+        let existing_contents = read_file_test_fixture(&existing);
+        let created_contents = read_file_test_fixture(&created);
 
         let error = assert_some!(system_under_test.err(), "Opening the invalid output must fail");
         let output_error = error.downcast_ref::<OutputIoError>();
@@ -490,92 +490,91 @@ mod tests {
     #[rstest]
     #[case::replacement(b"new")]
     #[case::empty(b"")]
-    fn test_output_writes(#[case] contents: &[u8], #[values(false, true)] existing: bool) {
+    fn test_output_writes(#[case] contents: &[u8], #[values(false, true)] existing: bool, #[values(false, true)] selected: bool) {
         const CONTENTS_ORIGINAL: &[u8] = b"old contents longer than the replacement";
         const CONTENTS_SECOND: &[u8] = b"second output";
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "The output writing fixture directory must be created");
+        let fixture = output_paths_test_fixture();
         let first = fixture.path().join("first.md");
         let second = fixture.path().join("second.md");
         if existing {
-            let first_write = fs::write(&first, CONTENTS_ORIGINAL);
-            assert_ok!(first_write, "The first existing output fixture must be written");
-            let second_write = fs::write(&second, CONTENTS_ORIGINAL);
-            assert_ok!(second_write, "The second existing output fixture must be written");
+            write_file_test_fixture(&first, CONTENTS_ORIGINAL);
+            write_file_test_fixture(&second, CONTENTS_ORIGINAL);
         }
 
-        let outputs = [FileOutput::new(&first, contents), FileOutput::new(&second, CONTENTS_SECOND)];
+        let initial_contents = if selected { b"reserved" } else { contents };
+        let outputs = [FileOutput::new(&first, initial_contents), FileOutput::new(&second, CONTENTS_SECOND)];
         let system_under_test = OutputFiles::open(&outputs, &[]);
-        let mut system_under_test = assert_ok!(system_under_test, "Distinct output paths must open without truncation");
-        let first_before = fs::read(&first);
-        let first_before = assert_ok!(first_before, "The first output must be readable before writing");
-        let second_before = fs::read(&second);
-        let second_before = assert_ok!(second_before, "The second output must be readable before writing");
+        let mut system_under_test = assert_ok!(system_under_test, "Opening distinct output paths failed");
+        let first_before = read_file_test_fixture(&first);
+        let second_before = read_file_test_fixture(&second);
         for file in &mut system_under_test.files {
             let position = file.handle.as_file_mut().seek(SeekFrom::End(0));
-            assert_ok!(position, "The output handle must seek to its end before testing rewind and truncation");
+            assert_ok!(position, "Failed to move an output handle to EOF for the write test");
         }
-        let plan_write = system_under_test.write();
-        assert_ok!(plan_write, "The output plan must write through its retained handles");
-        let first_after = fs::read(&first);
-        let first_after = assert_ok!(first_after, "The first output must be readable after writing");
-        let second_after = fs::read(&second);
-        let second_after = assert_ok!(second_after, "The second output must be readable after writing");
+        if selected {
+            let first_write = system_under_test.write_output(&FileOutput::new(&first, contents));
+            assert_ok!(first_write, "Writing the selected output failed");
+            let second_reserved = read_file_test_fixture(&second);
+            assert_eq!(second_reserved, second_before, "Writing the first output changed the second reserved output");
+            let second_write = system_under_test.write_output(&FileOutput::new(&second, CONTENTS_SECOND));
+            assert_ok!(second_write, "Writing the second reserved output failed");
+        } else {
+            let plan_write = system_under_test.write();
+            assert_ok!(plan_write, "Writing the opened output plan failed");
+        }
+        let first_after = read_file_test_fixture(&first);
+        let second_after = read_file_test_fixture(&second);
 
         let before = if existing { CONTENTS_ORIGINAL } else { b"" };
-        assert_eq!(first_before, before, "Opening truncated an output");
-        assert_eq!(second_before, before, "Opening truncated an output");
-        assert_eq!(first_after, contents, "Writing must truncate and seek to the start");
-        assert_eq!(second_after, CONTENTS_SECOND, "The second output must receive its planned contents");
+        assert_eq!(first_before, before, "Opening changed the first output's contents");
+        assert_eq!(second_before, before, "Opening changed the second output's contents");
+        assert_eq!(first_after, contents, "The first output contains incorrect bytes after writing");
+        assert_eq!(second_after, CONTENTS_SECOND, "The second output differs from its planned contents");
     }
 
     #[rstest]
-    fn test_output_path_replacement(#[values(false, true)] existing: bool) {
+    fn test_output_path_replacement(#[values(false, true)] existing: bool, #[values(false, true)] selected: bool) {
         const CONTENTS_INPUT: &[u8] = b"protected input";
         const CONTENTS_OUTPUT: &[u8] = b"new report";
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "The output path replacement fixture directory must be created");
+        let fixture = output_paths_test_fixture();
         let input = fixture.path().join("index.scip");
         let output = fixture.path().join("report.md");
         let renamed = fixture.path().join("renamed.md");
-        let input_write = fs::write(&input, CONTENTS_INPUT);
-        assert_ok!(input_write, "The protected input fixture must be written");
+        write_file_test_fixture(&input, CONTENTS_INPUT);
         if existing {
-            let existing_write = fs::write(&output, b"original report contents");
-            assert_ok!(existing_write, "The existing output fixture must be written before path replacement");
+            write_file_test_fixture(&output, b"original report contents");
         }
         let opened_input = InputFile::open(&input);
-        let opened_input = assert_ok!(opened_input, "The protected input must open before the output plan");
+        let opened_input = assert_ok!(opened_input, "Failed to open the protected input fixture");
         let inputs = [&opened_input];
         let system_under_test = OutputFiles::open(&[FileOutput::new(&output, CONTENTS_OUTPUT)], &inputs);
-        let system_under_test = assert_ok!(system_under_test, "The distinct output must open before path replacement");
+        let mut system_under_test = assert_ok!(system_under_test, "Failed to open the output before replacing its path");
 
         let moved = fs::rename(&output, &renamed);
-        assert_ok!(moved, "The opened output must be renamed while its handle is retained");
+        assert_ok!(moved, "Failed to rename the output while its handle was open");
         let linked = fs::hard_link(&input, &output);
-        assert_ok!(linked, "The output path must be replaced with a hard link to the protected input");
-        let output_write = system_under_test.write();
-        assert_ok!(output_write, "Writing must use the retained output handle after path replacement");
-        let input_contents = fs::read(&input);
-        let input_contents = assert_ok!(input_contents, "The protected input must remain readable after writing");
-        let output_contents = fs::read(&output);
-        let output_contents = assert_ok!(output_contents, "The replacement output path must remain readable");
-        let renamed_contents = fs::read(&renamed);
-        let renamed_contents = assert_ok!(renamed_contents, "The renamed output must remain readable after writing");
+        assert_ok!(linked, "Failed to replace the output path with a hard link to the input");
+        let output_write = if selected {
+            system_under_test.write_output(&FileOutput::new(&output, CONTENTS_OUTPUT))
+        } else {
+            system_under_test.write()
+        };
+        assert_ok!(output_write, "Writing the retained output failed after replacing its path");
+        let input_contents = read_file_test_fixture(&input);
+        let output_contents = read_file_test_fixture(&output);
+        let renamed_contents = read_file_test_fixture(&renamed);
 
-        assert_eq!(input_contents, CONTENTS_INPUT, "Writing followed a replacement path into the protected input");
-        assert_eq!(output_contents, CONTENTS_INPUT, "Writing must not modify the replacement hard link to the input");
-        assert_eq!(renamed_contents, CONTENTS_OUTPUT, "Writing did not target the original opened output");
+        assert_eq!(input_contents, CONTENTS_INPUT, "Writing modified the protected input's contents");
+        assert_eq!(output_contents, CONTENTS_INPUT, "Replacement hard link contents changed after writing");
+        assert_eq!(renamed_contents, CONTENTS_OUTPUT, "The renamed output differs from the requested contents");
     }
 
     #[test]
     fn test_output_truncation_failure() {
         const CONTENTS: &[u8] = b"read-only handle";
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "The output truncation failure fixture directory must be created");
+        let fixture = output_paths_test_fixture();
         let path = fixture.path().join("report.md");
-        let written = fs::write(&path, CONTENTS);
-        assert_ok!(written, "The output fixture must be written before opening a read-only handle");
+        write_file_test_fixture(&path, CONTENTS);
         let file = File::open(&path);
         let file = assert_ok!(file, "The output fixture must open read-only");
         let handle = Handle::from_file(file);
@@ -585,8 +584,7 @@ mod tests {
         };
 
         let result = system_under_test.write();
-        let contents = fs::read(&path);
-        let contents = assert_ok!(contents, "The output fixture must remain readable after truncation fails");
+        let contents = read_file_test_fixture(&path);
 
         let error = assert_some!(result.err(), "A read-only output handle must fail during truncation");
         let output_error = error.downcast_ref::<OutputIoError>();
@@ -595,6 +593,35 @@ mod tests {
         assert!(truncates_path, "Truncation must fail on the retained read-only output handle: {error:#}");
         assert!(error.downcast_ref::<Error>().is_some(), "Truncation failures must retain their I/O error: {error:#}");
         assert_eq!(contents, CONTENTS, "A failed handle truncation must preserve the output contents");
+    }
+
+    #[rstest]
+    fn test_unplanned_output_write(#[values(false, true)] existing: bool) {
+        const CONTENTS_EXISTING: &[u8] = b"existing unplanned output";
+        let fixture = output_paths_test_fixture();
+        let planned = fixture.path().join("planned.md");
+        let unplanned = fixture.path().join("unplanned.md");
+        if existing {
+            write_file_test_fixture(&unplanned, CONTENTS_EXISTING);
+        }
+        let opened = OutputFiles::open(&[FileOutput::new(&planned, b"planned")], &[]);
+        let mut system_under_test = assert_ok!(opened, "Failed to reserve the planned output");
+
+        let result = system_under_test.write_output(&FileOutput::new(&unplanned, b"unvalidated"));
+        let planned_contents = read_file_test_fixture(&planned);
+        let unplanned_contents = fs::read(&unplanned);
+
+        let error = assert_some!(result.err(), "Writing an unplanned output must return an error");
+        let unplanned_path = unplanned.display().to_string();
+        assert_contains!(error.to_string(), &unplanned_path, "The error must identify the unopened output path: {error:#}");
+        assert!(planned_contents.is_empty(), "An unplanned write changed the reserved output");
+        if existing {
+            let contents = assert_ok!(unplanned_contents, "The unplanned output must remain readable after rejection");
+            assert_eq!(contents, CONTENTS_EXISTING, "Rejecting an unplanned output must preserve its contents");
+        } else {
+            let missing = unplanned_contents.is_err_and(|error| error.kind() == ErrorKind::NotFound);
+            assert!(missing, "Rejecting an unplanned output must not create it");
+        }
     }
 
     #[test]

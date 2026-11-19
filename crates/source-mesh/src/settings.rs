@@ -173,13 +173,13 @@ struct CycleSettings {
         help = "Exit unsuccessfully after writing outputs if file or folder dependency cycles are found")]
     fail_on_cycles: Option<bool>,
     #[arg(long,
-        help = "Write every simple folder cycle to a Markdown report")]
+        help = "Write folder cycle chains to a Markdown report")]
     cycles_output: Option<SettingsPath>,
     #[arg(long,
         help = "Write file cycles before folder folding to a separate Markdown report")]
     file_cycles_output: Option<SettingsPath>,
     #[arg(long,
-        help = format!("Maximum cycles per report (default: {DEFAULT_CYCLE_LIMIT}); fail without output if exceeded"))]
+        help = format!("Maximum listed cycles per report (default: {DEFAULT_CYCLE_LIMIT})"))]
     cycle_limit: Option<NonZeroUsize>,
 }
 
@@ -365,6 +365,7 @@ mod tests {
     use anyhow::Context as _;
     use anyhow::Error;
     use anyhow::Result;
+    use assertables::assert_contains;
     use claims::assert_ok;
     use claims::assert_some;
     use clap::ArgMatches;
@@ -498,7 +499,7 @@ verbose = true
         let diagnostic = error.to_string();
         let path = expected_path.display().to_string();
         assert_eq!(cause.kind(), io::ErrorKind::NotFound, "Missing-file errors must retain their I/O kind");
-        assert!(diagnostic.contains(&path), "Missing-file errors must identify {path}: {diagnostic}");
+        assert_contains!(diagnostic, &path, "Missing-file errors must identify {path}: {diagnostic}");
     }
 
     #[test]
@@ -904,7 +905,7 @@ verbose = {configured}
         let file_name = fixture.settings_path.display().to_string();
 
         assert!(cause.is_none(), "Validation failed for an unrelated filesystem reason: {error:#}");
-        assert!(diagnostic.contains(&file_name), "Settings errors must identify their file: {diagnostic}");
+        assert_contains!(diagnostic, &file_name, "Settings errors must identify their file: {diagnostic}");
     }
 
     #[rstest]
@@ -924,7 +925,7 @@ verbose = {configured}
         let error = assert_some!(system_under_test, "An override must not conceal an invalid lower-priority value");
         let diagnostic = error.to_string();
 
-        assert!(diagnostic.contains("Cannot parse settings"), "Unexpected loading failure: {error:#}");
+        assert_contains!(diagnostic, "Cannot parse settings", "Unexpected loading failure: {error:#}");
     }
 
     #[test]
@@ -1174,7 +1175,7 @@ verbose = {configured}
         let error = assert_some!(system_under_test, "Malformed or unreadable settings must not be treated as absent");
         let diagnostic = error.to_string();
 
-        assert!(diagnostic.contains(SETTINGS_FILE_NAME), "Settings errors must identify the failing file: {diagnostic}");
+        assert_contains!(diagnostic, SETTINGS_FILE_NAME, "Settings errors must identify the failing file: {diagnostic}");
         if contents.is_none() {
             let cause = error.downcast_ref::<io::Error>();
             let cause = assert_some!(cause, "Unreadable settings must retain their I/O cause");
@@ -1210,7 +1211,7 @@ verbose = {configured}
             let error = system_under_test.err();
             let error = assert_some!(error, "An outgoing mode or report without a merged threshold must fail");
             let diagnostic = error.to_string();
-            assert!(diagnostic.contains("--max-outgoing-dependencies"), "Unexpected validation failure: {diagnostic}");
+            assert_contains!(diagnostic, "--max-outgoing-dependencies", "Unexpected validation failure: {diagnostic}");
         }
     }
 
@@ -1278,7 +1279,7 @@ verbose = {configured}
             let error = system_under_test.err();
             let error = assert_some!(error, "Merged replay options must reject {conflict}");
             let diagnostic = error.to_string();
-            assert!(diagnostic.contains(conflict), "Replay failed for an unexpected reason: {diagnostic}");
+            assert_contains!(diagnostic, conflict, "Replay failed for an unexpected reason: {diagnostic}");
         } else {
             assert_ok!(system_under_test, "Saved-index replay settings must load without a project manifest or source files");
         }

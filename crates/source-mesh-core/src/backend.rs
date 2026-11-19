@@ -457,18 +457,23 @@ mod tests {
         let project = fixture.join("generated-methods");
         let source_directory = Path::new("src");
         let client_path_result = SourcePath::new(source_directory.join("client.rs"));
-        let client_path = assert_ok!(client_path_result, "The generated-method caller must have a valid source path");
+        let client_path = assert_ok!(client_path_result, "Failed to create the generated-method caller source path");
         let client = FileNode::new(client_path);
         let factory_path_result = SourcePath::new(source_directory.join("factory.rs"));
-        let factory_path = assert_ok!(factory_path_result, "The generated-method factory must have a valid source path");
+        let factory_path = assert_ok!(factory_path_result, "Failed to create the generated-method factory source path");
         let factory = FileNode::new(factory_path);
         let model_path_result = SourcePath::new(source_directory.join("model.rs"));
-        let model_path = assert_ok!(model_path_result, "The generated-method model must have a valid source path");
+        let model_path = assert_ok!(model_path_result, "Failed to create the generated-method model source path");
         let model = FileNode::new(model_path);
         let validation_path_result = SourcePath::new(source_directory.join("validation.rs"));
-        let validation_path = assert_ok!(validation_path_result, "The generated-method test caller path must be valid");
+        let validation_path = assert_ok!(validation_path_result, "Failed to create the generated-method test caller path");
         let validation = FileNode::new(validation_path);
+        let comparison_path_result = SourcePath::new(source_directory.join("comparison.rs"));
+        let comparison_path = assert_ok!(comparison_path_result, "Failed to create the generated comparison caller path");
+        let comparison = FileNode::new(comparison_path);
         let expected = BTreeSet::from([
+            FileEdge::new(comparison.clone(), factory.clone(), DependencyKind::Production),
+            FileEdge::new(comparison, model.clone(), DependencyKind::Production),
             FileEdge::new(client.clone(), factory.clone(), DependencyKind::Production),
             FileEdge::new(client, model.clone(), DependencyKind::Production),
             FileEdge::new(factory.clone(), model.clone(), DependencyKind::Production),
@@ -478,14 +483,14 @@ mod tests {
         let system_under_test = RustAnalyzer::new(&project, None, &options);
 
         let index_generation = system_under_test.index_parsed();
-        let index = assert_ok!(index_generation, "rust-analyzer must index the generated-method fixture");
+        let index = assert_ok!(index_generation, "Failed to index the generated-method fixture with rust-analyzer");
         let graph_build = file_graph(&index);
-        let graph = assert_ok!(graph_build, "The generated-method index must produce a file dependency graph");
+        let graph = assert_ok!(graph_build, "Failed to build the generated-method file dependency graph");
 
         assert_eq!(
             graph.edges(),
             &expected,
-            "Calls to generated accessors must retain their defining file and test classification"
+            "Generated-call and comparison dependency edges differ from the expected set"
         );
     }
 

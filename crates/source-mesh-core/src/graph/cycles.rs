@@ -39,6 +39,14 @@ pub struct Cycle<Node> {
     group: CycleGroupId,
 }
 
+#[derive(Getters, CopyGetters)]
+pub(super) struct BoundedCycles<Node> {
+    #[getset(get = "pub(super)")]
+    cycles: Vec<Cycle<Node>>,
+    #[getset(get_copy = "pub(super)")]
+    truncated: bool,
+}
+
 struct CyclicComponent {
     group: CycleGroupId,
     nodes: BTreeSet<NodeIndex>,
@@ -122,8 +130,16 @@ impl<Node: Clone + Ord> CycleAnalysis<Node> {
     }
 
     pub fn cycles(&self, limit: NonZeroUsize) -> Result<Vec<Cycle<Node>>> {
+        let listing = self.bounded_cycles(limit);
+        ensure!(!listing.truncated(), "Cycle count exceeds {limit}; raise the limit to list all cycles");
+        Ok(listing.cycles)
+    }
+
+    #[must_use]
+    pub(super) fn bounded_cycles(&self, limit: NonZeroUsize) -> BoundedCycles<Node> {
         let mut cycles = Vec::new();
-        for component in &self.components {
+        let mut truncated = false;
+        'enumeration: for component in &self.components {
             for &minimum_cycle_node in &component.nodes {
                 let cycle_subgraph = EdgeFiltered::from_fn(&self.topology, |edge| {
                     let endpoints = [edge.source(), edge.target()];
@@ -143,7 +159,10 @@ impl<Node: Clone + Ord> CycleAnalysis<Node> {
                         Box::new(paths)
                     };
                     for path in paths {
-                        ensure!(cycles.len() < limit.get(), "Cycle count exceeds {limit}; raise the limit to list all cycles");
+                        if cycles.len() == limit.get() {
+                            truncated = true;
+                            break 'enumeration;
+                        }
                         let path_nodes = iter::once(minimum_cycle_node).chain(path);
                         let nodes = path_nodes.map(|node| self.topology[node].clone()).collect();
                         cycles.push(Cycle { nodes, group: component.group });
@@ -152,7 +171,7 @@ impl<Node: Clone + Ord> CycleAnalysis<Node> {
             }
         }
         cycles.sort_by(|left, right| (left.group, &left.nodes).cmp(&(right.group, &right.nodes)));
-        Ok(cycles)
+        BoundedCycles { cycles, truncated }
     }
 }
 
@@ -184,7 +203,7 @@ mod tests {
 
     use anyhow::Result;
     use claims::assert_ok;
-    use claims::assert_some;
+    use nonzero_ext::nonzero;
     use petgraph::visit::EdgeRef as _;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
@@ -293,9 +312,7 @@ mod tests {
         let system_under_test = assert_ok!(system_under_test, "Folder cycle analysis must succeed");
         let expected: Vec<_> = expected_paths.into_iter().map(|labels| folder_path(&labels)).collect();
 
-        let limit = NonZeroUsize::new(10);
-        let limit = assert_some!(limit, "Cycle-route enumeration limit must be nonzero");
-        let cycles = system_under_test.cycles(limit);
+        let cycles = system_under_test.cycles(nonzero!(10_usize));
         let cycles = assert_ok!(cycles, "All fixture cycles must fit within the enumeration limit");
         let paths: Vec<_> = cycles.into_iter().map(|cycle| cycle.nodes).collect();
 
@@ -330,8 +347,6 @@ mod tests {
         if sort_dependencies {
             dependencies.sort_unstable();
         }
-        let limit = NonZeroUsize::new(4);
-        let limit = assert_some!(limit, "Topology deduplication fixture must have a nonzero cycle limit");
 
         let system_under_test = CycleAnalysis::new(&nodes, dependencies.iter());
         let system_under_test = assert_ok!(system_under_test, "Repeated typed edges must support cycle analysis");
@@ -358,7 +373,7 @@ mod tests {
         ], "Topology deduplication must retain every typed group entry, including acyclic edges");
         assert_eq!(system_under_test.group_count(), 2, "Independent cyclic components must retain separate group IDs");
 
-        let cycles = system_under_test.cycles(limit);
+        let cycles = system_under_test.cycles(nonzero!(4_usize));
         let cycles = assert_ok!(cycles, "Four distinct cycles must fit the limit despite repeated typed edges");
         let routes: Vec<_> = cycles.into_iter().map(|cycle| (cycle.group().number().get(), cycle.nodes)).collect();
 
@@ -423,9 +438,7 @@ mod tests {
         let system_under_test = assert_ok!(system_under_test, "Independent cycle-group analysis must succeed");
         let expected = [folder_path(&["alpha", "beta", "alpha"]), folder_path(&["gamma", "omega", "gamma"])];
 
-        let limit = NonZeroUsize::new(2);
-        let limit = assert_some!(limit, "Two-cycle enumeration limit must be nonzero");
-        let cycles = system_under_test.cycles(limit);
+        let cycles = system_under_test.cycles(nonzero!(2_usize));
         let cycles = assert_ok!(cycles, "Both independent cycles must fit within the limit");
         let groups: Vec<_> = cycles.iter().map(|cycle| cycle.group().number().get()).collect();
         let paths: Vec<_> = cycles.into_iter().map(|cycle| cycle.nodes).collect();
@@ -435,10 +448,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case(1, true)]
-    #[case(2, false)]
-    #[case(3, false)]
-    fn test_cycle_enumeration_limit(#[case] limit: usize, #[case] exceeds_limit: bool) {
+    #[case(nonzero!(1_usize), true)]
+    #[case(nonzero!(2_usize), false)]
+    #[case(nonzero!(3_usize), false)]
+    fn test_cycle_enumeration_limit(#[case] limit: NonZeroUsize, #[case] exceeds_limit: bool) {
         let fixture = folder_fixture(&[
             ("alpha", "beta", Production),
             ("beta", "alpha", Production),
@@ -449,8 +462,6 @@ mod tests {
         let system_under_test = analyze_folders(&fixture);
         let system_under_test = assert_ok!(system_under_test, "Overlapping-cycle analysis must succeed");
 
-        let limit = NonZeroUsize::new(limit);
-        let limit = assert_some!(limit, "Parameterized cycle limit must be nonzero");
         let result = system_under_test.cycles(limit);
 
         assert_eq!(1, system_under_test.group_count(), "Overlapping cycles have separate groups");
@@ -460,6 +471,67 @@ mod tests {
             let cycles = assert_ok!(result, "Both overlapping cycles must fit within limit {limit}");
             assert_eq!(2, cycles.len(), "Enumeration did not retain every cycle within the limit");
         }
+    }
+
+    #[rstest]
+    #[case::within_group(nonzero!(1_usize), true, false)]
+    #[case::group_boundary(nonzero!(2_usize), true, false)]
+    #[case::later_group(nonzero!(3_usize), true, false)]
+    #[case::reversed_dependencies(nonzero!(3_usize), true, true)]
+    #[case::exact_limit(nonzero!(4_usize), false, false)]
+    #[case::below_limit(nonzero!(5_usize), false, false)]
+    fn test_bounded_cycle_listing(#[case] limit: NonZeroUsize, #[case] truncated: bool, #[case] reverse_dependencies: bool) {
+        const NODE_CYCLE_FIRST: &str = "alpha";
+        const NODE_CYCLE_SHARED: &str = "beta";
+        const NODE_CYCLE_SECOND: &str = "gamma";
+        const NODE_SELF_LOOP_FIRST: &str = "omega";
+        const NODE_SELF_LOOP_SECOND: &str = "zeta";
+
+        let nodes = BTreeSet::from([
+            NODE_CYCLE_FIRST, NODE_CYCLE_SHARED, NODE_CYCLE_SECOND, NODE_SELF_LOOP_FIRST, NODE_SELF_LOOP_SECOND,
+        ]);
+        let mut dependencies: Vec<_> = [
+            (NODE_SELF_LOOP_SECOND, NODE_SELF_LOOP_SECOND, Test),
+            (NODE_CYCLE_SHARED, NODE_CYCLE_SECOND, Production),
+            (NODE_CYCLE_FIRST, NODE_CYCLE_SHARED, Test),
+            (NODE_SELF_LOOP_FIRST, NODE_SELF_LOOP_FIRST, Production),
+            (NODE_CYCLE_SECOND, NODE_CYCLE_SHARED, Production),
+            (NODE_CYCLE_SHARED, NODE_CYCLE_FIRST, Production),
+            (NODE_CYCLE_FIRST, NODE_CYCLE_SHARED, Production),
+            (NODE_SELF_LOOP_SECOND, NODE_SELF_LOOP_SECOND, Production),
+        ].into_iter().map(|(source, target, kind)| Edge::new(source, target, kind)).collect();
+        if reverse_dependencies {
+            dependencies.reverse();
+        }
+        let system_under_test = CycleAnalysis::new(&nodes, dependencies.iter());
+        let system_under_test = assert_ok!(system_under_test, "Cycle analysis failed for the three-component fixture");
+        let expected: Vec<_> = [
+            (1, vec![NODE_CYCLE_FIRST, NODE_CYCLE_SHARED, NODE_CYCLE_FIRST]),
+            (1, vec![NODE_CYCLE_SHARED, NODE_CYCLE_SECOND, NODE_CYCLE_SHARED]),
+            (2, vec![NODE_SELF_LOOP_FIRST, NODE_SELF_LOOP_FIRST]),
+            (3, vec![NODE_SELF_LOOP_SECOND, NODE_SELF_LOOP_SECOND]),
+        ].into_iter().take(limit.get()).collect();
+
+        let listing = system_under_test.bounded_cycles(limit);
+        let routes: Vec<_> = listing.cycles.into_iter().map(|cycle| (cycle.group().number().get(), cycle.nodes)).collect();
+
+        assert_eq!(routes, expected, "Bounded listing differed from the expected groups and chains");
+        assert_eq!(listing.truncated, truncated, "Bounded listing truncation flag differed from the expected value");
+        assert_eq!(system_under_test.group_count(), 3, "Cyclic component count differed from the expected total");
+    }
+
+    #[rstest]
+    #[case::empty(&[])]
+    #[case::acyclic(&[("alpha", "beta", Production), ("beta", "gamma", Production)])]
+    fn test_bounded_cycle_listing_without_cycles(#[case] dependencies: &[(&str, &str, DependencyKind)]) {
+        let system_under_test = folder_fixture(dependencies).and_then(|graph| analyze_folders(&graph));
+        let system_under_test = assert_ok!(system_under_test, "Building and analyzing the acyclic fixture failed");
+
+        let listing = system_under_test.bounded_cycles(NonZeroUsize::MIN);
+
+        assert!(listing.cycles().is_empty(), "Bounded enumeration returned cycles for an acyclic graph");
+        assert!(!listing.truncated(), "Empty cycle listing was marked truncated");
+        assert_eq!(system_under_test.group_count(), 0, "Cycle analysis reported cyclic components for an acyclic graph");
     }
 
     #[test]

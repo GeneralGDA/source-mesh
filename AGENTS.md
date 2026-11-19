@@ -134,6 +134,9 @@
   `pretty_assertions::assert_eq!` where a diff helps diagnosis. Do not use `anyhow::ensure!` for expectations.
 - Cohesive fallible fixture helpers may return `Result`; assert their outcome at the test boundary. Helpers that perform
   test assertions must not return `Result`. Do not move a test body into a fallible closure or wrapper just to preserve `?`.
+- Verify test-support behavior in explicit tests where the helper, fixture, or test double is the system under test.
+  Do not add ad-hoc correctness checks for that code to tests that merely use it. Keep assertions for fallible setup
+  operations; reporting a setup failure is distinct from testing the helper's behavior.
 - Assert observable behavior and semantic error categories, not cosmetic diagnostic wording. Use typed causes or controlled
   fixtures to distinguish the intended failure from setup or transport errors. Check paths, option names, or other diagnostic
   context only when their presence is part of the contract; capture the actual output when testing diagnostic emission.

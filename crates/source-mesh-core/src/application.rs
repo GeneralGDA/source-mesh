@@ -7,6 +7,7 @@ use anyhow::Result;
 use anyhow::ensure;
 use bon::Builder;
 use derive_new::new;
+use nonzero_ext::nonzero;
 use protobuf::Message as _;
 use tempfile::NamedTempFile;
 
@@ -17,10 +18,12 @@ use crate::cycle_report::file_report;
 use crate::cycle_report::folder_report;
 use crate::cycles::analyze_files;
 use crate::cycles::analyze_folders;
+use crate::diagnostics::emit;
 use crate::export::Format;
 use crate::export::Options as ExportOptions;
 use crate::outgoing_dependencies::Analysis as OutgoingDependencyAnalysis;
 use crate::outgoing_dependencies::Mode as OutgoingDependencyMode;
+use crate::model::FileGraph;
 use crate::output_paths::FileOutput;
 use crate::output_paths::InputFile;
 use crate::output_paths::OutputFiles;
@@ -29,10 +32,7 @@ use crate::scip::index::ParsedIndex;
 
 const NO_FILES_AFTER_FILTERING: &str = "No indexed Rust files remain after applying root and file filters";
 
-pub const DEFAULT_CYCLE_LIMIT: NonZeroUsize = match NonZeroUsize::new(10_000) {
-    Some(limit) => limit,
-    None => unreachable!(),
-};
+pub const DEFAULT_CYCLE_LIMIT: NonZeroUsize = nonzero!(10_000_usize);
 
 #[derive(new)]
 pub struct Project {
@@ -136,24 +136,72 @@ pub fn run(request: &Request, diagram_output: &mut dyn Write) -> Result<()> {
     let (file_graph, saved_index, replay_input) = match request.input {
         PreparedInput::ScipFile { ref index, ref protected_input } => (file_graph(index)?, None, Some(protected_input)),
         PreparedInput::Project(ref project) => {
-            let configuration = project.rust_analyzer_configuration.as_deref().map(|path| -> Result<_> {
+            let configuration = if let Some(path) = project.rust_analyzer_configuration.as_deref() {
                 let mut input = InputFile::open(path)?;
-                let mut snapshot = NamedTempFile::new().context("Cannot create analysis configuration snapshot")?;
-                snapshot.write_all(&input.read()?).context("Cannot write analysis configuration snapshot")?;
+                let snapshot = snapshot_analyzer_configuration(&mut input)?;
                 retained_inputs.push(input);
-                Ok(snapshot)
-            });
-            let configuration = configuration.transpose()?;
+                Some(snapshot)
+            } else {
+                None
+            };
             let configuration_path = configuration.as_ref().map(NamedTempFile::path);
             let index = RustAnalyzer::new(&project.path, configuration_path, &request.analyzer).index_parsed()?;
             let graph = file_graph(&index)?;
-            let saved_index = request.save_scip.as_ref().map(|path| {
-                let serialized = index.into_index().write_to_bytes().context("Cannot serialize dependency analysis");
-                serialized.map(|bytes| (path, bytes))
-            }).transpose()?;
+            let saved_index = if let Some(path) = request.save_scip.as_deref() {
+                let bytes = index.into_index().write_to_bytes().context("Cannot serialize dependency analysis")?;
+                Some((path, bytes))
+            } else {
+                None
+            };
             (graph, saved_index, None)
         }
     };
+    let protected_inputs: Vec<_> = retained_inputs.iter().chain(&request.protected_inputs).chain(replay_input).collect();
+    let saved_index_output = saved_index.as_ref().map(|&(path, ref bytes)| FileOutput::new(path, bytes));
+    let outputs = write_analysis_outputs().request(request).file_graph(file_graph).protected_inputs(&protected_inputs);
+    outputs.maybe_saved_index(saved_index_output).diagram_output(diagram_output).call()
+}
+
+fn snapshot_analyzer_configuration(input: &mut InputFile) -> Result<NamedTempFile> {
+    let mut snapshot = NamedTempFile::new().context("Cannot create analysis configuration snapshot")?;
+    let bytes = input.read()?;
+    snapshot.write_all(&bytes).context("Cannot write analysis configuration snapshot")?;
+    Ok(snapshot)
+}
+
+enum IndexCheckpoint<'a> {
+    NotRequested,
+    Saved { output_files: OutputFiles<'a> },
+}
+
+fn open_outputs_and_save_index<'a>(
+    request: &'a Request, index_save_file: Option<FileOutput<'a>>, protected_inputs: &[&InputFile],
+) -> Result<IndexCheckpoint<'a>> {
+    let Some(index_save_file) = index_save_file else { return Ok(IndexCheckpoint::NotRequested); };
+    let outgoing_report = request.outgoing_dependencies.as_ref().and_then(|options| options.output.as_deref());
+    let empty_output = |path| FileOutput::new(path, &[]);
+    let outputs = velcro::vec![
+        index_save_file,
+        ..request.cycles.cycles_output.as_deref().map(empty_output),
+        ..request.cycles.file_cycles_output.as_deref().map(empty_output),
+        ..outgoing_report.map(empty_output),
+        ..request.output.as_deref().map(empty_output),
+    ];
+    let mut prepared = OutputFiles::open(&outputs, protected_inputs)?;
+    prepared.write_output(&index_save_file)?;
+    emit(format_args!("Dependency analysis saved to {}", index_save_file.path().display()));
+    Ok(IndexCheckpoint::Saved { output_files: prepared })
+}
+
+#[bon::builder]
+fn write_analysis_outputs(
+    request: &Request,
+    file_graph: FileGraph,
+    saved_index: Option<FileOutput<'_>>,
+    protected_inputs: &[&InputFile],
+    diagram_output: &mut dyn Write,
+) -> Result<()> {
+    let mut checkpoint = open_outputs_and_save_index(request, saved_index, protected_inputs)?;
     let file_graph = if request.exclude_tests { file_graph.without_test_dependencies() } else { file_graph };
     let file_graph = file_graph.within_root(&request.root)?.excluding(&request.exclusions);
     let folder_graph = file_graph.folders(&request.root, request.depth, request.include_self)?;
@@ -162,10 +210,11 @@ pub fn run(request: &Request, diagram_output: &mut dyn Write) -> Result<()> {
     let analyze_folder_cycles = cycles.highlight_cycles || cycles.cycles_output.is_some() || cycles.fail_on_cycles;
     let (highlight_analysis, folder_report_output, folder_cycle_group_count) = if analyze_folder_cycles {
         let analysis = analyze_folders(&folder_graph)?;
-        let report = cycles.cycles_output.as_ref().map(|path| {
-            folder_report(&analysis, cycles.cycle_limit).map(|report| (path, report))
-        });
-        let report = report.transpose()?;
+        let report = if let Some(path) = cycles.cycles_output.as_ref() {
+            Some((path, folder_report(&analysis, cycles.cycle_limit)?))
+        } else {
+            None
+        };
         let group_count = analysis.group_count();
         (cycles.highlight_cycles.then_some(analysis), report, group_count)
     } else {
@@ -174,10 +223,11 @@ pub fn run(request: &Request, diagram_output: &mut dyn Write) -> Result<()> {
     let analyze_file_cycles = cycles.file_cycles_output.is_some() || cycles.fail_on_cycles;
     let (file_report_output, file_cycle_group_count) = if analyze_file_cycles {
         let analysis = analyze_files(&file_graph)?;
-        let report = cycles.file_cycles_output.as_ref().map(|path| {
-            file_report(&analysis, cycles.cycle_limit).map(|report| (path, report))
-        });
-        let report = report.transpose()?;
+        let report = if let Some(path) = cycles.file_cycles_output.as_ref() {
+            Some((path, file_report(&analysis, cycles.cycle_limit)?))
+        } else {
+            None
+        };
         (report, analysis.group_count())
     } else {
         (None, 0)
@@ -198,9 +248,6 @@ pub fn run(request: &Request, diagram_output: &mut dyn Write) -> Result<()> {
     exporter.write_with_options(&folder_graph, &options, &mut diagram_bytes)?;
 
     let mut outputs = Vec::new();
-    if let Some((path, ref bytes)) = saved_index {
-        outputs.push(FileOutput::new(path, bytes));
-    }
     if let Some((path, ref report)) = folder_report_output {
         outputs.push(FileOutput::new(path, report.as_bytes()));
     }
@@ -213,8 +260,14 @@ pub fn run(request: &Request, diagram_output: &mut dyn Write) -> Result<()> {
     if let Some(path) = request.output.as_deref() {
         outputs.push(FileOutput::new(path, &diagram_bytes));
     }
-    let protected_inputs: Vec<_> = retained_inputs.iter().chain(&request.protected_inputs).chain(replay_input).collect();
-    OutputFiles::open(&outputs, &protected_inputs)?.write()?;
+    match checkpoint {
+        IndexCheckpoint::Saved { ref mut output_files } => {
+            for output in &outputs {
+                output_files.write_output(output)?;
+            }
+        }
+        IndexCheckpoint::NotRequested => OutputFiles::open(&outputs, protected_inputs)?.write()?,
+    }
     if request.output.is_none() {
         diagram_output.write_all(&diagram_bytes)?;
     }
@@ -235,14 +288,17 @@ pub fn run(request: &Request, diagram_output: &mut dyn Write) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io;
+    use std::num::NonZeroUsize;
     use std::path::Path;
     use std::path::PathBuf;
 
-    use anyhow::Context as _;
     use anyhow::Error;
     use anyhow::Result;
+    use assertables::assert_contains;
     use claims::assert_ok;
     use claims::assert_some;
+    use derive_new::new;
     use pretty_assertions::assert_eq;
     use protobuf::Message as _;
     use rstest::rstest;
@@ -257,19 +313,24 @@ mod tests {
     use super::Input;
     use super::NO_FILES_AFTER_FILTERING;
     use super::OutgoingDependencyOptions;
+    use super::Project;
     use super::Request;
     use super::run;
+    use super::write_analysis_outputs;
     use crate::Exclusions;
     use crate::InputFile;
     use crate::export::Format;
     use crate::export::Options;
+    use crate::model::FileGraph;
     use crate::outgoing_dependencies::Mode;
+    use crate::output_paths::FileOutput;
     use crate::output_paths::OutputPathConflict;
     use crate::scip::backend::parse_scip;
 
     struct ReplayTestFixture {
         directory: TempDir,
         index: PathBuf,
+        saved_index: PathBuf,
         index_bytes: Vec<u8>,
         diagram: PathBuf,
         file_report: PathBuf,
@@ -277,24 +338,43 @@ mod tests {
         outgoing_report: PathBuf,
     }
 
-    fn replay_bytes_test_fixture(index_bytes: Vec<u8>) -> Result<ReplayTestFixture> {
-        let directory = tempdir()?;
+    #[derive(new)]
+    struct ReplayRequestTestFixture {
+        fixture: ReplayTestFixture,
+        request: Request,
+    }
+
+    #[derive(new)]
+    struct AnalyzedProjectTestFixture {
+        fixture: ReplayTestFixture,
+        request: Request,
+        graph: FileGraph,
+    }
+
+    fn replay_bytes_test_fixture(index_bytes: Vec<u8>) -> ReplayTestFixture {
+        let directory = tempdir();
+        let directory = assert_ok!(directory, "Failed to create the replay fixture directory");
         let fixture = ReplayTestFixture {
             index: directory.path().join("index.scip"),
+            saved_index: directory.path().join("saved.scip"),
             diagram: directory.path().join("diagram.dot"),
             file_report: directory.path().join("files.md"),
             folder_report: directory.path().join("folders.md"),
             outgoing_report: directory.path().join("outgoing.md"),
             directory, index_bytes,
         };
-        fs::write(&fixture.index, &fixture.index_bytes)?;
-        Ok(fixture)
+        let written = fs::write(&fixture.index, &fixture.index_bytes);
+        assert_ok!(written, "Failed to write the replay fixture index at {}", fixture.index.display());
+        fixture
     }
 
-    fn replay_test_fixture(index: &Index) -> Result<(ReplayTestFixture, Request)> {
-        let fixture = replay_bytes_test_fixture(index.write_to_bytes()?)?;
-        let request = Request::builder().input(Input::ScipFile(fixture.index.clone())).root(PathBuf::from("src")).build()?;
-        Ok((fixture, request))
+    fn replay_test_fixture(index: &Index) -> ReplayRequestTestFixture {
+        let bytes = index.write_to_bytes();
+        let bytes = assert_ok!(bytes, "Failed to serialize the replay fixture index");
+        let fixture = replay_bytes_test_fixture(bytes);
+        let request = Request::builder().input(Input::ScipFile(fixture.index.clone())).root(PathBuf::from("src")).build();
+        let request = assert_ok!(request, "Failed to construct the replay request from its fixture index");
+        ReplayRequestTestFixture::new(fixture, request)
     }
 
     #[must_use]
@@ -309,26 +389,28 @@ mod tests {
         options.maybe_output(output.map(Path::to_path_buf)).build()
     }
 
-    fn write_outputs_test_fixture(paths: &[&Path], contents: &str) -> Result<()> {
+    fn write_outputs_test_fixture(paths: &[&Path], contents: &str) {
         for path in paths {
-            fs::write(path, contents).with_context(|| format!("Cannot initialize fixture output {}", path.display()))?;
+            let written = fs::write(path, contents);
+            assert_ok!(written, "Failed to initialize the existing output at {}", path.display());
         }
-        Ok(())
     }
 
-    fn read_outputs_test_fixture(paths: &[&Path]) -> Result<Vec<String>> {
+    fn read_outputs_test_fixture(paths: &[&Path]) -> Vec<String> {
         paths.iter().map(|path| {
-            fs::read_to_string(path).with_context(|| format!("Cannot read fixture output {}", path.display()))
+            let contents = fs::read_to_string(path);
+            assert_ok!(contents, "Failed to read the output at {}", path.display())
         }).collect()
     }
 
-    fn output_alias_test_fixture(path: &Path, alias: bool) -> Result<PathBuf> {
+    fn output_alias_test_fixture(path: &Path, alias: bool) -> PathBuf {
         if alias {
             let output = path.with_extension("alias");
-            fs::hard_link(path, &output)?;
-            Ok(output)
+            let linked = fs::hard_link(path, &output);
+            assert_ok!(linked, "Failed to create a hard link to {}", path.display());
+            output
         } else {
-            Ok(path.to_path_buf())
+            path.to_path_buf()
         }
     }
 
@@ -340,6 +422,154 @@ mod tests {
             request.output = Some(output);
         }
         request
+    }
+
+    fn analyzed_project_test_fixture() -> AnalyzedProjectTestFixture {
+        let mut index = two_file_index_fixture(true);
+        let third_symbol = "rust-analyzer cargo fixture 0.0.0 third().";
+        let first = index.documents.first_mut();
+        let first = assert_some!(first, "The analysis fixture contains no source files");
+        let first_symbol = first.occurrences.first();
+        let first_symbol = assert_some!(first_symbol, "The first fixture file contains no symbol occurrences").symbol.clone();
+        first.occurrences.push(Occurrence { range: vec![2, 0, 5], symbol: third_symbol.into(), ..Occurrence::default() });
+        index.documents.push(Document {
+            relative_path: "src/third.rs".into(),
+            occurrences: vec![
+                Occurrence {
+                    range: vec![0, 3, 8], symbol: third_symbol.into(),
+                    symbol_roles: SymbolRole::Definition as i32, ..Occurrence::default()
+                },
+                Occurrence { range: vec![1, 0, 5], symbol: first_symbol, ..Occurrence::default() },
+            ],
+            ..Document::default()
+        });
+        let bytes = index.write_to_bytes();
+        let bytes = assert_ok!(bytes, "Failed to serialize the completed-analysis fixture");
+        let fixture = replay_bytes_test_fixture(bytes);
+        let graph = parse_scip(&fixture.index_bytes);
+        let graph = assert_ok!(graph, "Failed to parse the completed-analysis fixture into a file graph");
+        let project = Project::new(fixture.directory.path().to_path_buf(), None);
+        let cycles = cycle_reports_test_fixture(&fixture.file_report, &fixture.folder_report);
+        let request = Request::builder().input(Input::Project(project)).root(PathBuf::from("src"));
+        let request = request.save_scip(fixture.saved_index.clone()).output(fixture.diagram.clone()).cycles(cycles).build();
+        let request = assert_ok!(request, "Failed to construct the completed-analysis request");
+        AnalyzedProjectTestFixture::new(fixture, request, graph)
+    }
+
+    fn write_analyzed_outputs_test_fixture(
+        fixture: &ReplayTestFixture, request: &Request, graph: FileGraph, diagram: &mut dyn io::Write,
+    ) -> Result<()> {
+        let protected_inputs: Vec<_> = request.protected_inputs.iter().collect();
+        let outputs = write_analysis_outputs().request(request).file_graph(graph).protected_inputs(&protected_inputs);
+        let saved_index = FileOutput::new(&fixture.saved_index, &fixture.index_bytes);
+        outputs.saved_index(saved_index).diagram_output(diagram).call()
+    }
+
+    fn assert_saved_index_test_fixture(path: &Path, expected: &[u8]) {
+        let saved = fs::read(path);
+        let saved = assert_ok!(saved, "Failed to read the saved analysis at {}", path.display());
+
+        assert_eq!(saved, expected, "Unexpected checkpoint contents at {}", path.display());
+    }
+
+    #[rstest]
+    #[case::filtering(PathBuf::from("missing"), PathBuf::from("folders.md"), true)]
+    #[case::output_open(PathBuf::from("src"), Path::new("missing").join("folders.md"), false)]
+    fn test_analysis_checkpoint_failure_order(
+        #[case] root: PathBuf, #[case] folder_report: PathBuf, #[case] checkpoint_written: bool,
+    ) {
+        const CONTENTS_EXISTING: &str = "previous result";
+        let AnalyzedProjectTestFixture { fixture, mut request, graph } = analyzed_project_test_fixture();
+        request.root = root;
+        request.cycles.cycles_output = Some(fixture.directory.path().join(folder_report));
+        let reports: [&Path; 3] = [&fixture.diagram, &fixture.folder_report, &fixture.file_report];
+        write_outputs_test_fixture(
+            &[&fixture.saved_index, &fixture.diagram, &fixture.folder_report, &fixture.file_report], CONTENTS_EXISTING,
+        );
+        let mut diagram = Vec::new();
+
+        let system_under_test = write_analyzed_outputs_test_fixture(&fixture, &request, graph, &mut diagram);
+        let preserved = read_outputs_test_fixture(&reports);
+
+        let error = assert_some!(system_under_test.err(), "Output generation accepted an invalid path or empty root");
+        let expected_index = if checkpoint_written { &fixture.index_bytes } else { CONTENTS_EXISTING.as_bytes() };
+        if !checkpoint_written {
+            assert_eq!(error.downcast_ref::<io::Error>().map(io::Error::kind), Some(io::ErrorKind::NotFound), "{error:#}");
+        }
+        assert_saved_index_test_fixture(&fixture.saved_index, expected_index);
+        assert_eq!(preserved, [CONTENTS_EXISTING; 3], "Failed output generation changed existing reports");
+        assert!(diagram.is_empty());
+    }
+
+    #[test]
+    fn test_analysis_checkpoint_diagram_write_failure() {
+        let AnalyzedProjectTestFixture { fixture, mut request, graph } = analyzed_project_test_fixture();
+        request.output = None;
+        let mut diagram: &mut [u8] = &mut [];
+
+        let system_under_test = write_analyzed_outputs_test_fixture(&fixture, &request, graph, &mut diagram);
+        let reports = read_outputs_test_fixture(&[&fixture.folder_report, &fixture.file_report]);
+
+        let error = assert_some!(system_under_test.err(), "Writing a diagram to a zero-capacity sink unexpectedly succeeded");
+        assert_eq!(error.downcast_ref::<io::Error>().map(io::Error::kind), Some(io::ErrorKind::WriteZero), "{error:#}");
+        assert_saved_index_test_fixture(&fixture.saved_index, &fixture.index_bytes);
+        assert!(reports.iter().all(|report| !report.is_empty()));
+    }
+
+    #[rstest]
+    fn test_analysis_checkpoint_path_conflicts(
+        #[values("diagram", "folder", "file", "outgoing", "input")] target: &str,
+        #[values(false, true)] hard_link: bool,
+    ) {
+        const CONTENTS_EXISTING: &str = "previous result";
+        let AnalyzedProjectTestFixture { fixture, mut request, graph } = analyzed_project_test_fixture();
+        let outputs: [&Path; 4] = [&fixture.saved_index, &fixture.diagram, &fixture.folder_report, &fixture.file_report];
+        write_outputs_test_fixture(&outputs, CONTENTS_EXISTING);
+        let conflicting_path = output_alias_test_fixture(&fixture.saved_index, hard_link);
+        match target {
+            "input" => {
+                let opened = InputFile::open(&conflicting_path);
+                let input = assert_ok!(opened, "Failed to open the saved-index conflict fixture as a protected input");
+                request.protected_inputs.push(input);
+            }
+            "diagram" => request.output = Some(conflicting_path),
+            "folder" => request.cycles.cycles_output = Some(conflicting_path),
+            "file" => request.cycles.file_cycles_output = Some(conflicting_path),
+            "outgoing" => {
+                request.outgoing_dependencies = Some(outgoing_options_test_fixture(Some(&conflicting_path), 0, None));
+            }
+            _ => unreachable!("Unsupported output kind in the checkpoint fixture: {target}"),
+        }
+        request.root = PathBuf::from("missing");
+        let mut diagram = Vec::new();
+
+        let system_under_test = write_analyzed_outputs_test_fixture(&fixture, &request, graph, &mut diagram);
+        let preserved = read_outputs_test_fixture(&outputs);
+
+        let conflict = system_under_test.as_ref().is_err_and(Error::is::<OutputPathConflict>);
+        assert!(conflict, "Checkpoint path conflict was not reported: {system_under_test:?}");
+        assert_eq!(preserved, [CONTENTS_EXISTING; 4]);
+        assert!(diagram.is_empty());
+    }
+
+    #[test]
+    fn test_analysis_failure_before_checkpoint() {
+        const CONTENTS_EXISTING: &[u8] = b"previous index";
+        let fixture = tempdir();
+        let fixture = assert_ok!(fixture, "Failed to create the project-without-manifest fixture");
+        let saved_path = fixture.path().join("saved.scip");
+        let project = Project::new(fixture.path().to_path_buf(), None);
+        let request = Request::builder().input(Input::Project(project)).save_scip(saved_path.clone()).build();
+        let request = assert_ok!(request, "Request construction rejected a project before analysis");
+        let initialized = fs::write(&saved_path, CONTENTS_EXISTING);
+        assert_ok!(initialized, "Failed to initialize the previous saved index");
+        let mut diagram = Vec::new();
+
+        let system_under_test = run(&request, &mut diagram);
+
+        assert!(system_under_test.is_err(), "Analysis succeeded for a project without a manifest");
+        assert_saved_index_test_fixture(&saved_path, CONTENTS_EXISTING);
+        assert!(diagram.is_empty());
     }
 
     #[test]
@@ -355,8 +585,8 @@ mod tests {
         let folders = within_root.folders(&root, Some(1), false);
         let folders = assert_ok!(folders, "Fixture graph must support depth-limited folder aggregation");
         let mut expected = Vec::new();
-        let export = Format::Mermaid.exporter()
-            .write_with_options(&folders, &Options::builder().group_folders(true).build(), &mut expected);
+        let options = Options::builder().group_folders(true).build();
+        let export = Format::Mermaid.exporter().write_with_options(&folders, &options, &mut expected);
         assert_ok!(export, "Expected grouped Mermaid diagram must render successfully");
         let request = Request::builder().input(Input::ScipFile(fixture)).root(root).format(Format::Mermaid);
         let system_under_test = request.depth(1).group_folders(true).build();
@@ -455,7 +685,7 @@ mod tests {
         #[case] expected: &[(&str, usize)],
     ) {
         let fixture = replay_test_fixture(&outgoing_dependency_index_fixture());
-        let (_fixture, mut system_under_test) = assert_ok!(fixture, "Outgoing dependency replay fixture must be created");
+        let ReplayRequestTestFixture { fixture: _fixture, request: mut system_under_test } = fixture;
         system_under_test.root = PathBuf::from(root);
         system_under_test.exclude_tests = exclude_tests;
         system_under_test.depth = depth;
@@ -495,7 +725,7 @@ mod tests {
         #[case] expected_failure: bool,
     ) {
         let fixture = replay_test_fixture(&two_file_index_fixture(false));
-        let (_fixture, mut system_under_test) = assert_ok!(fixture, "Outgoing gate replay fixture must be created");
+        let ReplayRequestTestFixture { fixture: _fixture, request: mut system_under_test } = fixture;
         system_under_test.include_self = include_self;
         system_under_test.outgoing_dependencies = enabled.then(|| outgoing_options_test_fixture(None, maximum, mode));
         let mut diagram = Vec::new();
@@ -506,7 +736,7 @@ mod tests {
         assert_eq!(failed, expected_failure, "Unexpected outgoing threshold result: {result:?}");
         if let Err(error) = result {
             let diagnostic = error.to_string();
-            assert!(diagnostic.contains("Outgoing dependency threshold exceeded"), "Unexpected gate failure: {diagnostic}");
+            assert_contains!(diagnostic, "Outgoing dependency threshold exceeded", "Unexpected gate failure: {diagnostic}");
         }
     }
 
@@ -516,10 +746,9 @@ mod tests {
     fn test_outgoing_dependency_outputs(#[case] maximum: usize, #[case] expected_failure: bool) {
         const CONTENTS_EXISTING: &str = "preserved";
         let fixture = replay_test_fixture(&two_file_index_fixture(false));
-        let (fixture, mut system_under_test) = assert_ok!(fixture, "Outgoing output replay fixture must be created");
+        let ReplayRequestTestFixture { fixture, request: mut system_under_test } = fixture;
         let outputs: [&Path; 2] = [&fixture.diagram, &fixture.outgoing_report];
-        let initialized = write_outputs_test_fixture(&outputs, CONTENTS_EXISTING);
-        assert_ok!(initialized, "Existing outputs must be initialized before the outgoing gate");
+        write_outputs_test_fixture(&outputs, CONTENTS_EXISTING);
         system_under_test.output = Some(fixture.diagram.clone());
         let outgoing = outgoing_options_test_fixture(Some(&fixture.outgoing_report), maximum, Some(Mode::Files));
         system_under_test.outgoing_dependencies = Some(outgoing);
@@ -527,7 +756,6 @@ mod tests {
 
         let result = run(&system_under_test, &mut diagram);
         let exported = read_outputs_test_fixture(&outputs);
-        let exported = assert_ok!(exported, "Diagram and report must remain readable after the outgoing gate");
         let replaced: Vec<_> = exported.iter().map(|contents| !contents.is_empty() && contents != CONTENTS_EXISTING).collect();
         let failed = result.is_err();
 
@@ -552,7 +780,7 @@ mod tests {
         #[case] expected_file_cycle_groups: Option<usize>,
     ) {
         let fixture = replay_test_fixture(&two_file_index_fixture(cyclic));
-        let (fixture, mut system_under_test) = assert_ok!(fixture, "Cycle report replay fixture must be created");
+        let ReplayRequestTestFixture { fixture, request: mut system_under_test } = fixture;
         system_under_test.cycles.fail_on_cycles = fail_on_cycles;
         system_under_test.cycles.file_cycles_output = report_requested.then(|| fixture.file_report.clone());
         /* Same-folder files and disabled self-edges keep the folder gate from masking skipped file analysis. */
@@ -580,32 +808,36 @@ mod tests {
     }
 
     #[rstest]
-    #[case::cycles_only(true, 1, [true, false])]
+    #[case::report_only(false, 2, [false, false])]
+    #[case::cycles_only(true, 2, [true, false])]
     #[case::outgoing_only(false, 0, [false, true])]
     #[case::both(true, 0, [true, true])]
-    fn test_combined_dependency_gates(
-        #[case] fail_on_cycles: bool, #[case] maximum: usize, #[case] expected_reasons: [bool; 2],
-    ) {
-        let fixture = replay_test_fixture(&two_file_index_fixture(true));
-        let (fixture, mut system_under_test) = assert_ok!(fixture, "Combined gate replay fixture must be created");
+    fn test_combined_dependency_gates(#[case] fail_on_cycles: bool, #[case] maximum: usize, #[case] expected_reasons: [bool; 2]) {
+        let AnalyzedProjectTestFixture { fixture, request: mut system_under_test, graph } = analyzed_project_test_fixture();
+        system_under_test.output = None;
+        system_under_test.include_self = true;
+        system_under_test.cycles.cycle_limit = NonZeroUsize::MIN;
         system_under_test.cycles.fail_on_cycles = fail_on_cycles;
-        system_under_test.cycles.file_cycles_output = Some(fixture.file_report.clone());
         let outgoing = outgoing_options_test_fixture(Some(&fixture.outgoing_report), maximum, Some(Mode::Files));
         system_under_test.outgoing_dependencies = Some(outgoing);
         let mut diagram = Vec::new();
 
-        let error = run(&system_under_test, &mut diagram).err();
-        let error = assert_some!(error, "At least one dependency gate must reject the cyclic fixture");
-        let diagnostic = error.to_string();
+        let result = write_analyzed_outputs_test_fixture(&fixture, &system_under_test, graph, &mut diagram);
+        assert_eq!(result.is_err(), expected_reasons.contains(&true), "Unexpected gate result: {result:?}");
+        let diagnostic = result.err().map_or_else(String::new, |error| error.to_string());
         let reasons = ["Dependency cycles found:", "Outgoing dependency threshold exceeded"];
         let actual_reasons = reasons.map(|reason| diagnostic.contains(reason));
-        let reports = read_outputs_test_fixture(&[&fixture.file_report, &fixture.outgoing_report]);
-        let reports = assert_ok!(reports, "Both reports must be written before either dependency gate fails");
-        let reports_written = reports.iter().all(|report| !report.is_empty());
+        let reports = read_outputs_test_fixture(&[&fixture.folder_report, &fixture.file_report, &fixture.outgoing_report]);
+        let cycle_listings: Vec<_> = reports.iter().take(2).map(|report| {
+            let chain_count = report.lines().filter(|line| line.starts_with("- ")).count();
+            (chain_count, report.contains("cycle listing truncated"))
+        }).collect();
 
-        assert_eq!(actual_reasons, expected_reasons, "Dependency gates must contribute independent reasons: {diagnostic}");
-        assert!(reports_written, "Gate failures must not suppress reports");
-        assert!(!diagram.is_empty(), "Gate failures must not suppress the diagram");
+        assert_eq!(actual_reasons, expected_reasons, "Dependency gate failure reasons differ: {diagnostic}");
+        assert_saved_index_test_fixture(&fixture.saved_index, &fixture.index_bytes);
+        assert_eq!(cycle_listings, [(1, false), (1, true)], "Incorrect folder/file chain counts or truncation markers");
+        assert!(reports.iter().all(|report| !report.is_empty()), "An exported dependency report is empty");
+        assert!(!diagram.is_empty(), "The exported diagram is empty");
     }
 
     #[rstest]
@@ -617,7 +849,7 @@ mod tests {
         #[values(Mode::Files, Mode::Folders)] mode: Mode,
     ) {
         let fixture = replay_test_fixture(&two_file_index_fixture(true));
-        let (fixture, mut system_under_test) = assert_ok!(fixture, "Exclusion replay fixture must be created");
+        let ReplayRequestTestFixture { fixture, request: mut system_under_test } = fixture;
         let exclusions = Exclusions::new(&[pattern.to_owned()]);
         system_under_test.exclusions = assert_ok!(exclusions, "Replay exclusion patterns must compile");
         system_under_test.include_self = true;
@@ -632,7 +864,6 @@ mod tests {
 
         let result = run(&system_under_test, &mut diagram);
         let reports = read_outputs_test_fixture(&[&fixture.file_report, &fixture.folder_report]);
-        let reports = assert_ok!(reports, "Cycle reports must be written for the filtered replay graph");
         let groups: Vec<_> = reports.iter().map(|report| report.lines().filter(|line| line.starts_with("## ")).count()).collect();
         let outgoing_contents = fs::read_to_string(&fixture.outgoing_report);
         let outgoing_contents = assert_ok!(outgoing_contents, "Outgoing counts must be written for the filtered replay graph");
@@ -647,7 +878,7 @@ mod tests {
     #[test]
     fn test_exclusions_saved_replay() {
         let fixture = replay_test_fixture(&two_file_index_fixture(true));
-        let (fixture, mut system_under_test) = assert_ok!(fixture, "Exclusion replay fixture must be created");
+        let ReplayRequestTestFixture { fixture, request: mut system_under_test } = fixture;
         let exclusions = Exclusions::new(&["src/second.rs".to_owned()]);
         system_under_test.exclusions = assert_ok!(exclusions, "Replay exclusion patterns must compile");
         system_under_test.include_self = true;
@@ -670,10 +901,9 @@ mod tests {
     fn test_exclusions_all_files() {
         const CONTENTS_EXISTING: &str = "preserved";
         let fixture = replay_test_fixture(&two_file_index_fixture(false));
-        let (fixture, mut system_under_test) = assert_ok!(fixture, "Whole-root exclusion replay fixture must be created");
+        let ReplayRequestTestFixture { fixture, request: mut system_under_test } = fixture;
         let outputs: [&Path; 3] = [&fixture.diagram, &fixture.file_report, &fixture.outgoing_report];
-        let initialized = write_outputs_test_fixture(&outputs, CONTENTS_EXISTING);
-        assert_ok!(initialized, "Existing outputs must be initialized before exclusions remove every file");
+        write_outputs_test_fixture(&outputs, CONTENTS_EXISTING);
         let exclusions = Exclusions::new(&["src/**".to_owned()]);
         system_under_test.exclusions = assert_ok!(exclusions, "A whole-root exclusion must compile");
         system_under_test.output = Some(fixture.diagram.clone());
@@ -685,7 +915,6 @@ mod tests {
         let error = assert_some!(error, "Excluding every indexed file must fail before opening outputs");
         let diagnostic = error.to_string();
         let preserved = read_outputs_test_fixture(&outputs);
-        let preserved = assert_ok!(preserved, "Existing outputs must remain readable after all files are excluded");
         let report_exists = fixture.folder_report.try_exists();
         let report_exists = assert_ok!(report_exists, "The unwritten folder-report path must be inspectable");
 
@@ -699,9 +928,8 @@ mod tests {
     #[case::readable_input(false)]
     #[case::missing_input(true)]
     fn test_replay_cannot_save_analysis(#[case] missing_input: bool) {
-        let fixture = replay_test_fixture(&two_file_index_fixture(false));
-        let (fixture, _request) = assert_ok!(fixture, "Replay without saving must accept the valid input");
-        let output = fixture.directory.path().join("saved.scip");
+        let ReplayRequestTestFixture { fixture, request: _request } = replay_test_fixture(&two_file_index_fixture(false));
+        let output = fixture.saved_index;
         let initialized = fs::write(&output, b"preserved");
         assert_ok!(initialized, "Existing analysis output must be initialized separately from the replay input");
         let input = if missing_input { fixture.directory.path().join("missing.scip") } else { fixture.index.clone() };
@@ -733,7 +961,7 @@ mod tests {
         let diagnostic = format!("{error:#}");
 
         assert!(error.is::<std::io::Error>(), "Input failure must preserve its I/O cause: {diagnostic}");
-        assert!(diagnostic.contains(&path.to_string_lossy().into_owned()), "Input failure must identify its path: {diagnostic}");
+        assert_contains!(diagnostic, &path.to_string_lossy().into_owned(), "Input failure must identify its path: {diagnostic}");
     }
 
     #[rstest]
@@ -741,7 +969,7 @@ mod tests {
     #[case::replace_path(true)]
     fn test_replay_snapshot_at_construction(#[case] replace_path: bool) {
         let fixture = replay_test_fixture(&two_file_index_fixture(false));
-        let (fixture, system_under_test) = assert_ok!(fixture, "The snapshot request must load before modifying its input");
+        let ReplayRequestTestFixture { fixture, request: system_under_test } = fixture;
         if replace_path {
             let renamed = fs::rename(&fixture.index, fixture.directory.path().join("retained.scip"));
             assert_ok!(renamed, "The loaded index must be renamed before replacing its path");
@@ -765,7 +993,7 @@ mod tests {
     #[test]
     fn test_renamed_replay_input_protection() {
         let fixture = replay_test_fixture(&two_file_index_fixture(false));
-        let (fixture, mut system_under_test) = assert_ok!(fixture, "The protected request must load before renaming its input");
+        let ReplayRequestTestFixture { fixture, request: mut system_under_test } = fixture;
         let retained = fixture.directory.path().join("retained.scip");
         let renamed = fs::rename(&fixture.index, &retained);
         assert_ok!(renamed, "The loaded index must be renamed while its identity is retained");
@@ -790,10 +1018,8 @@ mod tests {
     #[case::same_path(false)]
     #[case::hard_link(true)]
     fn test_replay_cannot_overwrite_input(#[case] alias: bool, #[values(false, true)] outgoing_report: bool) {
-        let fixture = replay_test_fixture(&two_file_index_fixture(false));
-        let (fixture, request) = assert_ok!(fixture, "Protected input replay fixture must be created");
+        let ReplayRequestTestFixture { fixture, request } = replay_test_fixture(&two_file_index_fixture(false));
         let output = output_alias_test_fixture(&fixture.index, alias);
-        let output = assert_ok!(output, "Output must identify the protected index");
         let system_under_test = request_output_test_fixture(request, output, outgoing_report);
         let mut diagram = Vec::new();
 
@@ -821,8 +1047,7 @@ mod tests {
     ) {
         const CONTENTS_CONFIGURATION: &[u8] = b"# protected configuration\n";
         const CONTENTS_REPLACEMENT: &[u8] = b"# replacement configuration\n";
-        let fixture = replay_test_fixture(&two_file_index_fixture(false));
-        let (fixture, mut request) = assert_ok!(fixture, "Request input-protection replay fixture must be created");
+        let ReplayRequestTestFixture { fixture, mut request } = replay_test_fixture(&two_file_index_fixture(false));
         let configuration = fixture.directory.path().join("source-mesh.toml");
         let retained_configuration = fixture.directory.path().join("retained.toml");
         let configuration_write = fs::write(&configuration, CONTENTS_CONFIGURATION);
@@ -843,7 +1068,6 @@ mod tests {
         };
         let protected_path = if configuration_target { configuration_path } else { &fixture.index };
         let output = output_alias_test_fixture(protected_path, alias);
-        let output = assert_ok!(output, "Output must identify the protected input");
         request.protected_inputs = vec![opened_configuration];
         let system_under_test = request_output_test_fixture(request, output, outgoing_report);
         let mut diagram = Vec::new();
@@ -873,18 +1097,16 @@ mod tests {
     fn test_invalid_index_preserves_outputs(#[case] bytes: &[u8], #[values(false, true)] existing_report: bool) {
         const CONTENTS_EXISTING: &str = "preserved";
         let fixture = replay_bytes_test_fixture(bytes.to_vec());
-        let fixture = assert_ok!(fixture, "Invalid-index replay fixture must be created");
         let mut existing_outputs = vec![fixture.diagram.as_path()];
         if existing_report { existing_outputs.push(&fixture.outgoing_report); }
-        let initialized = write_outputs_test_fixture(&existing_outputs, CONTENTS_EXISTING);
-        assert_ok!(initialized, "Existing outputs must be initialized before invalid-index replay");
-        let system_under_test = Request::builder().input(Input::ScipFile(fixture.index.clone()))
-            .output(fixture.diagram.clone()).cycles(cycle_reports_test_fixture(&fixture.file_report, &fixture.folder_report))
-            .outgoing_dependencies(outgoing_options_test_fixture(Some(&fixture.outgoing_report), 0, None));
+        write_outputs_test_fixture(&existing_outputs, CONTENTS_EXISTING);
+        let cycles = cycle_reports_test_fixture(&fixture.file_report, &fixture.folder_report);
+        let outgoing = outgoing_options_test_fixture(Some(&fixture.outgoing_report), 0, None);
+        let request = Request::builder().input(Input::ScipFile(fixture.index.clone()));
+        let system_under_test = request.output(fixture.diagram.clone()).cycles(cycles).outgoing_dependencies(outgoing);
 
         let result = system_under_test.build();
         let preserved = read_outputs_test_fixture(&existing_outputs);
-        let preserved = assert_ok!(preserved, "Existing outputs must remain readable after invalid-index rejection");
         let expected = vec![CONTENTS_EXISTING; existing_outputs.len()];
         let reports = [&fixture.folder_report, &fixture.file_report, &fixture.outgoing_report];
         let reports_exist = reports.map(|path| {
@@ -906,7 +1128,6 @@ mod tests {
         let bytes = index.write_to_bytes();
         let bytes = assert_ok!(bytes, "The invalid-source-path index must serialize");
         let fixture = replay_bytes_test_fixture(bytes);
-        let fixture = assert_ok!(fixture, "Invalid-source-path replay fixture must be created");
         let system_under_test = Request::builder().input(Input::ScipFile(fixture.index.clone())).output(fixture.diagram.clone());
 
         let result = system_under_test.build();
@@ -923,12 +1144,10 @@ mod tests {
     fn test_conflicting_outputs_preserve_files(#[case] alias: bool, #[values(false, true)] outgoing_report: bool) {
         const CONTENTS_EXISTING: &str = "preserved";
         let fixture = replay_test_fixture(&two_file_index_fixture(false));
-        let (fixture, mut system_under_test) = assert_ok!(fixture, "Conflicting-output replay fixture must be created");
+        let ReplayRequestTestFixture { fixture, request: mut system_under_test } = fixture;
         let outputs: [&Path; 2] = [&fixture.diagram, &fixture.file_report];
-        let initialized = write_outputs_test_fixture(&outputs, CONTENTS_EXISTING);
-        assert_ok!(initialized, "Existing outputs must be initialized before conflict validation");
+        write_outputs_test_fixture(&outputs, CONTENTS_EXISTING);
         let conflicting_report = output_alias_test_fixture(&fixture.diagram, alias);
-        let conflicting_report = assert_ok!(conflicting_report, "Conflicting report must identify the existing diagram");
         system_under_test.output = Some(fixture.diagram.clone());
         system_under_test.cycles.file_cycles_output = Some(fixture.file_report.clone());
         if outgoing_report {
@@ -941,7 +1160,6 @@ mod tests {
 
         let result = run(&system_under_test, &mut diagram);
         let preserved = read_outputs_test_fixture(&outputs);
-        let preserved = assert_ok!(preserved, "Existing outputs must remain readable after conflicts");
         let conflict = result.as_ref().is_err_and(Error::is::<OutputPathConflict>);
 
         assert!(conflict, "Replay must reject output aliases: {result:?}");

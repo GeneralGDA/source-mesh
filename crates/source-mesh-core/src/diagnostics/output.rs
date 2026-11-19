@@ -11,6 +11,7 @@ mod tests {
     use std::env;
     use std::process::Command;
 
+    use assertables::assert_not_contains;
     use claims::assert_ok;
     use claims::assert_some;
     use pretty_assertions::assert_eq;
@@ -36,7 +37,7 @@ mod tests {
 
         assert!(output.status.success(), "The diagnostic output peer must exit successfully: {output:?}");
         assert_eq!(output.stderr, format!("{LABEL_DIAGNOSTIC}: 7\n").as_bytes(), "emit must preserve diagnostic bytes on stderr");
-        assert!(!String::from_utf8_lossy(&output.stdout).contains(LABEL_DIAGNOSTIC), "Diagnostics must not pollute stdout");
+        assert_not_contains!(String::from_utf8_lossy(&output.stdout), LABEL_DIAGNOSTIC, "Diagnostics must not pollute stdout");
     }
 
     #[test]

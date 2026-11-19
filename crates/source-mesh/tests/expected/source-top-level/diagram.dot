@@ -7,7 +7,7 @@ strict digraph folders {
   n4[label="graph" shape=box]
   n5[label="scip" shape=box]
   n0 -> n1 [label="7"]
-  n0 -> n2 [label="1"]
+  n0 -> n2 [label="2"]
   n0 -> n3 [label="2"]
   n0 -> n4 [label="7"]
   n0 -> n5 [label="4"]

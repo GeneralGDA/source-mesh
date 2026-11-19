@@ -176,6 +176,8 @@ fn diagnostic_line_preview(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use assertables::assert_contains;
+    use assertables::assert_not_contains;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -228,7 +230,7 @@ mod tests {
         let system_under_test = ScipDiagnostics::from_streams(&[], diagnostic.as_bytes());
 
         assert!(system_under_test.has_blocking_errors());
-        assert!(system_under_test.summary().contains(diagnostic));
+        assert_contains!(system_under_test.summary(), diagnostic);
     }
 
     #[rstest]
@@ -248,7 +250,7 @@ mod tests {
     fn test_loading_diagnostics_remain_visible(#[case] diagnostic: &str) {
         let system_under_test = ScipDiagnostics::from_streams(&[], diagnostic.as_bytes());
 
-        assert!(system_under_test.summary().contains(diagnostic));
+        assert_contains!(system_under_test.summary(), diagnostic);
     }
 
     #[rstest]
@@ -282,7 +284,7 @@ mod tests {
     fn test_partial_internal_diagnostic_matches(#[case] diagnostic: &str) {
         let system_under_test = ScipDiagnostics::from_streams(&[], diagnostic.as_bytes());
 
-        assert!(system_under_test.summary().contains(diagnostic), "Only a complete known diagnostic may be suppressed");
+        assert_contains!(system_under_test.summary(), diagnostic, "Only a complete known diagnostic may be suppressed");
     }
 
     #[rstest]
@@ -293,7 +295,7 @@ mod tests {
         let fixture = format!("{diagnostic}\n{following}");
         let system_under_test = ScipDiagnostics::from_streams(&[], fixture.as_bytes());
 
-        assert!(system_under_test.summary().contains(diagnostic), "Location and duplicate context must both match to suppress");
+        assert_contains!(system_under_test.summary(), diagnostic, "Location and duplicate context must both match to suppress");
     }
 
     #[rstest]
@@ -312,8 +314,8 @@ mod tests {
         let system_under_test = ScipDiagnostics::from_streams(b"warning: stdout failure\n", b"ERROR stderr failure\n");
 
         assert_eq!(system_under_test.other_messages.occurrences + system_under_test.nonblocking_errors.occurrences, 2);
-        assert!(system_under_test.summary().contains("stdout failure"));
-        assert!(system_under_test.summary().contains("stderr failure"));
+        assert_contains!(system_under_test.summary(), "stdout failure");
+        assert_contains!(system_under_test.summary(), "stderr failure");
     }
 
     #[test]
@@ -321,7 +323,7 @@ mod tests {
         let fixture = format!("2026-09-26T00:06:16+06:00 {MESSAGE_PREFIX_RUST_ANALYZER_CONFIGURATION_ERRORS}invalid field])\n");
         let system_under_test = ScipDiagnostics::from_streams(&[], fixture.as_bytes());
 
-        assert!(system_under_test.summary().contains("invalid field"));
+        assert_contains!(system_under_test.summary(), "invalid field");
     }
 
     #[test]
@@ -340,10 +342,10 @@ mod tests {
 
         let summary = system_under_test.summary();
 
-        assert!(summary.contains("custom diagnostic"));
-        assert!(summary.contains("failed to read Cargo.toml"));
-        assert!(!summary.contains(MESSAGE_PREFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION));
-        assert!(!summary.contains(MESSAGE_PREFIX_RUST_ANALYZER_UNNAMED_DEFINITION));
+        assert_contains!(summary, "custom diagnostic");
+        assert_contains!(summary, "failed to read Cargo.toml");
+        assert_not_contains!(summary, MESSAGE_PREFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION);
+        assert_not_contains!(summary, MESSAGE_PREFIX_RUST_ANALYZER_UNNAMED_DEFINITION);
     }
     #[rstest]
     #[case::normal(false)]
@@ -354,11 +356,11 @@ mod tests {
 
         let message = system_under_test.failure_message("analysis with internal diagnostics", &"exit code 1", verbose);
 
-        assert!(message.contains(MESSAGE_DEPENDENCY_GRAPH_FAILURE));
-        assert!(message.contains("exit code 1"));
-        assert!(message.contains(MESSAGE_VERBOSE_DIAGNOSTICS_HINT));
-        assert!(!message.contains(MESSAGE_PREFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION));
-        assert!(!message.contains(MESSAGE_PREFIX_RUST_ANALYZER_UNNAMED_DEFINITION));
+        assert_contains!(message, MESSAGE_DEPENDENCY_GRAPH_FAILURE);
+        assert_contains!(message, "exit code 1");
+        assert_contains!(message, MESSAGE_VERBOSE_DIAGNOSTICS_HINT);
+        assert_not_contains!(message, MESSAGE_PREFIX_RUST_ANALYZER_MISSING_SCIP_DEFINITION);
+        assert_not_contains!(message, MESSAGE_PREFIX_RUST_ANALYZER_UNNAMED_DEFINITION);
     }
     #[rstest]
     #[case::first_analysis("first analysis")]
@@ -368,10 +370,10 @@ mod tests {
 
         let message = system_under_test.failure_message(analysis_label, &"exit code 1", verbose);
 
-        assert!(message.contains(analysis_label));
-        assert!(message.contains("exit code 1"));
+        assert_contains!(message, analysis_label);
+        assert_contains!(message, "exit code 1");
         assert_eq!(message.contains(MESSAGE_EMPTY_DIAGNOSTIC_SUMMARY), verbose);
-        assert!(message.contains(MESSAGE_VERBOSE_DIAGNOSTICS_HINT));
+        assert_contains!(message, MESSAGE_VERBOSE_DIAGNOSTICS_HINT);
     }
 
     #[rstest]
@@ -388,11 +390,11 @@ mod tests {
         let message = system_under_test.failure_message(analysis_label, &reason, verbose);
 
         assert_eq!(message.contains(diagnostic), verbose);
-        assert!(message.contains(MESSAGE_DEPENDENCY_GRAPH_FAILURE));
-        assert!(message.contains(analysis_label));
-        assert!(message.contains(reason));
-        assert!(message.contains(MESSAGE_VERBOSE_DIAGNOSTICS_HINT));
-        assert!(system_under_test.summary().contains(diagnostic));
+        assert_contains!(message, MESSAGE_DEPENDENCY_GRAPH_FAILURE);
+        assert_contains!(message, analysis_label);
+        assert_contains!(message, reason);
+        assert_contains!(message, MESSAGE_VERBOSE_DIAGNOSTICS_HINT);
+        assert_contains!(system_under_test.summary(), diagnostic);
     }
 
     #[test]
@@ -421,7 +423,7 @@ mod tests {
         let system_under_test = ScipDiagnostics::from_streams(&[], fixture.as_bytes());
 
         assert_eq!(system_under_test.blocking_errors.occurrences, 1);
-        assert!(system_under_test.summary().contains("error[E0432]: unresolved import"));
+        assert_contains!(system_under_test.summary(), "error[E0432]: unresolved import");
     }
     #[test]
     fn test_long_diagnostics_preserve_unicode_boundaries() {

@@ -4,7 +4,7 @@ members = ["crates/source-mesh", "crates/source-mesh-core"]
 resolver = "3"
 
 [workspace.package]
-version = "1.2.1"
+version = "1.2.2"
 edition = "2024"
 license = "MIT"
 readme = "README.md"
@@ -22,7 +22,7 @@ dunce = "1.0.5"
 derive-new = "0.7"
 getset = "0.1.7"
 globset = "0.4"
-graphviz-rust = { version = "0.9.9", default-features = false }
+graphviz-rust = { version = "0.9.10", default-features = false }
 quick-xml = "0.42.0"
 scip = "0.10"
 protobuf = "3.7.2"
@@ -36,7 +36,10 @@ tempfile = "3.27.0"
 typed-path = "0.13.0"
 lsp-server = "0.10.0"
 url = "2.5.8"
+velcro = "0.5.4"
+assertables = "10.1.0"
 claims = "0.8.0"
+nonzero_ext = "0.3.0"
 pretty_assertions = "1.4.1"
 roxmltree = "0.21.2"
 rstest = { version = "0.28", default-features = false }

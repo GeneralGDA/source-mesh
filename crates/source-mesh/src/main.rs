@@ -73,6 +73,7 @@ mod cli_tests {
     use std::process::ExitCode;
 
     use anyhow::Error;
+    use assertables::assert_contains;
     use claims::assert_some;
     use clap::Parser as _;
     use clap::error::ErrorKind;
@@ -112,8 +113,8 @@ mod cli_tests {
         let help = error.to_string();
 
         assert_eq!(error.kind(), ErrorKind::DisplayHelp, "CLI rejected the help argument");
-        assert!(help.contains("--group-folders"), "CLI help omitted folder grouping");
-        assert!(help.contains(BOOLEAN_OPTIONS_DEFAULT_HELP), "CLI help omitted boolean option defaults");
+        assert_contains!(help, "--group-folders", "CLI help omitted folder grouping");
+        assert_contains!(help, BOOLEAN_OPTIONS_DEFAULT_HELP, "CLI help omitted boolean option defaults");
     }
 
     #[rstest]
@@ -157,9 +158,11 @@ mod command_tests {
     use std::ffi::OsStr;
     use std::fs;
     use std::path::Path;
+    use std::path::PathBuf;
     use std::process::ExitCode;
 
     use anyhow::Result;
+    use assertables::assert_contains;
     use claims::assert_ok;
     use claims::assert_some;
     use clap::ArgMatches;
@@ -184,39 +187,107 @@ mod command_tests {
     use super::settings::LoadedSettings;
     use super::settings::SETTINGS_FILE_NAME;
 
+    struct CommandTestFixture {
+        directory: TempDir,
+    }
+
+    impl CommandTestFixture {
+        #[must_use]
+        fn new() -> Self {
+            let directory = tempdir();
+            let directory = assert_ok!(directory, "Command fixture directory must be created");
+            Self { directory }
+        }
+
+        #[must_use]
+        fn path(&self) -> &Path {
+            self.directory.path()
+        }
+
+        fn make_file(&self, path: impl AsRef<Path>, contents: Option<impl AsRef<[u8]>>) -> PathBuf {
+            let path = self.path().join(path);
+            if let Some(contents) = contents {
+                let written = fs::write(&path, contents);
+                assert_ok!(written, "Command fixture file must be written at {}", path.display());
+            }
+            path
+        }
+    }
+
+    mod fixture_tests {
+        use std::fs;
+        use std::io::ErrorKind;
+
+        use claims::assert_err;
+        use claims::assert_ok;
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::CommandTestFixture;
+
+        #[rstest]
+        #[case::empty(b"", b"")]
+        #[case::text(b"fixture contents", b"fixture contents")]
+        #[case::binary(b"\0\xffSCIP", b"\0\xffSCIP")]
+        fn test_make_file_contents(#[case] contents: &[u8], #[case] expected: &[u8]) {
+            let system_under_test = CommandTestFixture::new();
+
+            let path = system_under_test.make_file("input.dat", Some(contents));
+
+            let actual = fs::read(path);
+            let actual = assert_ok!(actual, "The created fixture file must be readable");
+            assert_eq!(actual, expected, "Fixture files must preserve all explicitly supplied contents");
+        }
+
+        #[rstest]
+        #[case::missing(false)]
+        #[case::existing(true)]
+        fn test_make_file_without_contents(#[case] existing: bool) {
+            const CONTENTS_EXISTING: &[u8] = b"existing fixture contents";
+            let system_under_test = CommandTestFixture::new();
+            let file_to_make = "input.dat";
+            system_under_test.make_file(file_to_make, existing.then_some(CONTENTS_EXISTING));
+
+            let path = system_under_test.make_file(file_to_make, None::<&[u8]>);
+            let actual = fs::read(path);
+
+            if existing {
+                let actual = assert_ok!(actual, "An absent content argument must leave the existing file readable");
+                assert_eq!(actual, CONTENTS_EXISTING, "An absent content argument must not modify the existing file");
+            } else {
+                let error = assert_err!(actual, "An absent content argument must not create the file");
+                assert_eq!(error.kind(), ErrorKind::NotFound, "The fixture file must remain absent");
+            }
+        }
+    }
+
     fn run(matches: ArgMatches, output: &mut dyn std::io::Write) -> Result<()> {
         let cli = Cli::from_arg_matches(&matches)?;
         LoadedSettings::load(cli, matches)?.into_command()?.run(output)
     }
 
-    fn automatic_settings_test_fixture(contents: Option<&str>, arguments: &[&str]) -> Result<(TempDir, ArgMatches)> {
-        let fixture = tempdir()?;
-        if let Some(contents) = contents {
-            fs::write(fixture.path().join(SETTINGS_FILE_NAME), contents)?;
-        }
+    fn automatic_settings_test_fixture(contents: Option<&str>, arguments: &[&str]) -> (CommandTestFixture, ArgMatches) {
+        let fixture = CommandTestFixture::new();
+        fixture.make_file(SETTINGS_FILE_NAME, contents);
         /* Select the invocation directory without changing the working directory shared by parallel tests. */
         let project_arguments = [OsStr::new(env!("CARGO_PKG_NAME")), fixture.path().as_os_str()];
         let arguments = project_arguments.into_iter().chain(arguments.iter().map(OsStr::new));
-        let matches = Cli::command().try_get_matches_from(arguments)?;
-        Ok((fixture, matches))
+        let matches = Cli::command().try_get_matches_from(arguments);
+        let matches = assert_ok!(matches, "Automatic settings fixture arguments must parse");
+        (fixture, matches)
     }
 
     #[rstest]
     #[case::absent(None, true)]
     #[case::replay(Some("[analysis]\nfrom-scip = 'input.scip'"), false)]
     fn test_no_arguments_settings_discovery(#[case] contents: Option<&str>, #[case] display_help: bool) {
-        let fixture = automatic_settings_test_fixture(contents, &[]);
-        let (fixture, matches) = assert_ok!(fixture, "Automatic settings fixture must prepare its invocation directory");
-        let index = acyclic_index_fixture();
-        let index = assert_ok!(index, "No-argument replay must have valid saved analysis");
-        let index_write = fs::write(fixture.path().join("input.scip"), index);
-        assert_ok!(index_write, "Saved analysis must be written beside automatic settings");
+        let (fixture, matches) = automatic_settings_test_fixture(contents, &[]);
+        fixture.make_file("input.scip", Some(acyclic_index_fixture()));
         let has_project_file = contains_project_file(fixture.path());
 
         let system_under_test = load_command(matches, false, has_project_file);
         let system_under_test = assert_ok!(system_under_test, "Automatic settings discovery must precede no-argument help");
 
-        assert!(!has_project_file, "The replay fixture must not contain a Cargo manifest");
         assert_eq!(system_under_test.is_none(), display_help, "Loaded replay settings must prevent automatic help");
         if let Some(command) = system_under_test {
             let mut output = Vec::new();
@@ -231,8 +302,7 @@ mod command_tests {
     #[case::malformed("[analysis")]
     #[case::unknown_key("[analysis]\nverbsoe = true")]
     fn test_no_arguments_settings_errors(#[case] contents: &str) {
-        let fixture = automatic_settings_test_fixture(Some(contents), &[]);
-        let (fixture, matches) = assert_ok!(fixture, "Invalid automatic settings must be written before startup");
+        let (fixture, matches) = automatic_settings_test_fixture(Some(contents), &[]);
         let has_project_file = contains_project_file(fixture.path());
         let mut diagnostic = Vec::new();
 
@@ -242,10 +312,9 @@ mod command_tests {
         let diagnostic = String::from_utf8(diagnostic);
         let diagnostic = assert_ok!(diagnostic, "Automatic-settings diagnostics must be UTF-8");
 
-        assert!(!has_project_file, "Invalid settings must be tested without a Cargo manifest");
         assert_eq!(system_under_test, ExitCode::FAILURE, "Malformed automatic settings must fail the invocation");
         assert!(diagnostic.starts_with("error: Cannot parse settings"), "Startup must report the settings parse error");
-        assert!(diagnostic.contains(SETTINGS_FILE_NAME), "The diagnostic must identify the automatic settings file");
+        assert_contains!(diagnostic, SETTINGS_FILE_NAME, "The diagnostic must identify the automatic settings file");
     }
 
     #[rstest]
@@ -259,8 +328,7 @@ mod command_tests {
         #[case] verbose: bool,
     ) {
         let contents = format!("[graph]\nexclude = ['[']\n[analysis]\nverbose = {configured}");
-        let fixture = automatic_settings_test_fixture(Some(&contents), argument.as_slice());
-        let (fixture, matches) = assert_ok!(fixture, "Validation diagnostics require valid TOML with an invalid exclusion glob");
+        let (fixture, matches) = automatic_settings_test_fixture(Some(&contents), argument.as_slice());
         let has_project_file = contains_project_file(fixture.path());
         let mut diagnostic = Vec::new();
 
@@ -277,9 +345,8 @@ mod command_tests {
 
     #[rstest]
     fn test_settings_load_diagnostic_verbosity(#[values(false, true)] verbose: bool) {
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "Missing-settings diagnostics require a temporary directory");
-        let settings_path = fixture.path().join("missing.toml");
+        let fixture = CommandTestFixture::new();
+        let settings_path = fixture.make_file("missing.toml", None::<&str>);
         let verbosity_argument = format!("--verbose={verbose}");
         let matches = Cli::command().try_get_matches_from([
             OsStr::new(env!("CARGO_PKG_NAME")), OsStr::new("--settings"), settings_path.as_os_str(),
@@ -304,20 +371,10 @@ mod command_tests {
     #[case::outside_root(false, Path::new(".."))]
     fn test_invalid_input_output_preservation(#[case] malformed_index: bool, #[case] root: &Path) {
         const CONTENTS_OUTPUT_EXISTING: &str = "previous diagram";
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "Invalid-input fixture must have a temporary directory");
-        let index_path = fixture.path().join("input.scip");
-        let diagram_path = fixture.path().join("diagram.dot");
-        let index = if malformed_index {
-            b"this is not protobuf".to_vec()
-        } else {
-            let index = acyclic_index_fixture();
-            assert_ok!(index, "Outside-root scenario must start with a valid serialized acyclic index")
-        };
-        let index_write_result = fs::write(&index_path, index);
-        assert_ok!(index_write_result, "Invalid-input scenario must write its SCIP fixture");
-        let diagram_write_result = fs::write(&diagram_path, CONTENTS_OUTPUT_EXISTING);
-        assert_ok!(diagram_write_result, "Existing diagram must be written before testing invalid input");
+        let fixture = CommandTestFixture::new();
+        let index = if malformed_index { b"this is not protobuf".to_vec() } else { acyclic_index_fixture() };
+        let index_path = fixture.make_file("input.scip", Some(index));
+        let diagram_path = fixture.make_file("diagram.dot", Some(CONTENTS_OUTPUT_EXISTING));
         let system_under_test = Cli::command().try_get_matches_from([
             OsStr::new(env!("CARGO_PKG_NAME")),
             OsStr::new("--from-scip"), index_path.as_os_str(),
@@ -338,14 +395,17 @@ mod command_tests {
         assert_eq!(preserved, CONTENTS_OUTPUT_EXISTING, "Command overwrote the existing diagram");
     }
 
-    fn acyclic_index_fixture() -> Result<Vec<u8>> {
-        Ok(Index {
+    #[must_use]
+    fn acyclic_index_fixture() -> Vec<u8> {
+        let index = Index {
             documents: vec![Document { relative_path: "src/item.rs".into(), ..Document::default() }],
             ..Index::default()
-        }.write_to_bytes()?)
+        }.write_to_bytes();
+        assert_ok!(index, "Failed to serialize the acyclic index fixture")
     }
 
-    fn cyclic_index_fixture() -> Result<Vec<u8>> {
+    #[must_use]
+    fn cyclic_index_fixture() -> Vec<u8> {
         let documents = [
             ("first/item.rs", &["second/item.rs"][..]),
             ("second/item.rs", &["first/item.rs", "third/item.rs"]),
@@ -359,79 +419,25 @@ mod command_tests {
             occurrences.extend(references.iter().map(|&target| Occurrence { symbol: target.into(), ..Occurrence::default() }));
             Document { relative_path: path.into(), occurrences, ..Document::default() }
         }).collect();
-        Ok(Index { documents, ..Index::default() }.write_to_bytes()?)
+        let index = Index { documents, ..Index::default() }.write_to_bytes();
+        assert_ok!(index, "Failed to serialize the cyclic index fixture")
     }
 
     #[rstest]
-    #[case::folder_report(None)]
-    #[case::file_report(Some(0))]
-    fn test_cycle_limit_output_preservation(#[case] depth: Option<usize>, #[values(false, true)] diagram_to_file: bool) {
+    fn test_cycle_gate_failure_outputs(#[values(false, true)] diagram_to_file: bool) {
         const CONTENTS_OUTPUT_EXISTING: &str = "previous result";
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "Cycle-limit fixture must have a temporary directory");
-        let index_path = fixture.path().join("input.scip");
-        let diagram_path = fixture.path().join("diagram.dot");
-        let folder_report_path = fixture.path().join("folders.md");
-        let file_report_path = fixture.path().join("files.md");
-        let index = cyclic_index_fixture();
-        let index = assert_ok!(index, "Cycle-limit scenario must have a valid serialized cyclic index");
-        let index_write_result = fs::write(&index_path, index);
-        assert_ok!(index_write_result, "Cycle-limit scenario must write its SCIP fixture");
-        for path in [&diagram_path, &folder_report_path, &file_report_path] {
-            let output_write_result = fs::write(path, CONTENTS_OUTPUT_EXISTING);
-            assert_ok!(output_write_result, "Cycle-limit scenario must create existing output at {}", path.display());
-        }
-        let depth_argument = depth.map(|depth| depth.to_string());
-        let mut arguments = vec![
-            OsStr::new(env!("CARGO_PKG_NAME")),
-            OsStr::new("--from-scip"), index_path.as_os_str(),
-            OsStr::new("--cycle-limit"), OsStr::new("1"),
-            OsStr::new("--cycles-output"), folder_report_path.as_os_str(),
-            OsStr::new("--file-cycles-output"), file_report_path.as_os_str(),
-        ];
-        if let Some(depth_argument) = depth_argument.as_deref() {
-            arguments.extend([OsStr::new("--depth"), OsStr::new(depth_argument)]);
-        }
-        if diagram_to_file {
-            arguments.extend([OsStr::new("--output"), diagram_path.as_os_str()]);
-        }
-        let system_under_test = Cli::command().try_get_matches_from(arguments);
-        let system_under_test = assert_ok!(system_under_test, "CLI must accept cycle-limit and report-output arguments");
-        let mut output = Vec::new();
+        let fixture = CommandTestFixture::new();
+        let index_path = fixture.make_file("input.scip", Some(cyclic_index_fixture()));
+        let diagram_path = fixture.make_file("diagram.graphml", Some(CONTENTS_OUTPUT_EXISTING));
+        let folder_report_path = fixture.make_file("folders.md", Some(CONTENTS_OUTPUT_EXISTING));
+        let file_report_path = fixture.make_file("files.md", Some(CONTENTS_OUTPUT_EXISTING));
 
-        let error = run(system_under_test, &mut output).err();
-        let error = assert_some!(error, "Command accepted more cycles than the limit");
-        let message = error.to_string();
-        let preserved = [&diagram_path, &folder_report_path, &file_report_path].map(|path| {
-            let preserved = fs::read_to_string(path);
-            assert_ok!(preserved, "Cycle-limit failure must leave {} readable", path.display())
-        });
-
-        assert!(message.contains("Cycle count exceeds"), "Failure must be due to the cycle limit: {error:#}");
-        assert!(output.is_empty(), "Command wrote to stdout before checking the cycle limit");
-        assert_eq!(preserved, [CONTENTS_OUTPUT_EXISTING; 3], "Cycle limit error overwrote an output");
-    }
-
-    #[rstest]
-    #[case::report_cycles(false)]
-    #[case::cycle_gate(true)]
-    fn test_cyclic_graph_outputs(#[case] fail_on_cycles: bool, #[values(false, true)] diagram_to_file: bool) {
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "Cyclic-output fixture must have a temporary directory");
-        let index_path = fixture.path().join("input.scip");
-        let diagram_path = fixture.path().join("diagram.graphml");
-        let folder_report_path = fixture.path().join("folders.md");
-        let file_report_path = fixture.path().join("files.md");
-        let index = cyclic_index_fixture();
-        let index = assert_ok!(index, "Cyclic-output scenario must have a valid serialized index");
-        let index_write_result = fs::write(&index_path, index);
-        assert_ok!(index_write_result, "Cyclic-output scenario must write its SCIP fixture");
-        let cycle_gate_argument = format!("--fail-on-cycles={fail_on_cycles}");
         let mut arguments = vec![
             OsStr::new(env!("CARGO_PKG_NAME")),
             OsStr::new("--from-scip"), index_path.as_os_str(),
             OsStr::new("--format"), OsStr::new("graphml"),
-            OsStr::new("--highlight-cycles"), OsStr::new(&cycle_gate_argument),
+            OsStr::new("--no-settings"), OsStr::new("--cycle-limit"), OsStr::new("1"),
+            OsStr::new("--highlight-cycles"), OsStr::new("--fail-on-cycles"),
             OsStr::new("--cycles-output"), folder_report_path.as_os_str(),
             OsStr::new("--file-cycles-output"), file_report_path.as_os_str(),
         ];
@@ -439,32 +445,29 @@ mod command_tests {
             arguments.extend([OsStr::new("--output"), diagram_path.as_os_str()]);
         }
         let system_under_test = Cli::command().try_get_matches_from(arguments);
-        let system_under_test = assert_ok!(system_under_test, "CLI must accept GraphML highlighting and cycle reports");
+        let system_under_test = assert_ok!(system_under_test, "Failed to parse GraphML highlighting and cycle-report arguments");
         let mut output = Vec::new();
 
         let command_result = run(system_under_test, &mut output);
-        let standard_output_is_empty = output.is_empty();
+        assert_eq!(output.is_empty(), diagram_to_file, "Diagram output did not follow the selected destination");
+        let diagram_file = fs::read_to_string(&diagram_path);
+        let diagram_file = assert_ok!(diagram_file, "Failed to read the diagram file");
         let diagram = if diagram_to_file {
-            let diagram = fs::read_to_string(&diagram_path);
-            assert_ok!(diagram, "Cyclic graph command must produce a readable diagram file")
+            diagram_file
         } else {
+            assert_eq!(diagram_file, CONTENTS_OUTPUT_EXISTING, "Unrequested diagram file contents changed");
             let diagram = String::from_utf8(output);
-            assert_ok!(diagram, "Cyclic graph command must emit a UTF-8 diagram on stdout")
+            assert_ok!(diagram, "Failed to decode the stdout diagram as UTF-8")
         };
         let folder_report = fs::read_to_string(&folder_report_path);
-        let folder_report = assert_ok!(folder_report, "Cyclic graph command must produce a readable folder report");
+        let folder_report = assert_ok!(folder_report, "Failed to read the folder cycle report");
         let file_report = fs::read_to_string(&file_report_path);
-        let file_report = assert_ok!(file_report, "Cyclic graph command must produce a readable file report");
+        let file_report = assert_ok!(file_report, "Failed to read the file cycle report");
 
-        assert_eq!(command_result.is_err(), fail_on_cycles, "Fail on cycles only when requested: {command_result:?}");
-        if let Err(error) = command_result {
-            let message = error.to_string();
-            assert!(message.contains("Dependency cycles found:"), "Failure must be due to cycles: {error:#}");
-        }
-        assert_eq!(standard_output_is_empty, diagram_to_file, "Diagram output did not follow the selected destination");
-        assert!(diagram.contains("cycle_group"), "Cyclic graph did not produce a highlighted diagram");
-        assert!(folder_report.contains("## C1 ("), "Cyclic graph did not produce a folder cycle report");
-        assert!(file_report.contains("## C1 ("), "Cyclic graph did not produce a file cycle report");
+        assert!(command_result.is_err(), "Command unexpectedly succeeded with the cycle gate enabled");
+        assert_contains!(diagram, "cycle_group", "Diagram is missing the cycle_group marker");
+        assert_eq!(folder_report.lines().filter(|line| line.starts_with("- ")).count(), 1);
+        assert_eq!(file_report.lines().filter(|line| line.starts_with("- ")).count(), 1);
     }
 
     #[rstest]
@@ -472,15 +475,10 @@ mod command_tests {
         #[values("files", "folders")] mode: &str,
         #[values(false, true)] diagram_to_file: bool,
     ) {
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "Outgoing dependency fixture must have a temporary directory");
-        let index_path = fixture.path().join("input.scip");
-        let diagram_path = fixture.path().join("diagram.dot");
-        let report_path = fixture.path().join("outgoing.md");
-        let index = cyclic_index_fixture();
-        let index = assert_ok!(index, "Outgoing dependency scenario must have a valid serialized index");
-        let written = fs::write(&index_path, index);
-        assert_ok!(written, "Outgoing dependency scenario must write its SCIP fixture");
+        let fixture = CommandTestFixture::new();
+        let index_path = fixture.make_file("input.scip", Some(cyclic_index_fixture()));
+        let diagram_path = fixture.make_file("diagram.dot", None::<&str>);
+        let report_path = fixture.make_file("outgoing.md", None::<&str>);
         let mut arguments = vec![
             OsStr::new(env!("CARGO_PKG_NAME")),
             OsStr::new("--from-scip"), index_path.as_os_str(),
@@ -514,8 +512,8 @@ mod command_tests {
         assert_eq!(status, ExitCode::FAILURE, "A threshold violation must fail the command");
         assert_eq!(violations, [expected_violation], "Normal stderr must list exactly the violating source and count");
         assert!(diagnostic.starts_with("error: "), "CLI must emit the failure on the error stream");
-        assert!(diagnostic.contains(&expected_check), "Diagnostic must identify the check");
-        assert!(report.contains(&expected_mode), "Report must use the requested dependency mode");
+        assert_contains!(diagnostic, &expected_check, "Diagnostic must identify the check");
+        assert_contains!(report, &expected_mode, "Report must use the requested dependency mode");
         assert_eq!(report_violation_count, 1, "Report must list the violation");
         assert_eq!(output.is_empty(), diagram_to_file, "Diagnostics must not replace or contaminate the diagram");
         if diagram_to_file {
@@ -530,18 +528,11 @@ mod command_tests {
     #[case::hard_link(true)]
     fn test_settings_input_output_preservation(#[case] alias: bool) {
         const CONTENTS_SETTINGS: &str = "[export]\nformat = 'dot'\n";
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "Settings protection fixture directory must be created");
-        let settings_path = fixture.path().join("settings.toml");
-        let settings_write = fs::write(&settings_path, CONTENTS_SETTINGS);
-        assert_ok!(settings_write, "Settings must be written before testing output protection");
-        let index_path = fixture.path().join("input.scip");
-        let index = acyclic_index_fixture();
-        let index = assert_ok!(index, "Settings protection requires valid analysis");
-        let index_write = fs::write(&index_path, index);
-        assert_ok!(index_write, "Settings protection must write its saved analysis");
+        let fixture = CommandTestFixture::new();
+        let settings_path = fixture.make_file("settings.toml", Some(CONTENTS_SETTINGS));
+        let index_path = fixture.make_file("input.scip", Some(acyclic_index_fixture()));
         let output_path = if alias {
-            let path = fixture.path().join("alias.toml");
+            let path = fixture.make_file("alias.toml", None::<&str>);
             let linked = fs::hard_link(&settings_path, &path);
             assert_ok!(linked, "Settings alias must identify the loaded file");
             path
@@ -563,7 +554,7 @@ mod command_tests {
         let preserved = fs::read_to_string(&settings_path);
         let preserved = assert_ok!(preserved, "Loaded settings must remain readable after output rejection");
 
-        assert!(message.contains("must not overwrite input"), "Unexpected settings failure: {error:#}");
+        assert_contains!(message, "must not overwrite input", "Unexpected settings failure: {error:#}");
         assert_eq!(preserved, CONTENTS_SETTINGS, "The settings file changed");
         assert!(output.is_empty(), "An input conflict must be detected before writing the diagram");
     }
@@ -574,14 +565,9 @@ mod command_tests {
     #[case::missing_limit("[outgoing-dependencies]\nmode = 'files'", "require")]
     fn test_invalid_settings_output_preservation(#[case] settings: &str, #[case] diagnostic: &str) {
         const CONTENTS_EXISTING: &str = "previous diagram";
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "Invalid-settings fixture directory must be created");
-        let settings_path = fixture.path().join("settings.toml");
-        let settings_write = fs::write(&settings_path, settings);
-        assert_ok!(settings_write, "Invalid settings fixture must be written");
-        let output_path = fixture.path().join("diagram.dot");
-        let output_write = fs::write(&output_path, CONTENTS_EXISTING);
-        assert_ok!(output_write, "Existing output must be written before loading invalid settings");
+        let fixture = CommandTestFixture::new();
+        let settings_path = fixture.make_file("settings.toml", Some(settings));
+        let output_path = fixture.make_file("diagram.dot", Some(CONTENTS_EXISTING));
         let system_under_test = Cli::command().try_get_matches_from([
             OsStr::new(env!("CARGO_PKG_NAME")),
             OsStr::new("--settings"), settings_path.as_os_str(),
@@ -597,20 +583,15 @@ mod command_tests {
         let preserved = fs::read_to_string(&output_path);
         let preserved = assert_ok!(preserved, "Invalid settings must leave the output readable");
 
-        assert!(message.contains(diagnostic), "Settings must fail before opening analysis: {error:#}");
+        assert_contains!(message, diagnostic, "Settings must fail before opening analysis: {error:#}");
         assert_eq!(preserved, CONTENTS_EXISTING, "Invalid settings changed an existing output");
         assert!(output.is_empty(), "Invalid settings must not produce a diagram");
     }
 
     #[test]
     fn test_acyclic_graph_cycle_gate() {
-        let fixture = tempdir();
-        let fixture = assert_ok!(fixture, "Acyclic cycle-gate fixture must have a temporary directory");
-        let index_path = fixture.path().join("input.scip");
-        let index = acyclic_index_fixture();
-        let index = assert_ok!(index, "Cycle-gate scenario must have a valid serialized acyclic index");
-        let index_write_result = fs::write(&index_path, index);
-        assert_ok!(index_write_result, "Acyclic cycle-gate scenario must write its SCIP fixture");
+        let fixture = CommandTestFixture::new();
+        let index_path = fixture.make_file("input.scip", Some(acyclic_index_fixture()));
         let system_under_test = Cli::command().try_get_matches_from([
             OsStr::new(env!("CARGO_PKG_NAME")),
             OsStr::new("--from-scip"), index_path.as_os_str(),

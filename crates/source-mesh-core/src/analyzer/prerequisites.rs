@@ -104,6 +104,7 @@ mod tests {
     use std::path::PathBuf;
 
     use anyhow::Result;
+    use assertables::assert_contains;
     use claims::assert_ok;
     use claims::assert_some;
     use pretty_assertions::assert_eq;
@@ -137,7 +138,7 @@ mod tests {
 
         let diagnostic = system_under_test.to_string();
 
-        assert!(diagnostic.contains(&project_context), "Launch error must identify the project directory: {diagnostic}");
+        assert_contains!(diagnostic, &project_context, "Launch error must identify the project directory: {diagnostic}");
     }
 
     #[test]
@@ -223,8 +224,8 @@ mod tests {
 
         let error = assert_some!(system_under_test.err(), "An unavailable analyzer must be rejected");
         let message = error.to_string();
-        assert!(message.contains(expected_message), "Analyzer error must explain the failure: {message}");
-        assert!(message.contains(INSTALL_HINT), "Analyzer error must include installation advice: {message}");
+        assert_contains!(message, expected_message, "Analyzer error must explain the failure: {message}");
+        assert_contains!(message, INSTALL_HINT, "Analyzer error must include installation advice: {message}");
     }
 
     #[rstest]

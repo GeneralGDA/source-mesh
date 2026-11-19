@@ -25,6 +25,7 @@ derive-new.workspace = true
 getset.workspace = true
 globset.workspace = true
 graphviz-rust.workspace = true
+nonzero_ext.workspace = true
 quick-xml.workspace = true
 scip.workspace = true
 protobuf.workspace = true
@@ -36,8 +37,10 @@ tempfile.workspace = true
 typed-path.workspace = true
 lsp-server.workspace = true
 url.workspace = true
+velcro.workspace = true
 
 [dev-dependencies]
+assertables.workspace = true
 claims.workspace = true
 pretty_assertions.workspace = true
 roxmltree.workspace = true

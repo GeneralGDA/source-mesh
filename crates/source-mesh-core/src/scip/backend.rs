@@ -86,6 +86,8 @@ mod tests {
     use std::process::Command;
 
     use anyhow::Result;
+    use assertables::assert_contains;
+    use assertables::assert_not_contains;
     use claims::assert_ok;
     use claims::assert_some;
     use pretty_assertions::assert_eq;
@@ -320,7 +322,7 @@ mod tests {
 
         assert!(system_under_test.is_err(), "Ambiguous definitions were accepted");
         if let Err(error) = system_under_test {
-            assert!(error.to_string().contains("multiple files"), "Unexpected ambiguous-symbol diagnostic: {error}");
+            assert_contains!(error.to_string(), "multiple files", "Unexpected ambiguous-symbol diagnostic: {error}");
         }
     }
 
@@ -552,8 +554,8 @@ mod tests {
 
         assert!(output.status.success(), "The classification fixture must produce a graph successfully");
         assert_eq!(output.stderr, expected.as_bytes(), "Only unclassified indices require a classification warning");
-        let warning_on_stdout = String::from_utf8_lossy(&output.stdout).contains(MISSING_CLASSIFICATION_WARNING);
-        assert!(!warning_on_stdout, "Classification warnings must not be emitted on stdout");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_not_contains!(stdout, MISSING_CLASSIFICATION_WARNING, "Classification warnings must not be emitted on stdout");
     }
 
     #[test]

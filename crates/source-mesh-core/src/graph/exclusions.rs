@@ -49,6 +49,7 @@ impl Exclusions {
 mod tests {
     use std::path::PathBuf;
 
+    use assertables::assert_contains;
     use claims::assert_err;
     use claims::assert_ok;
     use pretty_assertions::assert_eq;
@@ -186,7 +187,7 @@ mod tests {
         let error = assert_err!(system_under_test, "Invalid exclusion pattern was accepted: {pattern:?}");
         let diagnostic = error.to_string();
         let expected = format!("{pattern:?}");
-        assert!(diagnostic.contains(&expected), "Validation must identify the invalid pattern: {diagnostic}");
+        assert_contains!(diagnostic, &expected, "Validation must identify the invalid pattern: {diagnostic}");
     }
 
     #[rstest]

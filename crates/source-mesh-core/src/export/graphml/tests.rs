@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use anyhow::Result;
 use anyhow::bail;
+use assertables::assert_contains;
 use claims::assert_ok;
 use claims::assert_some;
 use roxmltree::Document;
@@ -491,8 +492,8 @@ fn test_graphml_text_yed_graphics_and_references() {
     assert_eq!(edges.len(), 1, "Expected one GraphML edge");
     assert_eq!(source, "n0", "GraphML edge source is incorrect");
     assert_eq!(target, "n1", "GraphML edge target is incorrect");
-    assert!(node_identifiers.contains(source), "GraphML edge source has no corresponding node");
-    assert!(node_identifiers.contains(target), "GraphML edge target has no corresponding node");
+    assert_contains!(node_identifiers, source, "GraphML edge source has no corresponding node");
+    assert_contains!(node_identifiers, target, "GraphML edge target has no corresponding node");
     assert_eq!(weight.text(), Some("7"), "GraphML edge weight is incorrect");
     assert_eq!(arrows.attribute("source"), Some("none"), "yEd source must have no arrow");
     assert_eq!(arrows.attribute("target"), Some("standard"), "yEd target must have a standard arrow");

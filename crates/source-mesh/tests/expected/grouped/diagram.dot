@@ -29,7 +29,7 @@ digraph folders {
   n0 -> n2 [label="1"]
   n1 -> n2 [label="7"]
   n1 -> n2 [label="test: 1" color="#D97706" style=dashed]
-  n1 -> n3 [label="1"]
+  n1 -> n3 [label="2"]
   n1 -> n4 [label="1"]
   n1 -> n4 [label="test: 1" color="#D97706" style=dashed]
   n1 -> n8 [label="1"]

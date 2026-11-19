@@ -35,13 +35,22 @@ fn render_cycles<Node: Clone + Ord>(
     limit: NonZeroUsize,
     label: impl Fn(&Node) -> Result<&str>,
 ) -> Result<String> {
-    let cycles = analysis.cycles(limit)?;
-    if cycles.is_empty() {
+    let listing = analysis.bounded_cycles(limit);
+    if listing.cycles().is_empty() {
         return Ok(format!("{NO_CYCLES_FOUND}\n"));
     }
     let mut output = String::new();
+    if listing.truncated() {
+        write!(
+            output,
+            "> **Warning: cycle listing truncated at {} chains.** More cycles exist; \
+            the total cycle count was not computed. Complete cycle group count: {}.\n\n",
+            listing.cycles().len(),
+            analysis.group_count(),
+        ).unwrap_or_else(|_| unreachable!("Formatting a cycle warning into a String cannot fail"));
+    }
     let mut previous_group = None;
-    for cycle in &cycles {
+    for cycle in listing.cycles() {
         let group = cycle.group();
         if previous_group != Some(group) {
             if previous_group.is_some() {
@@ -73,8 +82,11 @@ mod tests {
 
     use anyhow::Context as _;
     use anyhow::Result;
+    use assertables::assert_contains;
+    use assertables::assert_not_contains;
     use claims::assert_ok;
     use claims::assert_some;
+    use nonzero_ext::nonzero;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -116,7 +128,7 @@ mod tests {
             let group = cycle.group();
             let color = group_color(group, analysis.group_count()).to_string();
             let heading = format!("## C{} ({color})", group.number());
-            assert!(output.contains(&heading), "Cycle report color differs from the diagram palette");
+            assert_contains!(output, &heading, "Cycle report color differs from the diagram palette");
             assert!(color.starts_with('#') && color.len() == 7, "Cycle report color must use six-digit hexadecimal RGB");
         }
     }
@@ -158,6 +170,21 @@ mod tests {
             let nodes = cycle.descendants().filter(|node| node.has_tag_name("code"));
             nodes.map(|node| Ok(node.text().context("Cycle node label is missing")?.to_owned())).collect()
         }).collect()
+    }
+
+    fn assert_report_completeness(report: &str, group_count: usize, truncated: bool) {
+        if truncated {
+            let chain_count = report.lines().filter(|line| line.starts_with("- ")).count();
+            let warning = format!("Warning: cycle listing truncated at {chain_count} chains.");
+            assert_contains!(report, &warning, "Report is missing the truncation warning: {warning}");
+            assert_contains!(report, "More cycles exist", "Report is missing the notice that more cycles exist");
+            assert_contains!(report, "total cycle count was not computed", "Report omits the notice that no total was computed");
+            let group_summary = format!("Complete cycle group count: {group_count}.");
+            assert_contains!(report, &group_summary, "Report is missing the group summary: {group_summary}");
+        } else {
+            assert_not_contains!(report, "Warning:", "Complete report contains an unexpected warning");
+            assert_not_contains!(report, "truncated", "Complete report contains unexpected truncation text");
+        }
     }
 
     #[rstest]
@@ -228,7 +255,7 @@ mod tests {
         let last_chains = report_chains(last_section);
         let last_chains = assert_ok!(last_chains, "Second cycle-group section must contain parseable labels");
 
-        assert!(first_section.contains("## C1 ("), "First cycle group is missing");
+        assert_contains!(first_section, "## C1 (", "First cycle group is missing");
         let first_expected = vec![vec![String::from("api"), String::from("domain"), String::from("api")]];
         assert_eq!(first_expected, first_chains, "First group contains incorrect chains");
         let last_expected = vec![vec![String::from("queue"), String::from("storage"), String::from("queue")]];
@@ -260,34 +287,34 @@ mod tests {
         let chains = report_chains(&output);
         let chains = assert_ok!(chains, "Escaped folder labels must remain parseable report markup");
 
-        assert!(output.contains(&format!("<code>{escaped}</code>")), "Folder label escaped incorrectly: {output}");
+        assert_contains!(output, &format!("<code>{escaped}</code>"), "Folder label escaped incorrectly: {output}");
         assert_eq!(1, chains.len(), "A label changed the number of cycle lines");
         assert_eq!(1, output.lines().filter(|line| line.starts_with("## ")).count(), "A label injected a group heading");
-        assert!(!output.contains("<script>"), "A label injected HTML markup");
+        assert_not_contains!(output, "<script>", "A label injected HTML markup");
     }
 
     #[rstest]
-    #[case(ReportKind::Folder)]
-    #[case(ReportKind::File)]
-    fn test_empty_cycle_report(#[case] kind: ReportKind) {
-        let folder_analysis = analyze_folders(&FolderGraph::default());
-        let folder_analysis = assert_ok!(folder_analysis, "Empty folder graph must support cycle analysis");
-        let file_graph = FileGraph::new(BTreeSet::new(), BTreeSet::new());
-        let file_graph = assert_ok!(file_graph, "Empty file graph must be valid");
-        let file_analysis = analyze_files(&file_graph);
-        let file_analysis = assert_ok!(file_analysis, "Empty file graph must support cycle analysis");
-
-        let output = match kind {
-            ReportKind::Folder => folder_report(&folder_analysis, NonZeroUsize::MAX),
-            ReportKind::File => file_report(&file_analysis, NonZeroUsize::MAX),
+    #[case::folder(ReportKind::Folder, NonZeroUsize::MIN)]
+    #[case::file(ReportKind::File, NonZeroUsize::MAX)]
+    fn test_empty_cycle_report(#[case] kind: ReportKind, #[case] limit: NonZeroUsize) {
+        let system_under_test = match kind {
+            ReportKind::Folder => {
+                let analysis = analyze_folders(&FolderGraph::default());
+                let analysis = assert_ok!(analysis, "Cycle analysis failed for the empty folder graph");
+                folder_report(&analysis, limit)
+            }
+            ReportKind::File => {
+                let analysis = FileGraph::new(BTreeSet::new(), BTreeSet::new()).and_then(|graph| analyze_files(&graph));
+                let analysis = assert_ok!(analysis, "Building and analyzing the empty file graph failed");
+                file_report(&analysis, limit)
+            }
         };
-        let output = assert_ok!(output, "An empty graph must produce a cycle report");
-        let chains = report_chains(&output);
-        let chains = assert_ok!(chains, "Empty cycle report must be parseable");
+        let output = assert_ok!(system_under_test, "Cycle report generation failed for an empty graph");
 
-        assert_eq!(Some(NO_CYCLES_FOUND), output.lines().last(), "Empty report must explicitly describe the absence of cycles");
-        assert!(chains.is_empty(), "Empty report contains a cycle chain");
-        assert!(!output.lines().any(|line| line.starts_with("## ")), "Empty report contains a cycle group");
+        assert_eq!(Some(NO_CYCLES_FOUND), output.lines().last(), "Empty report did not end with the no-cycles message");
+        let has_cycles = output.lines().any(|line| line.starts_with("- ") || line.starts_with("## "));
+        assert!(!has_cycles, "Empty report contains a cycle chain or group");
+        assert_report_completeness(&output, 0, false);
     }
 
     #[test]
@@ -336,7 +363,7 @@ mod tests {
         let chains = report_chains(&output);
         let chains = assert_ok!(chains, "Escaped file paths must remain parseable report markup");
 
-        assert!(output.contains("unsafe&#96;&lt;&gt;&amp;&#92;n.rs</code>"), "File path markup or newline was not escaped");
+        assert_contains!(output, "unsafe&#96;&lt;&gt;&amp;&#92;n.rs</code>", "File path markup or newline was not escaped");
         assert_eq!(1, chains.len(), "File path introduced another report line");
     }
 
@@ -380,30 +407,46 @@ mod tests {
     }
 
     #[rstest]
-    #[case(ReportKind::Folder)]
-    #[case(ReportKind::File)]
-    fn test_cycle_limit_error_propagation(#[case] kind: ReportKind) {
-        let folder_fixture = overlapping_folder_fixture();
-        let folder_fixture = assert_ok!(folder_fixture, "Overlapping folder cycles must form a valid graph");
-        let folder_analysis = analyze_folders(&folder_fixture);
-        let folder_analysis = assert_ok!(folder_analysis, "Overlapping folder cycles must support analysis");
-        let first_path = SourcePath::new("first.rs".into());
-        let first_path = assert_ok!(first_path, "First self-loop file path must be valid");
-        let first_file = FileNode::new(first_path);
-        let second_path = SourcePath::new("second.rs".into());
-        let second_path = assert_ok!(second_path, "Second self-loop file path must be valid");
-        let second_file = FileNode::new(second_path);
-        let file_fixture = file_fixture(&[(&first_file, &first_file), (&second_file, &second_file)]);
-        let file_fixture = assert_ok!(file_fixture, "Two file self-loops must form a valid graph");
-        let file_analysis = analyze_files(&file_fixture);
-        let file_analysis = assert_ok!(file_analysis, "Two file self-loops must support cycle analysis");
-
-        let result = match kind {
-            ReportKind::Folder => folder_report(&folder_analysis, NonZeroUsize::MIN),
-            ReportKind::File => file_report(&file_analysis, NonZeroUsize::MIN),
+    #[case::within_group(nonzero!(1_usize), true)]
+    #[case::group_boundary(nonzero!(2_usize), true)]
+    #[case::exact_limit(nonzero!(3_usize), false)]
+    #[case::below_limit(nonzero!(4_usize), false)]
+    fn test_cycle_report_listing_limit(
+        #[values(ReportKind::Folder, ReportKind::File)] kind: ReportKind,
+        #[case] limit: NonZeroUsize,
+        #[case] truncated: bool,
+    ) {
+        let system_under_test = match kind {
+            ReportKind::Folder => {
+                let analysis = folder_fixture(&[
+                    ("api", "domain"), ("domain", "api"), ("domain", "storage"), ("storage", "domain"), ("queue", "queue"),
+                ]).and_then(|graph| analyze_folders(&graph));
+                let analysis = assert_ok!(analysis, "Building and analyzing the folder report fixture failed");
+                folder_report(&analysis, limit)
+            }
+            ReportKind::File => {
+                let [api, domain, storage, queue] = ["api", "domain", "storage", "queue"].map(|name| {
+                    let file = SourcePath::new(name.into()).map(FileNode::new);
+                    assert_ok!(file, "Source path creation failed for the cycle-report fixture")
+                });
+                let analysis = file_fixture(&[
+                    (&api, &domain), (&domain, &api), (&domain, &storage), (&storage, &domain), (&queue, &queue),
+                ]).and_then(|graph| analyze_files(&graph));
+                let analysis = assert_ok!(analysis, "Building and analyzing the file report fixture failed");
+                file_report(&analysis, limit)
+            }
         };
+        let output = assert_ok!(system_under_test, "Bounded cycle report generation failed");
+        let chains = report_chains(&output);
+        let chains = assert_ok!(chains, "Parsing cycle chains from the bounded report failed");
+        let expected: Vec<_> = [
+            vec!["api", "domain", "api"], vec!["domain", "storage", "domain"], vec!["queue", "queue"],
+        ].into_iter().take(limit.get()).collect();
 
-        assert!(result.is_err(), "Report silently truncated cycles above the requested limit");
+        assert_eq!(chains, expected, "Reported cycle chains differed from the expected bounded listing");
+        assert_report_completeness(&output, 2, truncated);
+        let groups = output.lines().filter(|line| line.starts_with("## ")).count();
+        assert_eq!(groups, if truncated { 1 } else { 2 }, "Cycle group section count differed from the expected value");
     }
 
     #[cfg(any(unix, windows))]

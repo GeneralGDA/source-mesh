@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::btree_map::Entry;
+use std::fs;
+use std::iter;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -15,6 +17,7 @@ use scip::types::SymbolRole;
 use scip::types::descriptor::Suffix;
 
 use crate::SourcePath;
+use crate::analyzer::definitions::DefinitionLocation;
 use crate::analyzer::definitions::DefinitionResolver;
 use crate::analyzer::definitions::canonical_definition_file;
 use crate::analyzer::options::Options;
@@ -64,7 +67,7 @@ impl IndexRepair<'_> {
                     resolver.insert(DefinitionResolver::start(self.project_directory, configuration_path, verbose)?)
                 };
                 let source_path = self.project_directory.join(reference.source.path());
-                let locations = resolver.definitions(&source_path, reference.line, reference.column)?;
+                let locations = reference.find_definitions(resolver, &source_path)?;
                 let files = locations.iter().map(canonical_definition_file).collect::<Result<BTreeSet<_>>>()?;
                 definition_target(self.project_directory, &files, reference.has_candidates)
             })
@@ -108,6 +111,85 @@ struct UnresolvedReference<'a> {
     line: u32,
     column: u32,
     has_candidates: bool,
+    comparison_operator: Option<&'static str>,
+}
+
+impl UnresolvedReference<'_> {
+    fn find_definitions(&self, resolver: &mut DefinitionResolver, source_path: &Path) -> Result<Vec<DefinitionLocation>> {
+        let mut locations = resolver.definitions(source_path, self.line, self.column)?;
+        if locations.is_empty() && let Some(operator) = self.comparison_operator {
+            let source = fs::read_to_string(source_path).with_context(|| {
+                format!("Cannot read comparison source {}", source_path.display())
+            })?;
+            let comparison = comparison_position(&source, self.line, self.column, operator)?;
+            if let ComparisonLookup::OperatorFound { line, column } = comparison {
+                locations = resolver.definitions(source_path, line, column)?;
+            }
+        }
+        Ok(locations)
+    }
+}
+
+#[must_use]
+fn comparison_operator(symbols: &SymbolCache, symbol: &str) -> Option<&'static str> {
+    let parsed = symbols.get(symbol).structure()?;
+    let descriptor = parsed.descriptors.last()?;
+    match (descriptor.name.as_str(), descriptor.suffix.enum_value().ok()) {
+        ("eq", Some(Suffix::Method)) => Some("=="),
+        ("ne", Some(Suffix::Method)) => Some("!="),
+        _ => None,
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum ComparisonLookup {
+    OperatorFound { line: u32, column: u32 },
+    NoMatchingOperator,
+}
+
+fn comparison_position(source: &str, line: u32, column: u32, operator: &str) -> Result<ComparisonLookup> {
+    let mut lines = source.lines().skip(usize::try_from(line)?);
+    let first = lines.next().context("Comparison reference line is outside its source")?;
+    let first = first.get(usize::try_from(column)?..).context("Comparison reference column is not a valid UTF-8 position")?;
+    let mut current_line = line;
+    let mut current_column = column;
+    let mut comment_depth = 0_usize;
+    for remainder in iter::once(first).chain(lines) {
+        let mut characters = remainder.char_indices().peekable();
+        while let Some((offset, character)) = characters.next() {
+            if character == '/' && characters.next_if(|&(_, next)| next == '*').is_some() {
+                comment_depth += 1;
+                continue;
+            }
+            if comment_depth != 0 {
+                if character == '*' && characters.next_if(|&(_, next)| next == '/').is_some() {
+                    comment_depth -= 1;
+                }
+                continue;
+            }
+            if character == '/' && characters.next_if(|&(_, next)| next == '/').is_some() {
+                break;
+            }
+            if character.is_whitespace() {
+                continue;
+            }
+            let token = remainder.get(offset..).unwrap_or_else(|| {
+                unreachable!("Character iterator offsets must be valid UTF-8 boundaries")
+            });
+            if !token.starts_with(operator) {
+                return Ok(ComparisonLookup::NoMatchingOperator);
+            }
+            /* SCIP can locate an implicit comparison before its operator; use the operator interior for LSP lookup. */
+            let offset = u32::try_from(offset)?;
+            let position = current_column.checked_add(offset).and_then(|start| start.checked_add(1));
+            let position = position.context("Comparison operator column exceeds supported coordinates")?;
+            return Ok(ComparisonLookup::OperatorFound { line: current_line, column: position });
+        }
+        current_line = current_line.checked_add(1).context("Comparison reference line exceeds supported coordinates")?;
+        current_column = 0;
+    }
+    ensure!(comment_depth == 0, "Unterminated block comment before comparison operator");
+    Ok(ComparisonLookup::NoMatchingOperator)
 }
 
 #[derive(new)]
@@ -173,7 +255,10 @@ fn repair_occurrences(
                     format!("{MESSAGE_INVALID_REFERENCE_RANGE} in {}: {:?}", source.path().display(), occurrence.range)
                 })?;
                 let (line, column) = range.start();
-                let reference = UnresolvedReference { source: &source, line, column, has_candidates: targets.is_some() };
+                let comparison_operator = comparison_operator(symbols, &occurrence.symbol);
+                let reference = UnresolvedReference {
+                    source: &source, line, column, has_candidates: targets.is_some(), comparison_operator,
+                };
                 let resolved = resolve(&reference);
                 resolved.with_context(|| {
                     format!("Cannot determine dependency at {}:{}:{}", source.path().display(), line + 1, column + 1)
@@ -224,10 +309,15 @@ mod tests {
     use scip::types::SymbolInformation;
     use scip::types::SymbolRole;
 
+    use super::ComparisonLookup;
+    use super::ComparisonLookup::NoMatchingOperator;
+    use super::ComparisonLookup::OperatorFound;
     use super::IndexRepair;
     use super::MESSAGE_INVALID_REFERENCE_RANGE;
     use super::MESSAGE_OUTSIDE_INDEXED_CANDIDATES;
     use super::colliding_symbols;
+    use super::comparison_operator;
+    use super::comparison_position;
     use super::definition_target;
     use super::repair_occurrences;
     use crate::SourcePath;
@@ -241,6 +331,63 @@ mod tests {
     use crate::scip::definitions::unresolved_symbols;
     use crate::scip::index::ParsedIndex;
     use crate::scip::test_dependencies::mark_test_references;
+
+    #[rstest]
+    #[case::equal("eq().", Some("=="))]
+    #[case::unequal("ne().", Some("!="))]
+    #[case::other_method("value().", None)]
+    #[case::type_named_eq("eq#", None)]
+    fn test_comparison_method_symbols(#[case] descriptor: &str, #[case] expected: Option<&str>) {
+        let symbol = format!("rust-analyzer cargo fixture 0.0.0 model/impl#[Value]{descriptor}");
+        let fixture = index(&symbol, &[("model.rs", &[0])]);
+        let mut fixture = assert_ok!(fixture, "Failed to create the comparison symbol index fixture");
+        let (_, symbols) = fixture.documents_with_symbols_mut();
+
+        let system_under_test = comparison_operator(symbols, &symbol);
+
+        assert_eq!(system_under_test, expected);
+    }
+
+    #[rstest]
+    #[case::equal("left == right", 0, 4, "==", OperatorFound { line: 0, column: 6 })]
+    #[case::unequal("left != right", 0, 4, "!=", OperatorFound { line: 0, column: 6 })]
+    #[case::operator_start("left==right", 0, 4, "==", OperatorFound { line: 0, column: 5 })]
+    #[case::tabs("left\t\t== right", 0, 4, "==", OperatorFound { line: 0, column: 7 })]
+    #[case::next_line("left\n\t== right", 0, 4, "==", OperatorFound { line: 1, column: 2 })]
+    #[case::crlf("left\r\n\t== right", 0, 4, "==", OperatorFound { line: 1, column: 2 })]
+    #[case::blank_line("left \n \n == right", 0, 4, "==", OperatorFound { line: 2, column: 2 })]
+    #[case::utf8_prefix("\u{3b2} == right", 0, 2, "==", OperatorFound { line: 0, column: 4 })]
+    #[case::later_line("prefix\nleft == right", 1, 4, "==", OperatorFound { line: 1, column: 6 })]
+    #[case::other_operator("left != right", 0, 4, "==", NoMatchingOperator)]
+    #[case::identifier("left other == right", 0, 4, "==", NoMatchingOperator)]
+    #[case::block_comment("left /* comment */ == right", 0, 4, "==", OperatorFound { line: 0, column: 20 })]
+    #[case::adjacent_comments("left/* one *//* two */==right", 0, 4, "==", OperatorFound { line: 0, column: 23 })]
+    #[case::nested_multiline_comment("left /* outer\r\n /* inner */ == ignored\r\n \u{3b2} */ != right", 0, 4, "!=", OperatorFound { line: 2, column: 8 },)]
+    #[case::line_comment("left // == ignored\n\t== right", 0, 4, "==", OperatorFound { line: 1, column: 2 })]
+    #[case::comment_without_operator("left // == right", 0, 4, "==", NoMatchingOperator)]
+    #[case::token_after_comment("left /* comment */ other == right", 0, 4, "==", NoMatchingOperator)]
+    #[case::trailing_space("left \n\t", 0, 4, "==", NoMatchingOperator)]
+    #[case::source_end("left", 0, 4, "==", NoMatchingOperator)]
+    fn test_comparison_reference_positions(
+        #[case] source: &str, #[case] line: u32, #[case] column: u32,
+        #[case] operator: &str, #[case] expected: ComparisonLookup,
+    ) {
+        let system_under_test = comparison_position(source, line, column, operator);
+        let position = assert_ok!(system_under_test, "Comparison position lookup failed");
+
+        assert_eq!(position, expected, "Comparison lookup returned an unexpected operator match or position");
+    }
+
+    #[rstest]
+    #[case::missing_line("left", 1, 0)]
+    #[case::missing_column("left", 0, 5)]
+    #[case::inside_utf8_character("\u{3b2} == right", 0, 1)]
+    #[case::unterminated_comment("left /* == right", 0, 4)]
+    fn test_comparison_reference_validation(#[case] source: &str, #[case] line: u32, #[case] column: u32) {
+        let system_under_test = comparison_position(source, line, column, "==");
+
+        assert!(system_under_test.is_err(), "Comparison lookup unexpectedly accepted invalid source or coordinates");
+    }
 
     #[must_use]
     fn index_fixture(symbol: &str, files: &[(&str, &[i32])], range: &[i32]) -> Index {
